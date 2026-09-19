@@ -5,15 +5,14 @@ import re
 from html.parser import HTMLParser
 from pathlib import Path
 
-from line2func import lineart, pipeline
+from line2func import pipeline
 
 VIEWER = Path(__file__).resolve().parents[1] / "line2func" / "viewer"
 STRINGS = json.loads((VIEWER / "i18n.json").read_text(encoding="utf-8"))
 HTML = (VIEWER / "index.html").read_text(encoding="utf-8")
 SCRIPTS = {p.name: p.read_text(encoding="utf-8") for p in VIEWER.glob("*.js")}
-# keys built at run time from codes the server sends (method, stage, error, ...)
-DYNAMIC = ("method.", "methodHint.", "reason.", "stage.", "step.", "error.", "warning.", "tag.", "shape.",
-           "cfg.typeName.", "bg.")
+# keys built at run time from codes the server sends (stage, step, error, ...)
+DYNAMIC = ("stage.", "step.", "error.", "warning.", "tag.", "shape.")
 CJK = re.compile(r"[　-〿㐀-鿿豈-﫿＀-￯]")
 
 
@@ -57,17 +56,12 @@ def test_every_key_is_used_or_built_from_a_code():
 
 def test_codes_from_the_server_are_translated():
     en = STRINGS["en"]
-    for method in lineart.METHODS:
-        assert f"method.{method}" in en
-        assert method == "none" or f"methodHint.{method}" in en
     for stage in (*pipeline.STAGES, "resize", "load_model", "export", "quality", "encode"):
         assert f"stage.{stage}" in en, stage
     app_source = (VIEWER.parent / "app.py").read_text(encoding="utf-8")
     codes = set(re.findall(r'ApiError\(HTTPStatus\.\w+, "(\w+)"', app_source)) | {"out_of_memory", "internal"}
     generic = {"bad_json", "bad_request", "forbidden", "length_required", "not_found", "not_ready"}  # -> error.generic
     assert sorted(c for c in codes - generic if f"error.{c}" not in en) == []
-    for reason in ("torch_missing", "weights_missing"):
-        assert f"reason.{reason}" in en
     for warning in ("no_lines", "over_desmos_limit", "quality_skipped"):
         assert f"warning.{warning}" in en
 

@@ -41,6 +41,13 @@ def test_demo_errors(drawing, tmp_path):
     # --named is --form named
     assert demo.main([str(drawing), "--named", "--form", "function", "--out", str(tmp_path / "o")]) == 2
     assert demo.main([str(drawing), "--form", "function", "--function-tolerance", "0", "--out", str(tmp_path / "o")]) == 2
+    assert demo.main([str(drawing), "--denoise", "150", "--out", str(tmp_path / "o")]) == 2
+
+
+def test_demo_denoise(drawing, tmp_path, capsys):
+    assert demo.main([str(drawing), "--denoise", "0", "--out", str(tmp_path / "o")]) == 0
+    assert json.loads((tmp_path / "o" / "curves.json").read_text(encoding="utf-8"))["meta"]["denoise"] == 0
+    assert "noise filter 0" in capsys.readouterr().out
 
 
 def test_demo_writes_functions(drawing, tmp_path, capsys):

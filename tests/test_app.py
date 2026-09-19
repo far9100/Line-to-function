@@ -168,6 +168,31 @@ def test_downloads_zip_and_unicode_names(client):
     assert client.call("GET", f"/api/jobs/{jid}/data/overlay.png")[0] == 404
 
 
+def test_functions_from_a_number_of_curves_with_the_quality_check(client):
+    """What the page asks for: traced like demo (a number of curves), written as functions, quality checked."""
+    _, img = client.upload(_png(_drawing()))
+    snap = client.run(image_id=img["image_id"], kind="trace", method="none", scale="auto", form="function",
+                      curves=5000, quality=True)
+    assert snap["state"] == "done", snap
+    summary = snap["summary"]
+    assert summary["form"] == "function" and summary["equations"] >= summary["curves"] > 0
+    assert {"quality.json", "quality.png"} <= set(snap["files"])
+    _, _, body = client.call("GET", f"/api/jobs/{snap['job_id']}/data/curves.json")
+    doc = json.loads(body)
+    assert doc["meta"]["form"] == "function" and doc["meta"]["curve_count"]["target"] == 5000
+    _, _, desmos = client.call("GET", f"/api/jobs/{snap['job_id']}/data/desmos.txt")
+    lines = desmos.decode().splitlines()
+    assert len(lines) == summary["equations"] == doc["meta"]["functions"]["count"]
+    assert lines == [f for c in doc["curves"] for f in c["functions"]]
+    for bad in ({"form": "implicit"}, {"curves": 2.5}, {"curves": 0}, {"denoise": 101}, {"denoise": "50"}):
+        status, err = client.post_json("/api/jobs", {"image_id": img["image_id"], "kind": "trace", **bad})
+        assert status == 400 and err["error"]["field"] in ("form", "curves", "denoise"), bad
+    # the noise filters' strength reaches the tracer
+    snap = client.run(image_id=img["image_id"], kind="trace", method="none", scale=1.0, denoise=0)
+    _, _, body = client.call("GET", f"/api/jobs/{snap['job_id']}/data/curves.json")
+    assert json.loads(body)["meta"]["denoise"] == 0
+
+
 def test_empty_result_with_quality_check_is_strict_json(client):
     _, img = client.upload(_png(np.full((64, 64), 255, np.uint8)))
     snap = client.run(image_id=img["image_id"], kind="trace", method="none", scale=1.0, quality=True)
@@ -310,8 +335,9 @@ def test_a_busy_port_falls_back_to_a_free_one(home):
 
 
 def test_settings_are_saved(client, home):
-    status, body = client.post_json("/api/settings", {"lang": "zh-TW", "options": {"tolerance": 2.0, "junk": 1}})
-    assert status == 200 and body["settings"] == {"lang": "zh-TW", "options": {"tolerance": 2.0}}
+    options = {"form": "function", "denoise": 30, "denoise_on": False}
+    status, body = client.post_json("/api/settings", {"lang": "zh-TW", "options": {**options, "junk": 1}})
+    assert status == 200 and body["settings"] == {"lang": "zh-TW", "options": options}
     assert json.loads((home / "app-settings.json").read_text(encoding="utf-8"))["lang"] == "zh-TW"
     assert client.post_json("/api/settings", {"lang": "fr"})[0] == 400
     again = app_mod.make_app(port=0)
@@ -322,12 +348,16 @@ def test_settings_are_saved(client, home):
         again.server.server_close()
 
 
-def test_main_opens_the_window_and_returns(home, monkeypatch, capsys):
+@pytest.mark.parametrize("argv, pref, auto_exit, message", [
+    ([], "default", False, "Opened in the browser"),  # by default a tab, which keeps the server running
+    (["--browser", "chrome"], "chrome", True, "Opened an app window"),  # closing an app window ends it
+])
+def test_main_opens_the_page_and_returns(home, monkeypatch, capsys, argv, pref, auto_exit, message):
     started = []
 
     def fake_launch(url, pref):
         started.append((url, pref))
-        return "chrome"
+        return pref
 
     real_make_app = app_mod.make_app
 
@@ -339,10 +369,11 @@ def test_main_opens_the_window_and_returns(home, monkeypatch, capsys):
 
     monkeypatch.setattr(app_mod.browser, "launch", fake_launch)
     monkeypatch.setattr(app_mod, "make_app", make_app)
-    assert app_mod.main([]) == 0
+    assert app_mod.main(argv) == 0
     app = started[0]
-    assert started[1] == (app.url, "auto") and app.lifecycle.auto_exit
-    assert app.url in capsys.readouterr().out
+    assert started[1] == (app.url, pref) and app.lifecycle.auto_exit is auto_exit
+    out = capsys.readouterr().out
+    assert app.url in out and message in out
 
 
 def test_python_m_line2func_help():

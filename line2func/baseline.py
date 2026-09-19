@@ -7,8 +7,9 @@ Pipeline
    and the faint-stroke test), add thin faint strokes below the threshold (a
    local-contrast test, :func:`faint_line_mask`) and, with
    ``very_faint_lines``, the faintest ones that are clearly lines
-   (:func:`very_faint_line_mask`), drop specks smaller than a few line widths,
-   and fill pinholes inside lines.
+   (:func:`very_faint_line_mask`), drop specks smaller than a few line widths
+   (with ``join_widths``, on clean paper, pieces close to other ink are judged
+   with it, so a line broken into dots stays), and fill pinholes inside lines.
 2. **Filled areas**: parts much thicker than the typical line are cut out and
    only their outline is traced (tagged ``fill_outline``). With
    ``solid_ratio`` set, so is ink that is merely a few line widths thick over
@@ -88,6 +89,16 @@ class BaselineParams:
     faint_contrast: float = 0.3  # min contrast over the local background, as a fraction of the threshold
     faint_noise_sigmas: float = 4.0  # ... and at least this many times the paper's pixel noise
     faint_min_length: float = 15.0  # faint strokes shorter than this (px) are noise
+    # specks and faint pieces are judged together with the pieces within this many line widths of them, so a
+    # line that broke into dots and dashes stays (it is long as a whole) while lone specks go; 0 = each alone.
+    # Only on clean paper, whose pixel noise (paper_noise) is below join_max_noise: on noisy paper, chains of
+    # noise specks would pass as lines
+    join_widths: float = 0.0
+    join_max_noise: float = 0.005
+    # strength of the noise filters, as a multiple of their tuned limits (the derived speck area and
+    # faint_min_length; line2func.residual scales its minimum length too): 1 = as tuned, 0 = keep every speck
+    # and faint piece, 2 = twice as strict
+    denoise: float = 1.0
     # strokes fainter still, down to the paper's own noise, when they are clearly lines (see very_faint_lines):
     # at least this long, at most this wide, and at most one junction per this much line - in line widths
     very_faint_lines: bool = False
@@ -153,9 +164,19 @@ def thin(mask: np.ndarray, max_iterations: int = 10_000) -> np.ndarray:
     return skel.astype(bool)
 
 
-def _remove_small(mask: np.ndarray, min_area: float) -> np.ndarray:
-    labels, n = ndimage.label(mask, structure=_EIGHT)
-    if n == 0:
+def _groups(mask: np.ndarray, gap: float = 0.0) -> np.ndarray:
+    """Labels of ``mask``'s pixels (0 elsewhere): its 8-connected pieces, with pieces at most about ``gap`` px
+    apart sharing one label."""
+    reach = int(round(0.5 * gap))
+    grown = ndimage.binary_dilation(mask, structure=_EIGHT, iterations=reach) if reach > 0 else mask
+    labels, _ = ndimage.label(grown, structure=_EIGHT)
+    return np.where(mask, labels, 0) if reach > 0 else labels
+
+
+def _remove_small(mask: np.ndarray, min_area: float, gap: float = 0.0) -> np.ndarray:
+    """``mask`` without its pieces smaller than ``min_area`` px, counting pieces within ``gap`` px as one."""
+    labels = _groups(mask, gap)
+    if not labels.any():
         return mask
     sizes = np.bincount(labels.ravel())
     keep = sizes >= min_area
@@ -187,16 +208,18 @@ def faint_line_mask(
     smooth = ndimage.gaussian_filter(ink, 0.5)
     ridge = local_contrast(ink, line_width, smooth)
     reference = params.reference_threshold if params.reference_threshold is not None else threshold
-    level = max(0.05, params.faint_contrast * reference, params.faint_noise_sigmas * paper_noise(smooth, strong))
+    noise = paper_noise(smooth, strong)
+    level = max(0.05, params.faint_contrast * reference, params.faint_noise_sigmas * noise)
     # leave out a band around strong lines: blur halos and JPEG ringing live there,
     # and they would add ghost curves alongside real lines
     band = ndimage.binary_dilation(strong, iterations=int(round(0.5 * line_width)) + 2)
     weak = (ridge >= level) & ~band
     if weak.any():
-        # real faint strokes are long; fringe bits, specks and noise chains are short
-        labels, n = ndimage.label(weak, structure=_EIGHT)
-        length = np.bincount(labels[thin(weak)], minlength=n + 1)
-        keep = length >= params.faint_min_length
+        # real faint strokes are long; fringe bits, specks and noise chains are short (with join_widths, on clean
+        # paper, the pieces of a stroke that broke into dashes count together)
+        labels = _groups(weak, params.join_widths * line_width if noise < params.join_max_noise else 0.0)
+        length = np.bincount(labels[thin(weak)], minlength=int(labels.max()) + 1)
+        keep = length >= params.faint_min_length * params.denoise
         keep[0] = False
         weak = weak & keep[labels]
     if params.very_faint_lines:
@@ -1130,12 +1153,16 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
     skel0 = thin(strong)
     depth = ndimage.distance_transform_edt(strong)[skel0]
     rough_w = float(np.clip(2.0 * np.median(depth) - 1.0, 1.0, 50.0)) if depth.size else 1.0
+    # specks this close to other ink are judged with it (join_widths), on clean paper only, as faint pieces are
+    join = 0.0
+    if params.join_widths > 0 and paper_noise(ndimage.gaussian_filter(ink, 0.5), mask) < params.join_max_noise:
+        join = params.join_widths * rough_w
     if params.faint_lines:
         mask = mask | faint_line_mask(ink, mask, thr, rough_w, params)
     min_area = params.min_component_area
     if min_area is None:
-        min_area = max(8.0, 2.0 * rough_w * rough_w)
-    mask = _remove_small(mask, min_area)
+        min_area = max(8.0, 2.0 * rough_w * rough_w) * params.denoise
+    mask = _remove_small(mask, min_area, join)
     mask = _fill_holes(mask, max(3.0, 0.5 * rough_w * rough_w))
     if not mask.any():
         result.meta["line_width"] = 0.0
@@ -1160,7 +1187,7 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
                                 params.solid_ratio, params.solid_length)
             solid = mask & ndimage.binary_dilation(solid, structure=_EIGHT, iterations=2)
         fill_region = fill_region | solid
-    line_mask = _remove_small(mask & ~fill_region, min_area) if fill_region.any() else mask
+    line_mask = _remove_small(mask & ~fill_region, min_area, join) if fill_region.any() else mask
 
     skel = thin(line_mask)
     _, _, _, skel_len = _pixel_graph(skel)

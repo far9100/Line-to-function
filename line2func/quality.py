@@ -311,7 +311,9 @@ def assess(curves: CurveSet, ink: np.ndarray, threshold: float | None = None, to
         "structure": structure,
         "missed": {"share_of_ink": round(missed_mass / total_mass, 4), "by_cause": by_cause, "largest_regions": regions},
     }
-    maps = {"ink": ink, "d_pix": d_pix, "code": code, "pts": pts, "off_ink": off_ink, "thr": thr}
+    # the map marks curve points far from the ink they are judged against, as the stray-curve flag does
+    maps = {"ink": ink, "d_pix": d_pix, "code": code, "pts": pts, "off_ink": off_faint if faint_mode else off_ink,
+            "thr": thr}
     return report, maps
 
 

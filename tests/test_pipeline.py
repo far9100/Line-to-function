@@ -142,3 +142,20 @@ def test_a_given_ink_map_is_traced_as_is():
     assert cs.meta["upscale"] == 2 and f_score(cs, gt, 1.5)["f"] > 0.95
     with pytest.raises(ValueError):
         pipeline.trace(rgb, ink=ink[:10])
+
+
+def test_denoise_sets_how_many_specks_and_faint_pieces_go():
+    gt = CurveSet(160, 120, [Curve(g.line([10, 60], [150, 60]))])
+    img = render_lineart(gt, 160, 120, line_width=2.5)
+    rng = np.random.default_rng(4)
+    for _ in range(25):  # dark specks: short dashes, too small for the tuned speck filter
+        y, x = rng.integers(0, 116, 2)
+        img[y, x:x + 6] = 60
+    counts = {d: len(pipeline.trace(_rgb(img), upscale=1, denoise=d)[0]) for d in (0, 50, 100)}
+    assert counts[0] > counts[50] >= counts[100]  # off: the specks are traced too
+    default, _ = pipeline.trace(_rgb(img), upscale=1)
+    assert default.to_dict() == pipeline.trace(_rgb(img), upscale=1, denoise=pipeline.DENOISE)[0].to_dict()
+    assert default.meta["denoise"] == pipeline.DENOISE
+    for bad in (-1, 101):
+        with pytest.raises(ValueError):
+            pipeline.trace(_rgb(img), denoise=bad)

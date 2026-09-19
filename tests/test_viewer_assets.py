@@ -49,6 +49,11 @@ def test_the_viewer_and_the_exporter_share_the_desmos_limit():
     assert int(re.search(r"export const DESMOS_LIMIT = (\d+);", source).group(1)) == DESMOS_CURVE_LIMIT
 
 
+def test_the_page_and_the_pipeline_share_the_default_noise_filter_strength():
+    source = (serve.VIEWER_DIR / "app.js").read_text(encoding="utf-8")
+    assert float(re.search(r"const DENOISE = (\d+);", source).group(1)) == pipeline.DENOISE
+
+
 def test_the_package_ships_every_asset():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert re.search(r'line2func\s*=\s*\[[^\]]*"viewer/\*"', pyproject), "package-data must include viewer/*"

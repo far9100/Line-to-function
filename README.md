@@ -23,9 +23,9 @@ y(t) =  20.00·t³ − 270.00·t² + 250.00·t + 10.00        0 ≤ t ≤ 1
 
 *(An arch from (10, 10) through (50, 70) to (90, 10), y axis up.)*
 
-- **One command opens the app**: `python -m line2func` shows a Chrome or Edge
-  window. Drag an image in, get equations out. The interface is in English and
-  Traditional Chinese.
+- **One command opens it in your browser**: `python -m line2func` opens the
+  page in a browser tab. Drop a line drawing in, get equations out. The page is
+  in English and Traditional Chinese.
 - Two tracing engines with the same output format: the **baseline** engine (no
   GPU needed; a small bundled learned scorer makes its decisions) and an
   experimental **neural** engine you train yourself.
@@ -83,50 +83,46 @@ Windows 11.
 
 ### 2. Trace your first drawing
 
-#### In the app (drag and drop)
+#### In the browser (drag and drop)
 
 ```bash
 python -m line2func          # or just: line2func   (after pip install -e .)
 ```
 
-A Chrome window opens without tabs or an address bar. If Chrome is missing,
-Edge opens instead, and if neither is installed, the default browser opens a
-normal tab. Then:
+The page opens in a new tab of your default browser. Then:
 
-1. **Drop an image** into the window. You can also click **Choose a file…**
-   or paste with Ctrl+V. PNG, JPEG, WebP, BMP, TIFF and GIF are accepted, up to
-   64 MB. Photos from phones are turned upright.
-2. line2func guesses whether the image is **line art** or a **photo /
-   picture**. Change the guess if it is wrong.
-   - **Line art** is traced directly.
-   - **Photos** first get a **line-art preview** next to the original. Both
-     panes zoom and pan together. Switch between **Fine**, **Coarse**, **Canny**
-     and **XDoG** until the line art looks right. Methods you have already tried
-     come back instantly.
-   - **Resolution**: *Automatic* shrinks large images to at most 2048 px.
-     **Advanced** holds the fitting tolerance, the ink threshold, refinement,
-     faint strokes, upscaling, named equations with their line/arc tolerance,
-     and the quality check. The app traces to a tolerance (1.0 by default);
-     curve counts, `--decisions`, `--optimize` and the other steps' switches
-     are command-line only.
-3. Click **Convert to functions**. A progress panel shows each step, and
-   **Cancel** stops at the next step.
-4. The result opens in the viewer (section 4). From there you can download
-   SVG, JSON, Desmos, LaTeX or a ZIP of everything, or **Copy all for Desmos**.
-   **Adjust settings** takes you back to try again. Drop another image at any
-   time to start over.
+1. **Drop a line drawing** onto the page. You can also click **Choose a
+   file…** or paste with Ctrl+V. PNG, JPEG, WebP, BMP, TIFF and GIF are
+   accepted, up to 64 MB. Photos from phones are turned upright.
+2. The drawing appears in place. Choose how to write the lines, as
+   **functions** `y = f(x)`, `x = g(y)` (section 5) or as **parametric
+   equations** `x(t), y(t)`, and how strongly noise is removed (**Remove
+   noise**, strength 0-100, 50 by default: lower keeps more detail, higher cleans
+   noisy scans; section 8), and click **Convert**. It is traced like `demo`
+   traces it: up to 5,000 curves, with the quality check (images larger than
+   2048 px are shrunk first). A progress panel shows each step, and **Cancel**
+   stops at the next step.
+3. The result opens in the same page, the viewer (section 4). From there you
+   can download SVG, JSON, Desmos, LaTeX or a ZIP of everything, or
+   **Copy all for Desmos**.
+4. **Clear image** at the top removes the image, so the next one can be
+   dropped. You can also drop another image at any time.
+
+The web page traces every image as line art. For photos, use `demo` with
+`--lineart` (section 6); the command line also has all the other options
+(section 7).
 
 The **中文 / EN** switch in the top right changes the language, and the choice is
-remembered. **Closing the window ends the program**, as does Ctrl+C in the
-terminal or the **Quit** button.
+remembered. Ctrl+C in the terminal, or the **Quit** button on the page, ends the
+program.
 
 | Option | Meaning |
 |---|---|
-| `--browser {auto,chrome,edge,default,none}` | `auto` (default): Chrome app window, else Edge, else default browser; `default`: a normal tab; `none`: only print the address |
+| `--browser {auto,chrome,edge,default,none}` | `default` (default): a tab in the default browser; `chrome`, `edge`: an app window without tabs or an address bar, which ends the program when closed; `auto`: Chrome's app window, else Edge's, else a tab; `none`: only print the address |
 | `--port N` | port (default: any free port; a busy port falls back to a free one) |
-| `--keep-running` | keep serving after the window is closed |
+| `--keep-running` | with an app window: keep serving after it is closed |
 
-The app binds only to `127.0.0.1` and accepts requests only for this machine.
+The server binds only to `127.0.0.1` and accepts requests only for this machine.
 Uploaded images and results stay in memory and are gone when the program ends.
 
 #### From the command line
@@ -179,8 +175,7 @@ the tracer bridged a gap.
 **Filled areas.** Solid black areas, large ones and heavy strokes such as
 thick eyelashes, are traced by their outline only (tagged `fill_outline`; the
 outline of a thick or strongly tapered stroke is tagged `outline`). The SVG
-fills them, and so does the viewer's Measured style. Desmos cannot fill pasted
-curves, so rings inside each area (tagged `fill`, 1.5 px apart) make it look
+fills them. Desmos cannot fill pasted curves, so rings inside each area (tagged `fill`, 1.5 px apart) make it look
 solid there; the SVG leaves the rings out.
 
 <details>
@@ -208,7 +203,7 @@ solid there; the SVG leaves the rings out.
 
 ### 4. The viewer
 
-The app (section 2) shows every result in this viewer. To open a saved output
+The web page (section 2) shows every result in this viewer. To open a saved output
 folder in it:
 
 ```bash
@@ -226,9 +221,9 @@ python -m line2func.serve out/ --no-browser    # just print the URL
 | Browse all equations | scroll the list on the right; click a row to jump to the curve |
 | Next / previous curve | `↓` / `↑`; `Esc` deselects |
 | Copy an equation | select a curve, then **Copy for Desmos** (parametric), **Copy named** (for lines/arcs) or **Copy functions** (results made with `--form function`) |
-| Background | checkbox, **Original** / **Line art** (photos, in the app) / **Missed detail** (after a quality check) menu, and opacity slider |
-| True-to-scale look | **Measured style**: draws every curve in its measured width and ink color, and fills filled areas |
-| Download | **SVG**, **JSON**, **Desmos**, **LaTeX** buttons (and **ZIP** in the app) |
+| Display | **Lines only**, **Lines + original**, or **Lines + missed detail** (after a quality check: the curves in gray, missed lines red, missed faint ink orange, curves without ink blue), with the background's opacity slider |
+| The original alone | **Original**: shows only the original image |
+| Download | **SVG**, **JSON**, **Desmos**, **LaTeX** buttons (and **ZIP** with `python -m line2func`) |
 | All equations at once | **Copy all for Desmos**, then paste into the first expression box |
 | Language | **中文 / EN** switch in the top right |
 
@@ -236,7 +231,7 @@ The viewer is built for large results (10,000+ curves): it draws with Canvas2D
 from a few cached paths, finds the curve under the pointer with a spatial
 index, and only renders the visible rows of the equation list. It binds only
 to `127.0.0.1` and serves only the output files (the ones above, plus the
-quality check's and the app's line-art image when present).
+quality check's when present).
 
 ### 5. Using the equations in Desmos
 
@@ -333,7 +328,8 @@ python -m line2func.demo photo.jpg --lineart informative --out out/
 ```
 
 Photos usually give many short curves. `demo` merges them down to 5,000
-(section 8); in the app, a larger tolerance gives fewer.
+(section 8). The web page traces every image as line art, so photos go through
+`demo`.
 
 ### 7. All `demo` options
 
@@ -348,7 +344,7 @@ python -m line2func.demo IMAGE [options]
 | `--vectorizer {baseline,model}` | `baseline` | Tracing engine |
 | `--ckpt FILE` | – | Checkpoint for `--vectorizer model` (section 9) |
 | `--curves N` | `5000` | Make N curves: trace finely, then merge the neighbouring pieces whose merge changes the drawing least (section 8). A drawing that gives fewer keeps all of them |
-| `--tolerance PX` | off | Trace to this max curve-fitting error instead of a number of curves (the app works this way, with 1.0). Larger gives fewer, smoother curves |
+| `--tolerance PX` | off | Trace to this max curve-fitting error instead of a number of curves. Larger gives fewer, smoother curves |
 | `--decisions {learned,rules,PATH}` | `learned` | Who decides where strokes continue, where breaks are joined, which junctions are one crossing and where corners are: the learned scorer, the angle rules, or other learned weights (section 8) |
 | `--threshold 0..1` | automatic | Ink threshold. Automatic: Otsu's, but for line art at most 0.25 so light strokes stay whole (kept at Otsu's when the paper itself would be traced). Lower it if faint lines are missed, raise it if paper texture is traced |
 | `--form {parametric,named,function}` | `parametric` | How `desmos.txt` / `equations.tex` write each curve: parametric, named (lines and arcs; the other curves parametric) or as functions `y = f(x)` / `x = g(y)` (section 5) |
@@ -358,6 +354,7 @@ python -m line2func.demo IMAGE [options]
 | `--no-refine` | refine on | Skip snapping curves to the ink centerline (refinement roughly halves the distance to the true lines) |
 | `--upscale {auto,1,2,3,4}` | `auto` | Trace at N× resolution, then map the curves back. `auto` uses 2× when lines are thinner than ~1.75 px. The tolerance stays in original pixels |
 | `--no-faint` | faint on | Do not add faint strokes below the threshold, nor very faint lines (the step is conservative: it adds nothing on noisy or shaded paper) |
+| `--denoise 0..100` | `50` | How strongly specks and short faint pieces are dropped as noise: 0 keeps them all (most detail; on a noisy scan the noise is traced too), 100 is twice as strict (section 8) |
 | `--quality` | off | Judge the result against the image: `quality.json`, `quality.png` and a summary (section 8) |
 | `--no-residual` | second pass on | Skip the second pass that traces the ink the first pass left uncovered (section 8) |
 | `--no-outline` | outlines on | Keep solid areas (heavy eyelashes) and thick or wedge-shaped strokes (brush strokes) as centerlines instead of filled outlines |
@@ -387,8 +384,9 @@ with known answers.
   although it wins on synthetic tests.
 - **Width range:** if the thickest line is more than ~4.5× the thinnest,
   quality can drop. Much thicker areas are treated as fills.
-- **Noisy scans / JPEG:** the baseline removes small specks. If dust is still
-  traced, clean the scan or raise `--threshold`.
+- **Noisy scans / JPEG:** the baseline removes small specks (on clean paper it
+  keeps those that continue a line, below). If dust is still traced, clean the
+  scan or raise `--threshold`.
 - **Too many or too few curves:** `demo` makes up to 5,000; `--curves N` gives
   another count (below). Fewer curves this way keep more of the drawing than a
   larger `--tolerance`.
@@ -459,6 +457,49 @@ The quality tool counts a curve on such a line as on ink ("counting faint ink");
 its stricter headline, against ink over half the threshold, rises instead
 (drawing 4: 1.9% → 5.2%). In the SVG these lines are as thin and light as in
 the drawing.
+
+**Lines broken into dots and dashes.** The tracer drops specks and short faint
+pieces as noise. But a light line that fades in and out, such as a loose strand
+of hair or a fold, breaks into just such dots and dashes, and it was dropped
+with the noise. So in line art, pieces within 2 line widths of each other are
+judged together: a broken line stays, lone specks still go. With up to 5,000
+curves:
+
+| | Faint strokes kept | Missed ink |
+|---|---|---|
+| Drawing 1 | 99.26% → 99.60% | 0.35% → 0.24% |
+| Drawing 2 | 91.78% → **95.45%** | 4.44% → **2.80%** |
+| Drawing 3 | 96.93% → 98.77% | 0.96% → 0.46% |
+| Drawing 4 | 91.10% → **97.09%** | 4.74% → **1.75%** |
+
+The share of curve length off the ink (counting faint ink) did not rise, so the
+new curves lie on real lines; tracing takes 1-4 s longer, and lines that fade
+in and out may be traced as dashes. On noisy paper, chains of noise specks would
+pass as lines: on 100 synthetic noisy scans the share of curve length on true
+lines fell from 0.93 to 0.87 (0.10 on the worst scan). So this is only done
+when the paper is clean (its pixel noise, measured on the blank paper, below
+0.005); on those scans the result is then unchanged.
+
+#### How much noise to remove: `--denoise`
+
+`--denoise` (in the web page: **Remove noise** and its slider) sets how strictly
+specks and short faint pieces are dropped: 50 is the default described above, 0
+keeps them all, and 100 doubles the limits and no longer joins the pieces of
+broken lines. Unticking **Remove noise** is 0. On drawing 4 and on 100 synthetic
+noisy scans (noise, specks, JPEG):
+
+| Strength | Drawing 4: faint strokes kept | Drawing 4: missed ink | Noisy scans: curve length on true lines (worst scan) |
+|---|---|---|---|
+| 0 | 98.58% | 1.12% | 0.849 (0.105) |
+| 25 | 97.95% | 1.40% | 0.923 (0.737) |
+| 50 | 97.09% | 1.75% | 0.929 (0.747) |
+| 75 | 94.54% | 2.90% | 0.932 (0.750) |
+| 100 | 83.12% | 8.68% | 0.934 (0.752) |
+
+On clean line art a lower strength keeps more detail and invents nothing (the
+curve length off the ink stays at 0.10-0.13%). On a noisy scan, 0 traces the
+noise too (55% more curves); from 25 up the result hardly changes, and a higher
+strength only gives up a little of the lines (recall 0.991 at 50, 0.988 at 100).
 
 #### Heavy eyelashes and other solid areas
 
@@ -586,7 +627,7 @@ missed ink: 11.9% of all ink; by cause: below_threshold 84.8%, speck 6.3%, untra
 
 `quality.png` marks every problem on the image: **red** = missed line,
 **orange** = missed faint ink, **blue** = curve without ink. In the viewer,
-choose **Missed detail** as the background.
+choose the display **Lines + missed detail**.
 
 These numbers were validated on synthetic drawings with known answers. The
 "lines" recall is within about 0.01 of the true recall on average (Spearman
@@ -730,9 +771,9 @@ judge it better or tied on at least 60% of real drawings.
 
 ### 11. Using line2func from Python
 
-The whole flow in one call, as `demo` and the app run it (the second pass,
-outlines and the rings that fill them in Desmos are on by default; `demo` asks
-for up to 5,000 curves, the app for a tolerance; `optimize=True` needs PyTorch):
+The whole flow in one call, as `demo` and the web page run it (the second pass,
+outlines and the rings that fill them in Desmos are on by default; both ask for
+up to 5,000 curves; `optimize=True` needs PyTorch):
 
 ```python
 from line2func import functions, lineart, pipeline
@@ -740,7 +781,7 @@ from line2func.export import write_outputs
 
 rgb = lineart.load_rgb("drawing.png")
 curves, ink = pipeline.trace(rgb, upscale="auto", curve_count=5000)   # up to 5,000 curves, as demo
-curves, ink = pipeline.trace(rgb, upscale="auto", fit_tolerance=1.0)  # a fitting tolerance, as the app
+curves, ink = pipeline.trace(rgb, upscale="auto", fit_tolerance=1.0)  # a fitting tolerance instead
 curves, ink = pipeline.trace(rgb, upscale="auto", optimize=True)
 curves, ink = pipeline.trace(rgb, upscale="auto", decisions="rules")  # the angle rules decide
 
@@ -784,7 +825,7 @@ rasterizer), `line2func.fit.fit_polyline` (Schneider fitting),
 
 ```
 line2func/
-  app.py  browser.py  __main__.py          # the app (python -m line2func), Chrome/Edge launcher
+  app.py  browser.py  __main__.py          # the web page's server (python -m line2func), browser launcher
   viewer/                                  # web page: index.html, app.js, viewer.js, i18n.js, i18n.json
   demo.py  serve.py  pipeline.py           # commands, and the tracing flow they share
   lineart.py  lineart_model.py  weights.py # line extraction, pretrained model, downloads
@@ -819,7 +860,7 @@ The baseline engine is the one to use; the neural engine is experimental.
 - [x] Synthetic data generator; single- and multi-curve neural models; whole-image inference
 - [x] Pretrained line art for photos (Informative Drawings, MIT; downloaded with a SHA-256 check)
 - [x] Named equations for lines and arcs, curve refinement, line width and color
-- [x] Browser app (`python -m line2func`) in English and Traditional Chinese
+- [x] Web page (`python -m line2func`) in English and Traditional Chinese
 - [x] Second pass over uncovered ink, thick strokes as filled outlines, render-and-compare (`--optimize`)
 - [x] Learned decisions (the default; `--decisions rules` for the angle rules)
 - [x] Solid areas such as heavy eyelashes, with rings for Desmos; up to 5,000 curves by default; light and very faint lines
@@ -854,7 +895,7 @@ y(t) =  20.00·t³ − 270.00·t² + 250.00·t + 10.00        0 ≤ t ≤ 1
 
 *（一道拱形：從 (10, 10) 經過 (50, 70) 到 (90, 10)，y 軸朝上。）*
 
-- **一行指令開啟 App**：`python -m line2func` 會開出 Chrome 或 Edge 視窗，把圖片拖進去就能得到算式。介面有繁體中文與英文。
+- **一行指令在瀏覽器開啟**：`python -m line2func` 會在瀏覽器開一個分頁，把線稿拖進去就能得到算式。介面有繁體中文與英文。
 - 兩種描線引擎，輸出格式完全相同：**傳統引擎**（不需要 GPU；它的決策由隨附的小型學習式評分器負責），以及需要自行訓練的**神經網路引擎**（實驗功能）。
 - 全部離線執行，檢視器不需要編譯，也不需要連網。
 
@@ -908,31 +949,30 @@ pip install -e ".[train,dev]"     # 加上 pyyaml（設定檔）與 pytest
 
 ### 2. 描第一張圖
 
-#### 用 App（拖放）
+#### 用瀏覽器（拖放）
 
 ```bash
 python -m line2func          # 或直接打：line2func（執行過 pip install -e . 之後）
 ```
 
-會開出一個沒有分頁和網址列的 Chrome 視窗。沒有 Chrome 就用 Edge，兩者都沒有才用系統預設瀏覽器開一般分頁。接著：
+會在預設瀏覽器開一個新分頁。接著：
 
-1. **把圖片拖進視窗**。也可以按〔選擇檔案…〕，或按 Ctrl+V 貼上。支援 PNG、JPEG、WebP、BMP、TIFF、GIF，最大 64 MB。手機拍的照片會自動轉正。
-2. line2func 會先判斷這張圖是**線稿**還是**照片／彩色圖片**，判斷錯了可以自己改。
-   - **線稿**直接轉函數。
-   - **照片**會先抽出**線稿預覽**，和原圖並排顯示，兩邊同步縮放、平移。可以切換〔精細〕〔粗線〕〔Canny〕〔XDoG〕，直到線稿滿意為止；已經算過的方法切回去會立刻顯示。
-   - **解析度**選「自動」時，大圖會縮到最長邊 2048 px。〔進階設定〕裡有擬合容差、墨水門檻、精修、淡線、細線放大、具名算式與它的直線／圓弧容差，以及品質檢查。App 以容差描線（預設 1.0）；曲線數量、`--decisions`、`--optimize` 和其他步驟的開關只能在指令列使用。
-3. 按〔轉成函數 ▶〕。處理時會顯示目前的步驟，按〔取消〕會在下一個步驟停下。
-4. 結果會在檢視器中開啟（見第 4 節）。可以下載 SVG、JSON、Desmos、LaTeX，或把全部打包成 ZIP，也可以〔全部複製到 Desmos〕。按〔← 調整設定〕可以改參數重跑；隨時拖入新圖片就會重新開始。
+1. **把線稿拖進頁面**。也可以按〔選擇檔案…〕，或按 Ctrl+V 貼上。支援 PNG、JPEG、WebP、BMP、TIFF、GIF，最大 64 MB。手機拍的照片會自動轉正。
+2. 圖片會出現在原處。選擇線段的寫法：**函數** `y = f(x)`、`x = g(y)`（見第 5 節）或**參數方程式** `x(t)`、`y(t)`，以及去雜訊的強度（〔去雜訊〕，0–100，預設 50：調低保留更多細節，有雜訊的掃描圖可以調高；見第 8 節），再按〔確認 ▶〕。描線方式和 `demo` 相同：最多 5,000 條曲線，並做品質檢查（超過 2048 px 的圖會先縮小）。處理時會顯示目前的步驟，按〔取消〕會在下一個步驟停下。
+3. 結果會在同一頁的檢視器中開啟（見第 4 節）。可以下載 SVG、JSON、Desmos、LaTeX，或把全部打包成 ZIP，也可以〔全部複製到 Desmos〕。
+4. 上方的〔清除圖片〕會清掉目前的圖，接著就能拖入下一張；隨時直接拖入新圖片也可以。
 
-右上角的〔中文｜EN〕可以切換語言，選擇會被記住。**關閉視窗就會結束程式**；在終端機按 Ctrl+C，或按〔結束〕也可以。
+網頁版會把每張圖都當成線稿描線。照片請用 `demo` 加上 `--lineart`（見第 6 節）；其他選項也都在指令列（見第 7 節）。
+
+右上角的〔中文｜EN〕可以切換語言，選擇會被記住。在終端機按 Ctrl+C，或按頁面上的〔結束〕，就會結束程式。
 
 | 選項 | 意義 |
 |---|---|
-| `--browser {auto,chrome,edge,default,none}` | `auto`（預設）：Chrome App 視窗，沒有就 Edge，再沒有就用預設瀏覽器；`default`：一般分頁；`none`：只印出網址 |
+| `--browser {auto,chrome,edge,default,none}` | `default`（預設）：預設瀏覽器的分頁；`chrome`、`edge`：沒有分頁和網址列的 App 視窗，關閉視窗就結束程式；`auto`：Chrome 的 App 視窗，沒有就 Edge，再沒有就用分頁；`none`：只印出網址 |
 | `--port N` | 連接埠（預設：任一可用的連接埠；被佔用時自動改用別的） |
-| `--keep-running` | 關閉視窗後仍繼續執行 |
+| `--keep-running` | 用 App 視窗時，關閉視窗後仍繼續執行 |
 
-App 只監聽 `127.0.0.1`，也只接受指向本機的請求。上傳的圖片與結果只放在記憶體裡，程式結束就會消失。
+伺服器只監聽 `127.0.0.1`，也只接受指向本機的請求。上傳的圖片與結果只放在記憶體裡，程式結束就會消失。
 
 #### 用指令
 
@@ -973,7 +1013,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 
 **信心值**是曲線落在墨跡上的比例。描線器補過缺口的地方，信心值會低於 1。
 
-**填滿的區域。** 塗黑的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。SVG 會把它們填滿，檢視器的〔實際樣貌〕也會。Desmos 無法填滿貼上的曲線，所以每個區域內會加上一圈圈的曲線（標上 `fill`，間隔 1.5 px），讓它在 Desmos 裡看起來也是實心的；SVG 不含這些圈。
+**填滿的區域。** 塗黑的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。SVG 會把它們填滿。Desmos 無法填滿貼上的曲線，所以每個區域內會加上一圈圈的曲線（標上 `fill`，間隔 1.5 px），讓它在 Desmos 裡看起來也是實心的；SVG 不含這些圈。
 
 <details>
 <summary><code>curves.json</code> 格式</summary>
@@ -1000,7 +1040,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 
 ### 4. 檢視器
 
-App（第 2 節）的每個結果都在這個檢視器裡顯示。要用它開啟已存好的輸出資料夾：
+網頁版（第 2 節）的每個結果都在這個檢視器裡顯示。要用它開啟已存好的輸出資料夾：
 
 ```bash
 python -m line2func.serve out/                 # 開啟 http://localhost:8000/
@@ -1017,13 +1057,13 @@ python -m line2func.serve out/ --no-browser    # 只印出網址，不開瀏覽�
 | 瀏覽所有算式 | 捲動右側清單；點一列就會跳到該曲線 |
 | 上一條／下一條 | `↑`／`↓`；`Esc` 取消選取 |
 | 複製算式 | 選取曲線後按〔複製到 Desmos〕（參數式），直線與圓弧可按〔複製具名算式〕，`--form function` 的結果可按〔複製函數〕 |
-| 背景 | 勾選框、〔原圖〕／〔線稿〕（App 裡的照片）／〔遺漏細節〕（做過品質檢查後）選單，以及透明度滑桿 |
-| 實際樣貌 | 〔實際樣貌〕：用量測到的線寬與墨色畫出每條曲線，並填滿填色區域 |
-| 下載 | 〔SVG〕〔JSON〕〔Desmos〕〔LaTeX〕按鈕（App 裡還有〔ZIP〕） |
+| 顯示方式 | 〔只顯示線段〕〔線段＋原圖〕或〔線段＋遺漏線段〕（做過品質檢查後：曲線改為灰色，漏掉的線紅色、漏掉的淡線橘色、沒有墨跡的曲線藍色），以及背景的透明度滑桿 |
+| 只看原圖 | 〔原圖〕：只顯示原圖 |
+| 下載 | 〔SVG〕〔JSON〕〔Desmos〕〔LaTeX〕按鈕（用 `python -m line2func` 時還有〔ZIP〕） |
 | 一次複製全部算式 | 〔全部複製到 Desmos〕，再貼到 Desmos 的第一個算式欄 |
 | 語言 | 右上角的〔中文｜EN〕 |
 
-檢視器是為大量曲線（一萬條以上）設計的：用 Canvas2D 從少數快取的路徑繪圖，以空間索引找出游標下的曲線，算式清單也只繪製看得見的那幾列。它只監聽 `127.0.0.1`，也只提供輸出檔（上面列出的，加上品質檢查的檔案與 App 的線稿圖，如果有的話）。
+檢視器是為大量曲線（一萬條以上）設計的：用 Canvas2D 從少數快取的路徑繪圖，以空間索引找出游標下的曲線，算式清單也只繪製看得見的那幾列。它只監聽 `127.0.0.1`，也只提供輸出檔（上面列出的，加上品質檢查的檔案，如果有的話）。
 
 ### 5. 在 Desmos 中使用算式
 
@@ -1096,7 +1136,7 @@ python -m line2func.weights verify          # 重新檢查雜湊值
 python -m line2func.demo photo.jpg --lineart informative --out out/
 ```
 
-照片通常會得到很多短曲線。`demo` 會把它們合併到 5,000 條（見第 8 節）；在 App 裡，加大容差可以減少曲線。
+照片通常會得到很多短曲線。`demo` 會把它們合併到 5,000 條（見第 8 節）。網頁版會把每張圖都當成線稿描線，所以照片請用 `demo`。
 
 ### 7. `demo` 的所有選項
 
@@ -1111,7 +1151,7 @@ python -m line2func.demo IMAGE [options]
 | `--vectorizer {baseline,model}` | `baseline` | 描線引擎 |
 | `--ckpt FILE` | – | `--vectorizer model` 使用的 checkpoint（見第 9 節） |
 | `--curves N` | `5000` | 產生 N 條曲線：先細緻地描線，再合併「合併後對圖影響最小」的相鄰片段（見第 8 節）。曲線本來就比 N 少的圖會全部保留 |
-| `--tolerance PX` | 關閉 | 改用曲線擬合的最大誤差來描線，而不是指定曲線數量（App 就是這樣，預設 1.0）。數值越大，曲線越少、越平滑 |
+| `--tolerance PX` | 關閉 | 改用曲線擬合的最大誤差來描線，而不是指定曲線數量。數值越大，曲線越少、越平滑 |
 | `--decisions {learned,rules,PATH}` | `learned` | 由誰決定線條在交叉處怎麼接、哪些斷口要接起來、哪些相鄰的交叉點其實是同一個淺角交叉、哪裡是轉角：學習式評分器、角度規則，或其他學習權重（見第 8 節） |
 | `--threshold 0..1` | 自動 | 墨跡門檻。自動：採用 Otsu 門檻，但線稿最高只到 0.25，讓淺色的筆畫保持完整（如果連紙面都會被描出來，就維持 Otsu 門檻）。淡的線被漏掉時調低，紙張紋理被描出來時調高 |
 | `--form {parametric,named,function}` | `parametric` | `desmos.txt`／`equations.tex` 怎麼寫每條曲線：參數式、具名式（直線與圓弧；其他曲線仍是參數式），或函數 `y = f(x)`／`x = g(y)`（見第 5 節） |
@@ -1121,6 +1161,7 @@ python -m line2func.demo IMAGE [options]
 | `--no-refine` | 精修開啟 | 跳過把曲線貼齊墨跡中心線的步驟（精修約可讓與真實線條的距離減半） |
 | `--upscale {auto,1,2,3,4}` | `auto` | 以 N 倍解析度描線，再把曲線換算回原尺寸。`auto` 在線條細於約 1.75 px 時放大 2 倍；容許誤差仍以原圖像素計 |
 | `--no-faint` | 淡線開啟 | 不加入門檻以下的淡線，也不加入極淡的線（這個步驟很保守：在有雜訊或陰影的紙上不會加入任何東西） |
+| `--denoise 0..100` | `50` | 小雜點和短的淡線片段當成雜訊丟掉的強度：0 全部保留（細節最多；有雜訊的掃描圖連雜訊也會描出來），100 是兩倍嚴格（見第 8 節） |
 | `--quality` | 關閉 | 拿結果和原圖比對：輸出 `quality.json`、`quality.png` 與摘要（見第 8 節） |
 | `--no-residual` | 第二遍開啟 | 跳過第二遍描線（第二遍只描第一遍沒蓋到的墨跡，見第 8 節） |
 | `--no-outline` | 外框開啟 | 實心區域（粗重的睫毛）以及粗筆畫、楔形筆畫（筆刷）維持中心線，不改成填滿的外框 |
@@ -1135,7 +1176,7 @@ python -m line2func.demo IMAGE [options]
 - **淺色與很淡的線：** 線稿的自動墨跡門檻最高只到 0.25，所以淺灰色的筆畫（例如飄散的髮絲）會完整描出，而不是斷成一段一段的虛線。比這更淡的線，只要明顯比周圍背景深也會被加入；最淡的、一直到紙張本身的雜訊為止，只要明顯是線也會被加入（見下文）。在乾淨紙面上很淡的鉛筆稿，可以試試 `--threshold 0.15` 或更低（細節更多，曲線也更多）。
 - **真實線稿請用傳統引擎：** 在一張真實的動漫線稿上，神經網路引擎漏掉較多墨跡、碎片也較多，雖然它在合成測試中勝過傳統引擎。
 - **線寬差距：** 最粗的線如果超過最細的約 4.5 倍，品質可能下降；粗很多的區域會被當成填色區域。
-- **掃描雜訊、JPEG：** 傳統引擎會去除小雜點。如果灰塵還是被描出來，先清理掃描圖或調高 `--threshold`。
+- **掃描雜訊、JPEG：** 傳統引擎會去除小雜點（紙面乾淨時，接續某條線的小點會保留，見後面）。如果灰塵還是被描出來，先清理掃描圖或調高 `--threshold`。
 - **曲線太多或太少：** `demo` 最多產生 5,000 條；用 `--curves N` 指定其他數量（見下文）。用這個方法減少曲線，比調高 `--tolerance` 保留更多細節。
 - **全是細線的圖：** 如果整張圖只有細於約 2 px 的線，量到的線寬可能偏寬最多 0.5 px。
 
@@ -1171,6 +1212,31 @@ python -m line2func.demo IMAGE [options]
 | 時間 | 8.0 → 8.4 秒 | 16.3 → 18.4 秒 | 20.3 → 21.5 秒 | 17.5 → 19.1 秒 |
 
 品質工具會把畫在這種線上的曲線算成在墨跡上（「算上淡墨」）；它較嚴格的主要數字只把門檻一半以上的墨當墨跡，所以反而會上升（圖 4：1.9% → 5.2%）。在 SVG 裡這些線和原圖一樣又細又淡。
+
+**斷成點與虛線的線。** 描線器會把小雜點和短的淡線片段當成雜訊丟掉。但忽隱忽現的淺色線條（例如飄散的髮絲、衣服的皺褶）正好會斷成這種點和短虛線，結果跟雜訊一起被丟掉了。所以線稿裡，彼此相距 2 個線寬以內的片段會合起來判斷：斷掉的線會保留，孤立的小雜點照樣丟掉。最多 5,000 條曲線時：
+
+| | 淡線保留率 | 漏掉的墨跡 |
+|---|---|---|
+| 圖 1 | 99.26% → 99.60% | 0.35% → 0.24% |
+| 圖 2 | 91.78% → **95.45%** | 4.44% → **2.80%** |
+| 圖 3 | 96.93% → 98.77% | 0.96% → 0.46% |
+| 圖 4 | 91.10% → **97.09%** | 4.74% → **1.75%** |
+
+不在墨跡上的曲線長度（算上淡墨）沒有增加，表示新增的曲線都畫在真的線上；描線時間多 1–4 秒，忽隱忽現的線可能會描成虛線。在有雜訊的紙上，一串雜點也會被當成線：在 100 張有雜訊的合成掃描圖上，曲線落在真實線條上的比例從 0.93 降到 0.87（最差的一張只剩 0.10）。所以只有紙面乾淨時（在空白紙面量到的像素雜訊低於 0.005）才這樣做；這些掃描圖的結果因此不受影響。
+
+#### 去雜訊的強度：`--denoise`
+
+`--denoise`（網頁版是〔去雜訊〕與它的拖動條）決定小雜點和短的淡線片段丟得多嚴格：50 是上面說明的預設值，0 全部保留，100 則把各項門檻加倍，而且不再把斷線的片段合起來判斷。取消勾選〔去雜訊〕等於 0。在圖 4 和 100 張有雜訊的合成掃描圖（雜訊、雜點、JPEG）上：
+
+| 強度 | 圖 4：淡線保留率 | 圖 4：漏掉的墨跡 | 雜訊掃描圖：曲線落在真實線條上的比例（最差一張） |
+|---|---|---|---|
+| 0 | 98.58% | 1.12% | 0.849（0.105） |
+| 25 | 97.95% | 1.40% | 0.923（0.737） |
+| 50 | 97.09% | 1.75% | 0.929（0.747） |
+| 75 | 94.54% | 2.90% | 0.932（0.750） |
+| 100 | 83.12% | 8.68% | 0.934（0.752） |
+
+乾淨的線稿上，強度越低保留越多細節，也不會多畫錯的線（不在墨跡上的曲線長度維持在 0.10–0.13%）。有雜訊的掃描圖設成 0 會連雜訊一起描（曲線多 55%）；25 以上結果幾乎不變，強度越高只會少掉一點點線條（召回率 50 時 0.991，100 時 0.988）。
 
 #### 粗重的睫毛與其他實心區域
 
@@ -1265,7 +1331,7 @@ missed ink: 11.9% of all ink; by cause: below_threshold 84.8%, speck 6.3%, untra
 | **missed ink by cause**（遺漏原因） | `below_threshold` = 太淡而沒描；`speck` = 當成雜點移除；`untraced` = 看得到但沒描到的線（細節太密、分支太短） | 依上面對應的方法處理 |
 | **curves／strokes** | 精簡程度；想更忠實就一定要更多曲線 | 要用 Desmos 時指定較小的 `--curves N` |
 
-`quality.png` 會把問題標在圖上：**紅色** = 漏掉的線、**橘色** = 漏掉的淡墨、**藍色** = 沒有墨跡的曲線。在檢視器中，背景選〔遺漏細節〕即可查看。
+`quality.png` 會把問題標在圖上：**紅色** = 漏掉的線、**橘色** = 漏掉的淡墨、**藍色** = 沒有墨跡的曲線。在檢視器中，顯示方式選〔線段＋遺漏線段〕即可查看。
 
 這些數字已在有標準答案的合成圖上驗證過。「lines」保留率與真實值平均只差約 0.01（500 組結果的 Spearman 相關係數 0.93），距離 d_M 與真實誤差高度一致（Spearman 0.97），亂線檢查抓到 98% 刻意加入的亂線，而且沒有誤報。報告中也有 IoU，但線寬細於約 2 px 時不可信：只偏移 1 px 就可能讓它減半。
 
@@ -1378,7 +1444,7 @@ python -m line2func.train_decisions --data data/decisions_v1 --out runs/decision
 
 ### 11. 在 Python 中使用
 
-一次跑完整個流程，和 `demo` 與 App 的做法相同（第二遍、外框和讓外框在 Desmos 裡填滿的圈線預設開啟；`demo` 指定最多 5,000 條曲線，App 則指定容差；`optimize=True` 需要 PyTorch）：
+一次跑完整個流程，和 `demo` 與網頁版的做法相同（第二遍、外框和讓外框在 Desmos 裡填滿的圈線預設開啟；兩者都指定最多 5,000 條曲線；`optimize=True` 需要 PyTorch）：
 
 ```python
 from line2func import functions, lineart, pipeline
@@ -1386,7 +1452,7 @@ from line2func.export import write_outputs
 
 rgb = lineart.load_rgb("drawing.png")
 curves, ink = pipeline.trace(rgb, upscale="auto", curve_count=5000)   # 最多 5,000 條曲線，和 demo 一樣
-curves, ink = pipeline.trace(rgb, upscale="auto", fit_tolerance=1.0)  # 指定容差，和 App 一樣
+curves, ink = pipeline.trace(rgb, upscale="auto", fit_tolerance=1.0)  # 改用容差
 curves, ink = pipeline.trace(rgb, upscale="auto", optimize=True)
 curves, ink = pipeline.trace(rgb, upscale="auto", decisions="rules")  # 改由角度規則決定
 
@@ -1426,7 +1492,7 @@ curves = run(ink)
 
 ```
 line2func/
-  app.py  browser.py  __main__.py          # App（python -m line2func）、Chrome/Edge 啟動器
+  app.py  browser.py  __main__.py          # 網頁版的伺服器（python -m line2func）、瀏覽器啟動器
   viewer/                                  # 網頁：index.html、app.js、viewer.js、i18n.js、i18n.json
   demo.py  serve.py  pipeline.py           # 指令，以及它們共用的描線流程
   lineart.py  lineart_model.py  weights.py # 抽線稿、預訓練模型、權重下載
@@ -1461,7 +1527,7 @@ python -m pytest            # 約 360 個測試；沒有 PyTorch 時略過模型
 - [x] 合成資料產生器；單曲線與多曲線神經網路模型；整張圖推論
 - [x] 照片用的預訓練線稿模型（Informative Drawings，MIT；下載時檢查 SHA-256）
 - [x] 直線與圓弧的具名算式、曲線精修、線寬與顏色
-- [x] 瀏覽器 App（`python -m line2func`），繁體中文與英文介面
+- [x] 網頁版（`python -m line2func`），繁體中文與英文介面
 - [x] 第二遍描線、粗筆畫改為填滿的外框、渲染後比對（`--optimize`）
 - [x] 學習式決策（預設；`--decisions rules` 改用角度規則）
 - [x] 粗重睫毛等實心區域，並加上 Desmos 用的圈線；預設最多 5,000 條曲線；淺色與極淡的線

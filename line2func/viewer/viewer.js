@@ -7,7 +7,6 @@ import { t } from "./i18n.js";
 export const PALETTE = ["#e6194b", "#0082c8", "#3cb44b", "#f58230", "#911eb4", "#00a0a0", "#f032e6", "#808000"];
 export const DESMOS_LIMIT = 5000; // = line2func.export.DESMOS_CURVE_LIMIT (tests check it)
 const ROW = 68, CELL = 32;
-const FILLED_TAGS = ["outline", "fill_outline"]; // closed outlines, filled in the measured style
 
 // ---------- math (must match line2func/export.py byte for byte; see tests/test_viewer_assets.py) ----------
 export function power(p0, p1, p2, p3) { // [a, b, c, d] of a t^3 + b t^2 + c t + d
@@ -53,37 +52,41 @@ export function esc(s) {
 const tagName = (tag) => t("tag." + tag, {}, tag);
 const shapeName = (type) => t("shape." + type, {}, type);
 
-// el: {stage, canvas, tip, message, list, spacer, detail, stats, fit, styleLabel, styleMeasured, bgShow, bgKind, bgAlpha}
+// el: {stage, canvas, tip, message, list, spacer, detail, stats, fit, originalOnly, viewMode, bgAlpha}
+// Display modes (el.viewMode): "lines" (the curves on paper), "original" (on the original image) and "missed"
+// (on the quality check's map of missed detail). el.originalOnly shows the original image alone.
 export function createViewer(el) {
   const { stage, canvas, tip, message, list, spacer, detail, stats } = el;
   const ctx = canvas.getContext("2d");
-  let W = 0, H = 0, curves = [], groups = [], grid = new Map(), styled = new Map(), fills = new Map();
-  let measuredStyle = false, lineWidthMeta = 2, status = "empty", failMsg = "", quality = null;
+  let W = 0, H = 0, curves = [], groups = [], grid = new Map();
+  let status = "empty", failMsg = "", quality = null; // status: empty, loading, failed, preview (an image alone), ready
   let functionCount = null; // equations y = f(x) / x = g(y) in the result, when it has them
   let desmosWarning = true; // the app shows its own banner instead
   let view = { s: 1, tx: 0, ty: 0 }, dpr = window.devicePixelRatio || 1;
   let hover = -1, selected = -1, dirty = true, fitted = false, generation = 0;
-  const bg = { img: null, show: true, alpha: 0.35, kind: "original", images: {} };
+  // followFit: refit when the stage changes size until the user pans or zooms (a banner or a wrapping
+  // toolbar can appear after the first fit); insetBottom: stage pixels at the bottom that are covered
+  let followFit = false, insetBottom = 0;
+  let mode = "original", originalOnly = false; // the chosen display; a mode whose image is missing shows "lines"
+  const bg = { images: {}, alpha: { original: 0.35, missed: 0.9 } }; // images: original, quality
   const pointers = new Map();
   let drag = null, pinch = null;
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
   // ---------- data ----------
   function reset() {
-    W = 0; H = 0; curves = []; groups = []; grid = new Map(); styled = new Map(); fills = new Map();
-    hover = -1; selected = -1; quality = null; fitted = false; functionCount = null;
+    W = 0; H = 0; curves = []; groups = []; grid = new Map();
+    hover = -1; selected = -1; quality = null; fitted = false; functionCount = null; followFit = false; insetBottom = 0;
     pointers.clear(); drag = null; pinch = null;
     canvas.classList.remove("dragging", "over");
     tip.style.display = "none";
     list.scrollTop = 0; spacer.innerHTML = ""; spacer.style.height = "0px";
-    bg.images = {}; bg.img = null;
-    updateBackgrounds();
+    bg.images = {};
     dirty = true;
   }
 
   function prepare(doc) {
     W = doc.image.width; H = doc.image.height;
-    lineWidthMeta = (doc.meta && doc.meta.line_width) || 2;
     curves = doc.curves.map((c, i) => {
       const p = c.ctrl.flat();
       const xs = [p[0], p[2], p[4], p[6]], ys = [p[1], p[3], p[5], p[7]];
@@ -98,15 +101,9 @@ export function createViewer(el) {
     });
     functionCount = curves.some((c) => c.functions) ? curves.reduce((n, c) => n + (c.functions ? c.functions.length : 0), 0) : null;
     groups = PALETTE.map(() => new Path2D());
-    const filledStrokes = new Set(curves.filter((c) => c.tags.some((tag) => FILLED_TAGS.includes(tag))).map((c) => c.stroke));
     for (const c of curves) {
-      const p = c.p;
-      groups[((c.stroke % PALETTE.length) + PALETTE.length) % PALETTE.length].moveTo(p[0], p[1]);
-      groups[((c.stroke % PALETTE.length) + PALETTE.length) % PALETTE.length].bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
-      const key = `${c.color || "#000000"}|${(Math.round((c.width || lineWidthMeta) * 4) / 4).toFixed(2)}`;
-      let sp = styled.get(key);
-      if (!sp) styled.set(key, (sp = new Path2D()));
-      sp.moveTo(p[0], p[1]); sp.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
+      const p = c.p, path = groups[((c.stroke % PALETTE.length) + PALETTE.length) % PALETTE.length];
+      path.moveTo(p[0], p[1]); path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
       const x0 = Math.floor(c.box[0] / CELL), x1 = Math.floor(c.box[2] / CELL);
       const y0 = Math.floor(c.box[1] / CELL), y1 = Math.floor(c.box[3] / CELL);
       for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
@@ -116,34 +113,24 @@ export function createViewer(el) {
         cell.push(c.i);
       }
     }
-    // closed outlines (thick strokes, filled areas): one even-odd fill per color, so holes stay open
-    const byStroke = new Map();
-    for (const c of curves) if (filledStrokes.has(c.stroke)) {
-      if (!byStroke.has(c.stroke)) byStroke.set(c.stroke, []);
-      byStroke.get(c.stroke).push(c);
-    }
-    for (const pieces of byStroke.values()) {
-      const color = pieces.find((c) => c.color)?.color || "#000000";
-      let path = fills.get(color);
-      if (!path) fills.set(color, (path = new Path2D()));
-      pieces.forEach((c, k) => {
-        const p = c.p;
-        if (k === 0) path.moveTo(p[0], p[1]);
-        path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
-      });
-      path.closePath();
-    }
-    el.styleLabel.hidden = !curves.some((c) => c.width !== null || c.color !== null);
     spacer.style.height = curves.length * ROW + "px";
   }
 
-  function updateBackgrounds() {
-    for (const option of el.bgKind.options) option.disabled = !bg.images[option.value];
-    if (!bg.images[bg.kind] && bg.images.original) bg.kind = "original";
-    el.bgKind.value = bg.kind;
-    bg.img = bg.images[bg.kind] || null;
-    const any = Object.keys(bg.images).length > 0;
-    el.bgShow.disabled = !any; el.bgAlpha.disabled = !any; el.bgKind.disabled = !any;
+  // what is drawn: the chosen mode when its image is there, else the curves alone
+  function shownMode() {
+    if (mode === "original" && bg.images.original) return "original";
+    return mode === "missed" && bg.images.quality ? "missed" : "lines";
+  }
+  function imageOnly() { return status === "preview" || (status === "ready" && originalOnly && !!bg.images.original); }
+  function updateControls() {
+    const ready = status === "ready", shown = shownMode();
+    const has = { lines: true, original: !!bg.images.original, missed: !!bg.images.quality };
+    for (const option of el.viewMode.options) option.disabled = !has[option.value];
+    el.viewMode.value = shown;
+    el.viewMode.disabled = !ready || originalOnly;
+    el.originalOnly.disabled = !ready || !has.original;
+    el.bgAlpha.disabled = !ready || originalOnly || shown === "lines";
+    if (shown !== "lines") el.bgAlpha.value = String(Math.round(bg.alpha[shown] * 100));
     dirty = true;
   }
 
@@ -208,19 +195,20 @@ export function createViewer(el) {
     dpr = window.devicePixelRatio || 1;
     const w = stage.clientWidth, h = stage.clientHeight;
     canvas.width = Math.max(1, Math.round(w * dpr)); canvas.height = Math.max(1, Math.round(h * dpr));
-    if (!fitted && W && w && h) fitted = fit();
+    if ((!fitted || followFit) && W && w && h) fitted = fit();
     dirty = true;
   }
   function fit() {
-    const w = stage.clientWidth, h = stage.clientHeight, pad = 24;
-    if (!W || !w || !h) return false; // hidden: fit once the stage has a size
+    const w = stage.clientWidth, h = stage.clientHeight - insetBottom, pad = 24;
+    if (!W || !w || h <= 0) return false; // hidden: fit once the stage has a size
     view.s = Math.max(1e-3, Math.min((w - 2 * pad) / W, (h - 2 * pad) / H));
     view.tx = (w - W * view.s) / 2; view.ty = (h - H * view.s) / 2; dirty = true;
+    followFit = true;
     return true;
   }
   function zoomAt(px, py, f) {
     const s = Math.min(200, Math.max(0.02, view.s * f)), ix = (px - view.tx) / view.s, iy = (py - view.ty) / view.s;
-    view.s = s; view.tx = px - ix * s; view.ty = py - iy * s; dirty = true;
+    view.s = s; view.tx = px - ix * s; view.ty = py - iy * s; dirty = true; followFit = false;
   }
   function trace(c) { ctx.beginPath(); const p = c.p; ctx.moveTo(p[0], p[1]); ctx.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]); }
   function highlight(i, color, px) {
@@ -234,22 +222,20 @@ export function createViewer(el) {
     ctx.fillStyle = css("--canvas"); ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!W) return;
     ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.tx, dpr * view.ty);
-    ctx.fillStyle = measuredStyle ? "#ffffff" : css("--paper"); // the measured style shows real ink on paper
-    ctx.fillRect(0, 0, W, H);
-    if (bg.img && bg.show && bg.alpha > 0) {
-      ctx.globalAlpha = bg.alpha; ctx.imageSmoothingEnabled = view.s < 4;
-      ctx.drawImage(bg.img, 0, 0, W, H); ctx.globalAlpha = 1;
+    ctx.fillStyle = css("--paper"); ctx.fillRect(0, 0, W, H);
+    const alone = imageOnly(), shown = shownMode();
+    const img = alone || shown === "original" ? bg.images.original : shown === "missed" ? bg.images.quality : null;
+    if (img) {
+      ctx.globalAlpha = alone ? 1 : bg.alpha[shown]; ctx.imageSmoothingEnabled = view.s < 4;
+      ctx.drawImage(img, 0, 0, W, H); ctx.globalAlpha = 1;
     }
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    if (measuredStyle) {
-      // true to scale: fills for closed outlines, measured width in image pixels, measured ink color
-      fills.forEach((path, color) => { ctx.fillStyle = color; ctx.fill(path, "evenodd"); });
-      styled.forEach((path, key) => {
-        const [color, w] = key.split("|");
-        ctx.strokeStyle = color; ctx.lineWidth = parseFloat(w); ctx.stroke(path);
-      });
+    if (alone) return; // the original image by itself: no curves
+    ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = 1.5 / view.s;
+    if (shown === "missed") {
+      // over the missed-detail map all curves are one quiet gray, so its red, orange and blue stand out
+      ctx.strokeStyle = "rgba(70, 70, 70, 0.55)";
+      groups.forEach((path) => ctx.stroke(path));
     } else {
-      ctx.lineWidth = 1.5 / view.s;
       groups.forEach((path, g) => { ctx.strokeStyle = PALETTE[g]; ctx.stroke(path); });
     }
     if (hover >= 0 && hover !== selected) highlight(hover, css("--hover"), 3.5);
@@ -274,7 +260,7 @@ export function createViewer(el) {
   function showDetail() {
     const c = curves[selected];
     if (!c) {
-      detail.innerHTML = `<span class="hint">${esc(t("viewer.hint"))}</span>`;
+      detail.innerHTML = status === "ready" ? `<span class="hint">${esc(t("viewer.hint"))}</span>` : "";
       return;
     }
     const tags = c.tags.map((tag) => `<span class="tag">${esc(tagName(tag))}</span>`).join(" ");
@@ -329,6 +315,7 @@ export function createViewer(el) {
     const bw = Math.max(b[2] - b[0], 1), bh = Math.max(b[3] - b[1], 1);
     if (bw * view.s > w * 0.8 || bh * view.s > h * 0.8) view.s = Math.min((w * 0.6) / bw, (h * 0.6) / bh);
     view.tx = w / 2 - ((b[0] + b[2]) / 2) * view.s; view.ty = h / 2 - ((b[1] + b[3]) / 2) * view.s; dirty = true;
+    followFit = false;
   }
   function showTip(i, x, y) {
     if (i < 0 || !curves[i]) { tip.style.display = "none"; return; }
@@ -359,7 +346,7 @@ export function createViewer(el) {
     const p = local(e);
     if (!pointers.has(e.pointerId)) {
       if (e.pointerType === "mouse") {
-        const i = hitTest((p.x - view.tx) / view.s, (p.y - view.ty) / view.s, 6 / view.s);
+        const i = imageOnly() ? -1 : hitTest((p.x - view.tx) / view.s, (p.y - view.ty) / view.s, 6 / view.s);
         setHover(i); showTip(i, p.x, p.y);
       }
       return;
@@ -370,11 +357,11 @@ export function createViewer(el) {
       const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       const s = Math.min(200, Math.max(0.02, pinch.s * d / Math.max(pinch.d, 1)));
       const ix = (pinch.mx - pinch.tx) / pinch.s, iy = (pinch.my - pinch.ty) / pinch.s;
-      view.s = s; view.tx = mx - ix * s; view.ty = my - iy * s; dirty = true;
+      view.s = s; view.tx = mx - ix * s; view.ty = my - iy * s; dirty = true; followFit = false;
     } else if (drag) {
       const dx = p.x - drag.x, dy = p.y - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; setHover(-1); showTip(-1); }
-      if (drag.moved) { view.tx = drag.tx + dx; view.ty = drag.ty + dy; dirty = true; }
+      if (drag.moved) { view.tx = drag.tx + dx; view.ty = drag.ty + dy; dirty = true; followFit = false; }
     }
   });
   function endPointer(e) {
@@ -382,7 +369,7 @@ export function createViewer(el) {
     const p = local(e);
     if (pointers.size === 1 && drag && !drag.moved && e.type === "pointerup") {
       const radius = (e.pointerType === "mouse" ? 6 : 14) / view.s;
-      select(hitTest((p.x - view.tx) / view.s, (p.y - view.ty) / view.s, radius), true);
+      select(imageOnly() ? -1 : hitTest((p.x - view.tx) / view.s, (p.y - view.ty) / view.s, radius), true);
     }
     pointers.delete(e.pointerId);
     pinch = null;
@@ -405,30 +392,33 @@ export function createViewer(el) {
   list.addEventListener("mouseover", (e) => { const r = e.target.closest(".row"); setHover(r ? +r.dataset.i : -1); });
   list.addEventListener("mouseleave", () => setHover(-1));
   el.fit.addEventListener("click", fit);
-  el.bgShow.addEventListener("change", (e) => { bg.show = e.target.checked; dirty = true; });
-  el.bgKind.addEventListener("change", (e) => {
-    bg.kind = e.target.value; bg.img = bg.images[bg.kind] || null;
-    if (bg.kind === "quality" && bg.alpha < 0.8) { bg.alpha = 0.9; el.bgAlpha.value = 90; }
-    dirty = true;
+  el.viewMode.addEventListener("change", (e) => { mode = e.target.value; updateControls(); });
+  el.originalOnly.addEventListener("change", (e) => {
+    originalOnly = e.target.checked;
+    if (imageOnly()) { setHover(-1); showTip(-1); }
+    updateControls();
   });
-  el.bgAlpha.addEventListener("input", (e) => { bg.alpha = e.target.value / 100; dirty = true; });
-  el.styleMeasured.addEventListener("change", (e) => { measuredStyle = e.target.checked; dirty = true; });
+  el.bgAlpha.addEventListener("input", (e) => {
+    const shown = shownMode();
+    if (shown !== "lines") { bg.alpha[shown] = e.target.value / 100; dirty = true; }
+  });
   new ResizeObserver(() => { resize(); renderList(); }).observe(stage);
   new ResizeObserver(renderList).observe(list);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { dirty = true; });
 
   // ---------- public ----------
-  // Show a result. sources: {original, lineart, quality, qualityJson} URLs (all optional).
+  // Show a result. sources: {original, quality, qualityJson} URLs (all optional).
   function load(doc, sources = {}) {
     const mine = ++generation;
     reset();
     prepare(doc);
     status = "ready";
-    resize(); renderList(); showDetail(); renderStats(); renderMessage();
-    for (const kind of ["original", "lineart", "quality"]) {
+    originalOnly = false; el.originalOnly.checked = false; // a new result shows its curves
+    resize(); renderList(); showDetail(); renderStats(); renderMessage(); updateControls();
+    for (const kind of ["original", "quality"]) {
       if (!sources[kind]) continue;
       const img = new Image();
-      img.onload = () => { if (mine !== generation) return; bg.images[kind] = img; updateBackgrounds(); };
+      img.onload = () => { if (mine !== generation) return; bg.images[kind] = img; updateControls(); };
       img.src = sources[kind];
     }
     if (sources.qualityJson) {
@@ -438,9 +428,20 @@ export function createViewer(el) {
         .catch(() => {});
     }
   }
-  function setLoading() { generation++; reset(); status = "loading"; renderStats(); renderMessage(); showDetail(); }
-  function fail(msg) { generation++; reset(); status = "failed"; failMsg = msg; renderStats(); renderMessage(); showDetail(); }
-  function unload() { generation++; reset(); status = "empty"; renderStats(); renderMessage(); showDetail(); }
+  // Show an image alone, e.g. a drawing waiting to be converted; w, h: its size in pixels; bottom: stage
+  // pixels at the bottom that something covers (it is fitted above them).
+  function preview(url, w, h, bottom = 0) {
+    const mine = ++generation;
+    reset();
+    W = w; H = h; status = "preview"; insetBottom = bottom;
+    resize(); renderList(); showDetail(); renderStats(); renderMessage(); updateControls();
+    const img = new Image();
+    img.onload = () => { if (mine !== generation) return; bg.images.original = img; dirty = true; };
+    img.src = url;
+  }
+  function setLoading() { generation++; reset(); status = "loading"; renderStats(); renderMessage(); showDetail(); updateControls(); }
+  function fail(msg) { generation++; reset(); status = "failed"; failMsg = msg; renderStats(); renderMessage(); showDetail(); updateControls(); }
+  function unload() { generation++; reset(); status = "empty"; renderStats(); renderMessage(); showDetail(); updateControls(); }
   function rerender() { renderStats(); renderMessage(); showDetail(); renderList(); }
   function setDesmosWarning(on) { desmosWarning = !!on; renderStats(); }
   // Keyboard shortcuts of the result screen; returns true when the key was used.
@@ -456,7 +457,7 @@ export function createViewer(el) {
   }
   function debug() {
     return { status, curves: curves.length, gridCells: grid.size, selected, hover, width: W, height: H,
-             backgrounds: Object.keys(bg.images), background: bg.kind, fills: fills.size, view: { ...view } };
+             backgrounds: Object.keys(bg.images), mode: shownMode(), imageOnly: imageOnly(), view: { ...view } };
   }
-  return { load, setLoading, fail, unload, rerender, setDesmosWarning, fit, handleKey, debug };
+  return { load, preview, setLoading, fail, unload, rerender, setDesmosWarning, fit, handleKey, debug };
 }

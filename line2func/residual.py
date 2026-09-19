@@ -73,9 +73,9 @@ def residual_pass(
     ink = np.asarray(ink, dtype=np.float32)
     thr = threshold if threshold is not None else baseline.auto_threshold(ink)
     line_w = float(curves.meta.get("line_width") or 2.0)
-    if min_length is None:
-        min_length = max(6.0, 3.0 * line_w)
     base = params or baseline.BaselineParams()
+    if min_length is None:
+        min_length = max(6.0, 3.0 * line_w) * base.denoise  # the noise filters' strength scales it too
     if margin is None:
         margin = max(1.5, base.fit_tolerance + 0.5)
     result = CurveSet(curves.width, curves.height, meta=dict(curves.meta))

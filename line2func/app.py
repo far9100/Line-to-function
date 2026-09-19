@@ -1,19 +1,23 @@
-"""line2func app: trace images in a local web page.
+"""line2func in the browser: trace images in a local web page.
 
-    python -m line2func                    # opens a Chrome or Edge app window
+    python -m line2func                    # opens the page in a tab of the default browser
     python -m line2func --browser none     # only print the address
-    python -m line2func --keep-running     # keep serving after the window closes
+    python -m line2func --browser chrome   # an app window instead (no tabs, no address bar)
 
-Drop an image into the window. Line art is traced directly. A photo first gets
-a line-art preview (fine / coarse network, Canny or XDoG) next to the original,
-and is traced once you confirm. Results open in the viewer (equations, Desmos,
-SVG, LaTeX, ZIP).
+The page is the curve viewer. Drop a line drawing onto it (or choose or paste
+one), choose functions or parametric equations and convert: the drawing is
+traced like ``demo`` (up to 5,000 curves) with a quality check, and the result
+opens in the same page (equations, Desmos, SVG, LaTeX, ZIP). The API can also
+extract line art from photos first (jobs of kind "lineart"); the page does not
+offer that.
 
 Everything runs on this computer. The server binds to 127.0.0.1, answers only
 requests addressed to this machine by name, and every POST must carry a
-per-run token that only its own page can read. The page keeps an event stream
-open (``/api/events``); when the last one closes, e.g. because the app window
-was closed, the server waits a short grace period for a reload, then exits.
+per-run token that only its own page can read. Ctrl+C or the page's Quit
+button ends the program. The page keeps an event stream open
+(``/api/events``); in an app window (``--browser chrome`` / ``edge``), once the
+last one closes the server waits a short grace period for a reload, then exits
+(``--keep-running`` keeps it serving).
 
 Routes (errors are ``{"error": {"code", "detail", "field"}}``; the page translates the codes)::
 
@@ -22,7 +26,8 @@ Routes (errors are ``{"error": {"code", "detail", "field"}}``; the page translat
     GET  /api/events                      server-sent events: hello, job (snapshots), ping, bye
     POST /api/images                      raw image bytes (X-Filename header) -> image info
     GET  /api/images/<id>[/preview]       image info, or its upright preview (JPEG / PNG)
-    POST /api/jobs                        {image_id, kind: "lineart" | "trace", method, scale, ...} -> snapshot
+    POST /api/jobs                        {image_id, kind: "lineart" | "trace", method, scale, form, curves, denoise, ...}
+                                          -> snapshot
     GET  /api/jobs/<id>                   job snapshot (state, stage, summary, files)
     POST /api/jobs/<id>/cancel            cancel (a running job stops at its next stage)
     GET  /api/jobs/<id>/data/<file>       curves.json, out.svg, desmos.txt, equations.tex, lineart.png,
@@ -59,7 +64,8 @@ import numpy as np
 from PIL import Image
 
 from line2func import __version__, browser, lineart, pipeline, weights
-from line2func.export import DESMOS_CURVE_LIMIT, output_texts
+from line2func.export import DESMOS_CURVE_LIMIT, FORMS, output_texts
+from line2func.functions import attach
 from line2func.serve import DATA_FILES, BaseHandler, LocalServer
 
 MAX_UPLOAD = 64 << 20  # bytes per uploaded file
@@ -78,7 +84,7 @@ LANGS = ("en", "zh-TW")
 IMMUTABLE = "private, max-age=31536000, immutable"  # id-addressed files never change
 MODEL_METHODS = ("informative", "informative-coarse")
 OPTION_KEYS = {"method", "scale", "tolerance", "threshold", "refine", "named", "shape_tolerance", "upscale",
-               "faint", "quality"}
+               "faint", "quality", "form", "denoise", "denoise_on"}
 DOWNLOAD_NAMES = {
     "curves.json": "{stem}.json",
     "out.svg": "{stem}.svg",
@@ -367,7 +373,8 @@ class Board:
 
 
 class Lifecycle:
-    """Counts open event streams (app windows); ends the program a grace period after the last one closed."""
+    """Counts open event streams (pages); with ``auto_exit`` (an app window) ends the program a grace period
+    after the last one closed."""
 
     def __init__(self, app: App, grace: float = GRACE):
         self.app = app
@@ -572,14 +579,21 @@ class App:
             raise ApiError(HTTPStatus.CONFLICT, status["reason"], field="method")
         params = {"method": method, "scale": self.resolve_scale(img, p.get("scale", "auto"))}
         if kind == "trace":
+            named = _bool(p, "named", False)
+            # a number of curves (as demo makes them) instead of the fitting tolerance
+            curves = _number(p, "curves", None, 1, 50_000, optional=True)
+            if curves is not None and not curves.is_integer():
+                raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="curves")
             params.update(
                 tolerance=_number(p, "tolerance", 1.0, 0.05, 20.0),
+                curves=None if curves is None else int(curves),
                 threshold=_number(p, "threshold", None, 0.01, 0.99, optional=True),
                 refine=_bool(p, "refine", True),
-                named=_bool(p, "named", False),
+                form=_choice(p, "form", FORMS, "named" if named else "parametric"),
                 shape_tolerance=_number(p, "shape_tolerance", 0.5, 0.05, 10.0),
                 upscale=_choice(p, "upscale", ("auto", 1, 2), "auto"),
                 faint=_bool(p, "faint", True),
+                denoise=_number(p, "denoise", pipeline.DENOISE, 0.0, 100.0),
                 quality=_bool(p, "quality", False),
             )
             if params["quality"]:
@@ -654,21 +668,26 @@ class App:
         curves, full_ink = pipeline.trace(
             rgb, lineart_method=method, fit_tolerance=p["tolerance"], threshold=p["threshold"],
             refine=p["refine"], upscale=p["upscale"], shape_tolerance=p["shape_tolerance"],
-            faint_lines=p["faint"], ink=ink, progress=step,
+            faint_lines=p["faint"], ink=ink, progress=step, curve_count=p["curves"], denoise=p["denoise"],
         )
         n_shapes = sum(c.shape is not None for c in curves)
         curves.meta.update(source=img.name, lineart=method, vectorizer="baseline", refined=p["refine"],
-                           named=p["named"], scale=p["scale"], seconds=round(time.monotonic() - job.started, 3))
+                           named=p["form"] == "named", form=p["form"], scale=p["scale"],
+                           seconds=round(time.monotonic() - job.started, 3))
         if p["threshold"] is not None:
             curves.meta["threshold"] = p["threshold"]
         step("export")
-        files = {name: text.encode("utf-8") for name, text in output_texts(curves, named=p["named"]).items()}
+        functions = attach(curves) if p["form"] == "function" else None
+        if functions is not None:
+            curves.meta["functions"] = functions
+        files = {name: text.encode("utf-8") for name, text in output_texts(curves, form=p["form"]).items()}
         if method != "none":
             files["lineart.png"] = _lineart_png(full_ink)
+        equations = len(curves) if functions is None else functions["count"]  # lines of desmos.txt
         warnings = []
         if len(curves) == 0:
             warnings.append("no_lines")
-        if len(curves) > DESMOS_CURVE_LIMIT:
+        if equations > DESMOS_CURVE_LIMIT:
             warnings.append("over_desmos_limit")
         if p.get("quality_skipped"):
             warnings.append("quality_skipped")
@@ -686,7 +705,8 @@ class App:
                         "stray": report["flags"]["stray_curves"]}
         job.files = files
         job.summary = {
-            "curves": len(curves), "strokes": curves.num_strokes, "shapes": n_shapes,
+            "curves": len(curves), "strokes": curves.num_strokes, "shapes": n_shapes, "form": p["form"],
+            "equations": equations,
             "width": curves.width, "height": curves.height, "scale": p["scale"],
             "upscale": curves.meta.get("upscale", 1), "line_width": curves.meta.get("line_width"),
             "seconds": curves.meta["seconds"], "warnings": warnings, "quality": headline,
@@ -900,14 +920,15 @@ def make_app(port: int = 0, *, auto_exit: bool = False, grace: float = GRACE, ho
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="python -m line2func",
-        description="Open the line2func app: drop an image (line art or photo) into the window "
-                    "and turn its lines into equations.")
+        description="Open line2func in the browser: drop a line drawing onto the page and turn its lines "
+                    "into equations.")
     p.add_argument("--port", type=int, default=0, help="port to use (default: any free port)")
-    p.add_argument("--browser", choices=browser.CHOICES, default="auto",
-                   help="auto: a Chrome app window, else Edge, else the default browser; "
-                        "default: a normal tab in the default browser; none: only print the address")
+    p.add_argument("--browser", choices=browser.CHOICES, default="default",
+                   help="default: a tab in the default browser (the default); chrome, edge: an app window "
+                        "without tabs or address bar, which ends the program when closed; auto: Chrome's app "
+                        "window, else Edge's, else a tab; none: only print the address")
     p.add_argument("--keep-running", action="store_true",
-                   help="keep running after the app window is closed (stop with Ctrl+C)")
+                   help="with an app window: keep running after it is closed (stop with Ctrl+C)")
     args = p.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -930,8 +951,8 @@ def main(argv: list[str] | None = None) -> int:
         print("  請用瀏覽器開啟上面的網址；按 Ctrl+C 結束。")
         print("  Open the address above in a browser. Press Ctrl+C to stop.")
     else:
-        print("  已在瀏覽器開啟；按 Ctrl+C 結束。")
-        print("  Opened in the browser. Press Ctrl+C to stop.")
+        print("  已在瀏覽器開啟；按 Ctrl+C 或頁面上的〔結束〕即結束。")
+        print("  Opened in the browser. Press Ctrl+C, or Quit on the page, to stop.")
     try:
         app.server.serve_forever()
     except KeyboardInterrupt:

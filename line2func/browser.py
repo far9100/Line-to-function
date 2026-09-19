@@ -1,9 +1,12 @@
-"""Find Chrome or Edge and open a page in an app window (no tabs, no address bar).
+"""Open the page of ``python -m line2func``: a tab in the default browser, or an app window.
 
-Used by ``python -m line2func``. Search order on Windows: the registry's
-"App Paths" (per user, then per machine), the usual install folders, then
-``PATH``. On macOS and Linux the usual application paths and command names.
-If neither browser is found, the system's default browser opens a normal tab.
+``python -m line2func`` opens a normal tab by default (``--browser default``).
+With ``--browser chrome`` / ``edge`` / ``auto`` it finds Chrome or Edge and
+opens an app window instead (no tabs, no address bar). Search order on
+Windows: the registry's "App Paths" (per user, then per machine), the usual
+install folders, then ``PATH``. On macOS and Linux the usual application paths
+and command names. If neither browser is found, the default browser opens a
+normal tab.
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from line2func import geometry as g
-from line2func.baseline import BaselineParams, thin, vectorize
+from line2func.baseline import BaselineParams, _remove_small, thin, vectorize
 from line2func.curves import Curve, CurveSet
 from line2func.metrics import f_score
 from line2func.render import render_lineart
@@ -106,6 +106,43 @@ def test_specks_are_ignored():
 
     cs, _ = trace([g.line([10, 64], [118, 64])], edit=specks)
     assert cs.num_strokes == 1
+    # judged together with close neighbours, lone specks still go
+    assert vectorize(1.0 - specks(np.full((128, 128), 255, np.uint8)) / 255.0, BaselineParams(join_widths=2.0)).curves == []
+
+
+def test_close_specks_count_as_one():
+    mask = np.zeros((40, 60), bool)
+    for x in range(5, 55, 4):  # a dotted line: 2 x 2 dots, 2 px apart
+        mask[20:22, x:x + 2] = True
+    mask[4:6, 4:6] = True  # and a lone speck
+    assert not _remove_small(mask, 8).any()  # every dot alone is too small
+    kept = _remove_small(mask, 8, gap=3.0)
+    assert kept[18:24].sum() == mask[18:24].sum() and not kept[4:6, 4:6].any()
+
+
+def _dashed(noise: float = 0.0) -> np.ndarray:
+    ink = np.zeros((80, 160), np.float32)
+    ink[20:23, 10:150] = 1.0  # a strong line
+    for x in range(10, 150, 7):  # and a faint one that broke into 4 px dashes
+        ink[55:57, x:x + 4] = 0.3
+    if noise:
+        ink = np.clip(ink + np.random.default_rng(0).normal(0.0, noise, ink.shape), 0.0, 1.0).astype(np.float32)
+    return ink
+
+
+def _near_row(cs: CurveSet, y: float) -> float:
+    """Share of the dashed line's span (x 10..150 at height y) within 2 px of a curve."""
+    pts = np.vstack([g.evaluate(c.ctrl, np.linspace(0, 1, 50)) for c in cs.curves])
+    xs = np.arange(10.0, 150.0, 1.0)
+    return float(np.mean([np.min(np.hypot(pts[:, 0] - x, pts[:, 1] - y)) <= 2.0 for x in xs]))
+
+
+def test_a_line_broken_into_dashes_stays_when_its_pieces_are_joined():
+    assert _near_row(vectorize(_dashed()), 56.0) < 0.2  # each dash alone: a speck
+    assert _near_row(vectorize(_dashed(), BaselineParams(join_widths=2.0)), 56.0) > 0.8
+    # on noisy paper, chains of noise specks could pass as lines: joining is off there
+    noisy = _dashed(noise=0.03)
+    assert vectorize(noisy, BaselineParams(join_widths=2.0)).to_dict() == vectorize(noisy).to_dict()
 
 
 def test_filled_area_gives_outline():
@@ -159,3 +196,11 @@ def test_tolerance_parameter_controls_curve_count():
     loose = vectorize(ink, BaselineParams(fit_tolerance=2.0))
     tight = vectorize(ink, BaselineParams(fit_tolerance=0.3))
     assert len(tight) >= len(loose)
+
+
+def test_denoise_scales_the_speck_and_faint_piece_limits():
+    ink = _dashed()  # a strong line, and a faint one broken into 4 px dashes
+    off, tuned, strict = (vectorize(ink, BaselineParams(denoise=d)) for d in (0.0, 1.0, 2.0))
+    assert _near_row(off, 56.0) > 0.8 and _near_row(tuned, 56.0) < 0.2  # off: even lone dashes stay
+    assert tuned.to_dict() == vectorize(ink).to_dict()
+    assert len(strict) <= len(tuned) <= len(off)
