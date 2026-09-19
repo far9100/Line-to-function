@@ -19,6 +19,11 @@ button ends the program. The page keeps an event stream open
 last one closes the server waits a short grace period for a reload, then exits
 (``--keep-running`` keeps it serving).
 
+Reading images, checking a job's settings and tracing are in
+:mod:`line2func.jobs`, which the online page runs in the browser too
+(:mod:`line2func.web`); this module adds the HTTP server, the job queue and the
+settings file.
+
 Routes (errors are ``{"error": {"code", "detail", "field"}}``; the page translates the codes)::
 
     GET  /  /app.js  /viewer.js  /i18n.js  /i18n.json   the page (line2func/viewer/)
@@ -42,9 +47,7 @@ from __future__ import annotations
 import argparse
 import hmac
 import importlib.util
-import io
 import json
-import math
 import os
 import re
 import secrets
@@ -54,18 +57,16 @@ import sys
 import threading
 import time
 import traceback
-import zipfile
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import numpy as np
-from PIL import Image
 
-from line2func import __version__, browser, lineart, pipeline, weights
-from line2func.export import DESMOS_CURVE_LIMIT, FORMS, output_texts
-from line2func.functions import attach
+from line2func import __version__, browser, jobs, lineart, pipeline, weights
+from line2func.export import DESMOS_CURVE_LIMIT
+from line2func.jobs import ApiError, StoredImage
 from line2func.serve import DATA_FILES, BaseHandler, LocalServer
 
 MAX_UPLOAD = 64 << 20  # bytes per uploaded file
@@ -97,58 +98,15 @@ DOWNLOAD_NAMES = {
 _ID = r"[0-9a-f]{16}"
 
 
-class ApiError(Exception):
-    """An error answer: HTTP status plus a code the page translates."""
-
-    def __init__(self, status: int, code: str, detail: str | None = None, field: str | None = None):
-        super().__init__(code)
-        self.status, self.code, self.detail, self.field = int(status), code, detail, field
-
-    def payload(self) -> dict:
-        return {"error": {"code": self.code, "detail": self.detail, "field": self.field}}
+def _limits() -> jobs.Limits:
+    """The server's limits, read when they are needed (tests change the constants above)."""
+    return jobs.Limits(max_pixels=MAX_PIXELS, store_side=STORE_SIDE, auto_side=AUTO_SIDE,
+                       max_work_pixels=MAX_WORK_PIXELS, quality_max_pixels=QUALITY_MAX_PIXELS,
+                       preview_side=PREVIEW_SIDE)
 
 
 def _new_id() -> str:
     return secrets.token_hex(8)
-
-
-def _finite(obj):
-    """``obj`` with NaN / infinity replaced by None (browsers' JSON.parse rejects NaN)."""
-    if isinstance(obj, np.generic):
-        obj = obj.item()
-    if isinstance(obj, float):
-        return obj if math.isfinite(obj) else None
-    if isinstance(obj, dict):
-        return {k: _finite(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_finite(v) for v in obj]
-    return obj
-
-
-def _png(image: np.ndarray, max_side: int | None = None) -> bytes:
-    im = Image.fromarray(np.ascontiguousarray(image))
-    if max_side and max(im.size) > max_side:
-        f = max_side / max(im.size)
-        im = im.resize((max(1, round(im.width * f)), max(1, round(im.height * f))), Image.LANCZOS)
-    buf = io.BytesIO()
-    im.save(buf, "PNG", compress_level=3)
-    return buf.getvalue()
-
-
-def _lineart_png(ink: np.ndarray) -> bytes:
-    """The ink map as a drawing (dark lines on white), at most :data:`PREVIEW_SIDE` px."""
-    return _png(np.rint((1.0 - np.clip(ink, 0.0, 1.0)) * 255.0).astype(np.uint8), PREVIEW_SIDE)
-
-
-def _clean_name(raw: str) -> str:
-    name = re.split(r"[\\/]", raw or "")[-1]
-    name = "".join(ch for ch in name if ch.isprintable()).strip()[:120]
-    return name or "image"
-
-
-def _stem(name: str) -> str:
-    stem = name.rsplit(".", 1)[0] if "." in name.strip(".") else name
-    return stem.strip() or "image"
 
 
 def _disposition(filename: str) -> str:
@@ -158,67 +116,8 @@ def _disposition(filename: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Request validation
-# ---------------------------------------------------------------------------
-
-
-def _bool(p: dict, key: str, default: bool) -> bool:
-    v = p.get(key, default)
-    if not isinstance(v, bool):
-        raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field=key)
-    return v
-
-
-def _number(p: dict, key: str, default: float | None, lo: float, hi: float, optional: bool = False) -> float | None:
-    v = p.get(key, default)
-    if v is None and optional:
-        return None
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not lo <= v <= hi:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field=key)
-    return float(v)
-
-
-def _choice(p: dict, key: str, choices: tuple, default=None):
-    v = p.get(key, default)
-    if isinstance(v, bool) or v not in choices:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field=key)
-    return v
-
-
-# ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class StoredImage:
-    id: str
-    name: str
-    rgb: np.ndarray  # at most STORE_SIDE, EXIF orientation applied
-    source_size: tuple[int, int]
-    suggested: str  # "lineart" or "photo"
-    preview: bytes
-    preview_type: str
-
-    @property
-    def size(self) -> tuple[int, int]:
-        return self.rgb.shape[1], self.rgb.shape[0]
-
-    def max_scale(self) -> float:
-        w, h = self.size
-        return min(1.0, math.sqrt(MAX_WORK_PIXELS / (w * h)))
-
-    def auto_scale(self) -> float:
-        w, h = self.size
-        return round(min(1.0, AUTO_SIDE / max(w, h), self.max_scale()), 4)
-
-    def info(self) -> dict:
-        w, h = self.size
-        return {
-            "image_id": self.id, "name": self.name, "width": w, "height": h,
-            "source_width": self.source_size[0], "source_height": self.source_size[1],
-            "suggested": self.suggested, "auto_scale": self.auto_scale(), "max_scale": round(self.max_scale(), 4),
-        }
 
 
 class Derived:
@@ -472,7 +371,7 @@ class App:
             raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params")
         settings = dict(self.settings)
         if "lang" in patch:
-            settings["lang"] = _choice(patch, "lang", LANGS)
+            settings["lang"] = jobs.check_choice(patch, "lang", LANGS)
         if "options" in patch:
             options = patch["options"]
             if not isinstance(options, dict) or len(json.dumps(options)) > 2000:
@@ -513,31 +412,7 @@ class App:
         }
 
     def add_image(self, data: bytes, name: str) -> StoredImage:
-        try:
-            rgb = lineart.open_image(data, max_side=STORE_SIDE, max_pixels=MAX_PIXELS)
-        except lineart.ImageTooLarge as exc:
-            raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "too_many_pixels", str(exc)) from None
-        except Exception as exc:  # noqa: BLE001 - Pillow raises many kinds of errors for bad files
-            raise ApiError(HTTPStatus.BAD_REQUEST, "not_an_image", f"{type(exc).__name__}: {exc}") from None
-        try:
-            with Image.open(io.BytesIO(data)) as im:
-                sw, sh = im.size
-                if im.getexif().get(0x0112) in (5, 6, 7, 8):  # rotated by 90 degrees
-                    sw, sh = sh, sw
-        except Exception:  # noqa: BLE001
-            sw, sh = rgb.shape[1], rgb.shape[0]
-        suggested = lineart.suggest_mode(rgb)
-        if suggested == "photo":
-            im = Image.fromarray(rgb)
-            if max(im.size) > PREVIEW_SIDE:
-                f = PREVIEW_SIDE / max(im.size)
-                im = im.resize((max(1, round(im.width * f)), max(1, round(im.height * f))), Image.LANCZOS)
-            buf = io.BytesIO()
-            im.save(buf, "JPEG", quality=90)
-            preview, ptype = buf.getvalue(), "image/jpeg"
-        else:
-            preview, ptype = _png(rgb, PREVIEW_SIDE), "image/png"
-        img = StoredImage(_new_id(), name, rgb, (sw, sh), suggested, preview, ptype)
+        img = jobs.read_image(data, name, _limits(), _new_id())
         with self.images_lock:
             self.images[img.id] = img
             while len(self.images) > KEEP_IMAGES:
@@ -554,53 +429,20 @@ class App:
 
     # -- jobs ------------------------------------------------------------------------------------
 
-    def resolve_scale(self, img: StoredImage, value) -> float:
-        if value is None or value == "auto":
-            scale = img.auto_scale()
-        else:
-            scale = _number({"scale": value}, "scale", None, 0.01, 1.0)
-            if scale > img.max_scale() + 1e-6:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "too_many_pixels", field="scale")
-        w, h = img.size
-        if min(w, h) * scale < 8:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="scale")
-        return round(scale, 4)
-
     def make_job(self, p) -> Job:
         if not isinstance(p, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params")
         img = self.image(p.get("image_id"))
-        kind = _choice(p, "kind", ("lineart", "trace"))
-        method = _choice(p, "method", lineart.METHODS, "none")
+        kind = jobs.check_choice(p, "kind", ("lineart", "trace"))
+        method = jobs.check_choice(p, "method", lineart.METHODS, "none")
         if kind == "lineart" and method == "none":
             raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="method")
         status = self.method_status(method)
         if not status["available"]:
             raise ApiError(HTTPStatus.CONFLICT, status["reason"], field="method")
-        params = {"method": method, "scale": self.resolve_scale(img, p.get("scale", "auto"))}
+        params = {"method": method, "scale": jobs.resolve_scale(img, p.get("scale", "auto"))}
         if kind == "trace":
-            named = _bool(p, "named", False)
-            # a number of curves (as demo makes them) instead of the fitting tolerance
-            curves = _number(p, "curves", None, 1, 50_000, optional=True)
-            if curves is not None and not curves.is_integer():
-                raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="curves")
-            params.update(
-                tolerance=_number(p, "tolerance", 1.0, 0.05, 20.0),
-                curves=None if curves is None else int(curves),
-                threshold=_number(p, "threshold", None, 0.01, 0.99, optional=True),
-                refine=_bool(p, "refine", True),
-                form=_choice(p, "form", FORMS, "named" if named else "parametric"),
-                shape_tolerance=_number(p, "shape_tolerance", 0.5, 0.05, 10.0),
-                upscale=_choice(p, "upscale", ("auto", 1, 2), "auto"),
-                faint=_bool(p, "faint", True),
-                denoise=_number(p, "denoise", pipeline.DENOISE, 0.0, 100.0),
-                quality=_bool(p, "quality", False),
-            )
-            if params["quality"]:
-                w, h = img.size
-                if w * h * params["scale"] ** 2 > QUALITY_MAX_PIXELS:
-                    params["quality"] = False  # reported as the "quality_skipped" warning
-                    params["quality_skipped"] = True
+            params.update(jobs.trace_options(p, img.size, params["scale"], QUALITY_MAX_PIXELS))
         return Job(_new_id(), kind, img.id, img.name, params)
 
     def _working_rgb(self, img: StoredImage, scale: float) -> np.ndarray:
@@ -609,8 +451,7 @@ class App:
         key = ("rgb", img.id, scale)
         rgb = self.derived.get(key)
         if rgb is None:
-            w, h = img.size
-            rgb = pipeline.resize(img.rgb, (max(1, round(w * scale)), max(1, round(h * scale))))
+            rgb = jobs.scaled(img.rgb, scale)
             self.derived.put(key, rgb)
         return rgb
 
@@ -655,69 +496,19 @@ class App:
         img = self.image(job.image_id)
         step("resize")
         rgb = self._working_rgb(img, p["scale"])
-        h, w = rgb.shape[:2]
         method = p["method"]
         if job.kind == "lineart":
             ink = self._ink(img, p["scale"], method, rgb, step)
             step("encode")
-            job.files = {"lineart.png": _lineart_png(ink)}
+            h, w = rgb.shape[:2]
+            job.files = {"lineart.png": jobs.lineart_png(ink, PREVIEW_SIDE)}
             job.summary = {"width": w, "height": h, "scale": p["scale"]}
             return
-
         ink = self._ink(img, p["scale"], method, rgb, step) if method != "none" else None
-        curves, full_ink = pipeline.trace(
-            rgb, lineart_method=method, fit_tolerance=p["tolerance"], threshold=p["threshold"],
-            refine=p["refine"], upscale=p["upscale"], shape_tolerance=p["shape_tolerance"],
-            faint_lines=p["faint"], ink=ink, progress=step, curve_count=p["curves"], denoise=p["denoise"],
-        )
-        n_shapes = sum(c.shape is not None for c in curves)
-        curves.meta.update(source=img.name, lineart=method, vectorizer="baseline", refined=p["refine"],
-                           named=p["form"] == "named", form=p["form"], scale=p["scale"],
-                           seconds=round(time.monotonic() - job.started, 3))
-        if p["threshold"] is not None:
-            curves.meta["threshold"] = p["threshold"]
-        step("export")
-        functions = attach(curves) if p["form"] == "function" else None
-        if functions is not None:
-            curves.meta["functions"] = functions
-        files = {name: text.encode("utf-8") for name, text in output_texts(curves, form=p["form"]).items()}
-        if method != "none":
-            files["lineart.png"] = _lineart_png(full_ink)
-        equations = len(curves) if functions is None else functions["count"]  # lines of desmos.txt
-        warnings = []
-        if len(curves) == 0:
-            warnings.append("no_lines")
-        if equations > DESMOS_CURVE_LIMIT:
-            warnings.append("over_desmos_limit")
-        if p.get("quality_skipped"):
-            warnings.append("quality_skipped")
-        headline = None
-        if p["quality"]:
-            step("quality")
-            from line2func import quality
-
-            report, maps = quality.assess(curves, full_ink, p["threshold"])
-            report = _finite(report)
-            files["quality.json"] = json.dumps(report, indent=1, allow_nan=False).encode("utf-8")
-            files["quality.png"] = _png(quality.quality_map(maps))
-            headline = {"kept": report["recall"]["line"]["within_2px"],
-                        "faint": report["recall"]["with_faint"]["within_2px"],
-                        "stray": report["flags"]["stray_curves"]}
-        job.files = files
-        job.summary = {
-            "curves": len(curves), "strokes": curves.num_strokes, "shapes": n_shapes, "form": p["form"],
-            "equations": equations,
-            "width": curves.width, "height": curves.height, "scale": p["scale"],
-            "upscale": curves.meta.get("upscale", 1), "line_width": curves.meta.get("line_width"),
-            "seconds": curves.meta["seconds"], "warnings": warnings, "quality": headline,
-        }
+        job.files, job.summary = jobs.run_trace(rgb, img.name, p, step, ink=ink, started=job.started)
 
     def zip_bytes(self, job: Job) -> bytes:
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for name in sorted(job.files):
-                zf.writestr(name, job.files[name])
-        return buf.getvalue()
+        return jobs.zip_files(job.files)
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +577,7 @@ class Handler(BaseHandler):
                 return
             if job.state != "done":
                 raise ApiError(HTTPStatus.CONFLICT, "not_ready")
-            stem = _stem(job.image_name)
+            stem = jobs.stem(job.image_name)
             if m.group(2) == "zip":
                 headers = {"Cache-Control": IMMUTABLE}
                 if "download" in query:
@@ -808,7 +599,7 @@ class Handler(BaseHandler):
         app = self.app
         if path == "/api/images":
             data = self._body(MAX_UPLOAD)
-            img = app.add_image(data, _clean_name(unquote(self.headers.get("X-Filename", ""))))
+            img = app.add_image(data, jobs.clean_name(unquote(self.headers.get("X-Filename", ""))))
             self.send_json(img.info(), HTTPStatus.CREATED)
             return
         if path == "/api/jobs":
@@ -869,8 +660,8 @@ class Handler(BaseHandler):
         try:
             with board.cond:
                 last = board.seq
-                jobs = [j.snapshot() for j in board.jobs.values()]
-            self._send_event("hello", {"version": __version__, "jobs": jobs})
+                snapshots = [j.snapshot() for j in board.jobs.values()]
+            self._send_event("hello", {"version": __version__, "jobs": snapshots})
             next_ping = time.monotonic() + PING
             while True:
                 with board.cond:

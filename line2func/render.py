@@ -89,8 +89,9 @@ def _segments(ctrls: Sequence[np.ndarray], widths: np.ndarray, tolerance: float)
     wa, wb = np.concatenate(w_start), np.concatenate(w_end)
 
     # cut long segments into k equal pieces; the width is evaluated per piece,
-    # so tapered strokes taper even where the curve is flattened coarsely
-    k = np.maximum(1, np.ceil(np.linalg.norm(b - a, axis=1) / _MAX_SEGMENT)).astype(np.int64)
+    # so tapered strokes taper even where the curve is flattened coarsely (np.intp: repeat counts must be the
+    # platform's index type, which is 32 bits in the browser's WebAssembly)
+    k = np.maximum(1, np.ceil(np.linalg.norm(b - a, axis=1) / _MAX_SEGMENT)).astype(np.intp)
     seg = np.repeat(np.arange(len(a)), k)
     first = np.repeat(np.cumsum(k) - k, k)
     j = (np.arange(len(seg)) - first).astype(np.float64)  # piece index within its segment
