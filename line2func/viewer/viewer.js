@@ -29,10 +29,11 @@ export function desmosLine(p, H) {
   const cx = power(p[0], p[2], p[4], p[6]), cy = power(H - p[1], H - p[3], H - p[5], H - p[7]);
   return `\\left(${latex(cx)},\\ ${latex(cy)}\\right)`;
 }
-// Readable form of a named Desmos equation (y = mx + c, (x-h)^2 + (y-k)^2 = r^2).
+// Readable form of a named Desmos equation (y = mx + c, (x-h)^2 + (y-k)^2 = r^2) or of a function
+// (y = a + b(x-c) + d(x-c)^2 + e(x-c)^3).
 export function namedText(tex) {
   return tex.replace(/\\left\\\{/g, t("viewer.where")).replace(/\\right\\\}/g, "")
-    .replace(/\\left\(/g, "(").replace(/\\right\)/g, ")").replace(/\^\{2\}/g, "²")
+    .replace(/\\left\(/g, "(").replace(/\\right\)/g, ")").replace(/\^\{2\}/g, "²").replace(/\^\{3\}/g, "³")
     .replace(/\\le /g, " ≤ ").replace(/\\ge /g, " ≥ ").replace(/-/g, "−").replace(/=/g, " = ");
 }
 function bezier(p, s) {
@@ -58,6 +59,7 @@ export function createViewer(el) {
   const ctx = canvas.getContext("2d");
   let W = 0, H = 0, curves = [], groups = [], grid = new Map(), styled = new Map(), fills = new Map();
   let measuredStyle = false, lineWidthMeta = 2, status = "empty", failMsg = "", quality = null;
+  let functionCount = null; // equations y = f(x) / x = g(y) in the result, when it has them
   let desmosWarning = true; // the app shows its own banner instead
   let view = { s: 1, tx: 0, ty: 0 }, dpr = window.devicePixelRatio || 1;
   let hover = -1, selected = -1, dirty = true, fitted = false, generation = 0;
@@ -69,7 +71,7 @@ export function createViewer(el) {
   // ---------- data ----------
   function reset() {
     W = 0; H = 0; curves = []; groups = []; grid = new Map(); styled = new Map(); fills = new Map();
-    hover = -1; selected = -1; quality = null; fitted = false;
+    hover = -1; selected = -1; quality = null; fitted = false; functionCount = null;
     pointers.clear(); drag = null; pinch = null;
     canvas.classList.remove("dragging", "over");
     tip.style.display = "none";
@@ -92,8 +94,9 @@ export function createViewer(el) {
       for (let k = 0; k <= n; k++) { const q = bezier(p, k / n); poly[2 * k] = q[0]; poly[2 * k + 1] = q[1]; }
       const cx = power(p[0], p[2], p[4], p[6]), cy = power(H - p[1], H - p[3], H - p[5], H - p[7]);
       return { i, stroke: c.stroke, conf: c.confidence, tags: c.tags || [], p, box, poly, cx, cy,
-               width: c.width ?? null, color: c.color ?? null, shape: c.shape ?? null };
+               width: c.width ?? null, color: c.color ?? null, shape: c.shape ?? null, functions: c.functions ?? null };
     });
+    functionCount = curves.some((c) => c.functions) ? curves.reduce((n, c) => n + (c.functions ? c.functions.length : 0), 0) : null;
     groups = PALETTE.map(() => new Path2D());
     const filledStrokes = new Set(curves.filter((c) => c.tags.some((tag) => FILLED_TAGS.includes(tag))).map((c) => c.stroke));
     for (const c of curves) {
@@ -149,8 +152,11 @@ export function createViewer(el) {
     if (status === "failed") { stats.textContent = t("viewer.failedShort"); stats.title = ""; return; }
     if (status !== "ready") { stats.textContent = ""; stats.title = ""; return; }
     const strokes = new Set(curves.map((c) => c.stroke)).size;
-    let html = `${esc(t("count.curves", { n: curves.length }))} · ${esc(t("count.strokes", { n: strokes }))} · ${W}×${H}`;
-    if (desmosWarning && curves.length > DESMOS_LIMIT) html += ` · <span class="warn">${esc(t("stats.desmosWarn", { limit: DESMOS_LIMIT }))}</span>`;
+    let html = `${esc(t("count.curves", { n: curves.length }))} · ${esc(t("count.strokes", { n: strokes }))}`;
+    if (functionCount !== null) html += ` · ${esc(t("count.functions", { n: functionCount }))}`;
+    html += ` · ${W}×${H}`;
+    const equations = functionCount ?? curves.length; // what "Copy all for Desmos" pastes
+    if (desmosWarning && equations > DESMOS_LIMIT) html += ` · <span class="warn">${esc(t("stats.desmosWarn", { limit: DESMOS_LIMIT }))}</span>`;
     stats.title = "";
     if (quality) {
       const pct = (v) => (v === null || v === undefined ? t("common.na") : (100 * v).toFixed(1) + "%");
@@ -274,14 +280,16 @@ export function createViewer(el) {
     const tags = c.tags.map((tag) => `<span class="tag">${esc(tagName(tag))}</span>`).join(" ");
     const named = c.shape && c.shape.desmos
       ? `<div class="eq named"><span class="tag">${esc(shapeName(c.shape.type))}</span> ${esc(namedText(c.shape.desmos))}</div>` : "";
+    const fns = c.functions && c.functions.length
+      ? `<div class="eq fns"><span class="tag">${esc(t("viewer.functions"))}</span> ${c.functions.map((f) => esc(namedText(f))).join("<br>")}</div>` : "";
     const style = [
       c.width !== null ? esc(t("viewer.width", { w: c.width.toFixed(2) })) : "",
       c.color ? `${esc(t("viewer.color"))} <span class="swatch" style="background:${esc(c.color)}"></span> ${esc(c.color)}` : "",
     ].filter(Boolean).join(" · ");
     detail.innerHTML = `<h2>${esc(t("viewer.curve", { i: String(c.i) }))} <span class="hint">· ${esc(t("viewer.stroke", { s: String(c.stroke) }))}</span></h2>
-      <div class="eq">${eqHTML(c)}</div>${named}
+      <div class="eq">${eqHTML(c)}</div>${named}${fns}
       <div class="meta">${esc(t("viewer.meta", { c: c.conf.toFixed(2) }))} ${tags}${style ? "<br>" + style : ""}</div>
-      <div class="actions"><button type="button" data-copy="desmos">${esc(t("viewer.copy"))}</button>${named ? `<button type="button" data-copy="named">${esc(t("viewer.copyNamed"))}</button>` : ""}<button type="button" data-center>${esc(t("viewer.center"))}</button></div>`;
+      <div class="actions"><button type="button" data-copy="desmos">${esc(t("viewer.copy"))}</button>${named ? `<button type="button" data-copy="named">${esc(t("viewer.copyNamed"))}</button>` : ""}${fns ? `<button type="button" data-copy="functions">${esc(t("viewer.copyFunctions"))}</button>` : ""}<button type="button" data-center>${esc(t("viewer.center"))}</button></div>`;
     const copy = (text, label) => (e) => {
       const button = e.currentTarget;
       navigator.clipboard.writeText(text).then(
@@ -291,6 +299,7 @@ export function createViewer(el) {
     };
     detail.querySelector("[data-copy=desmos]").onclick = copy(desmosLine(c.p, H), t("viewer.copy"));
     if (named) detail.querySelector("[data-copy=named]").onclick = copy(c.shape.desmos, t("viewer.copyNamed"));
+    if (fns) detail.querySelector("[data-copy=functions]").onclick = copy(c.functions.join("\n"), t("viewer.copyFunctions"));
     detail.querySelector("[data-center]").onclick = () => centerOn(c.i);
   }
   function renderList() {

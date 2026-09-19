@@ -38,6 +38,24 @@ def test_demo_errors(drawing, tmp_path):
     assert demo.main([str(drawing), "--vectorizer", "model", "--out", str(tmp_path / "o")]) == 2
     # a number of curves or a fitting tolerance, not both
     assert demo.main([str(drawing), "--curves", "10", "--tolerance", "1", "--out", str(tmp_path / "o")]) == 2
+    # --named is --form named
+    assert demo.main([str(drawing), "--named", "--form", "function", "--out", str(tmp_path / "o")]) == 2
+    assert demo.main([str(drawing), "--form", "function", "--function-tolerance", "0", "--out", str(tmp_path / "o")]) == 2
+
+
+def test_demo_writes_functions(drawing, tmp_path, capsys):
+    out = tmp_path / "out"
+    assert demo.main([str(drawing), "--form", "function", "--out", str(out)]) == 0
+    lines = (out / "desmos.txt").read_text(encoding="utf-8").splitlines()
+    assert lines and all(line[:2] in ("x=", "y=") for line in lines)
+    doc = json.loads((out / "curves.json").read_text(encoding="utf-8"))
+    assert doc["meta"]["form"] == "function" and doc["meta"]["functions"]["count"] == len(lines)
+    assert [f for c in doc["curves"] for f in c["functions"]] == lines
+    assert f"{len(lines)} functions y = f(x) / x = g(y)" in capsys.readouterr().out
+    # --named still writes named equations
+    assert demo.main([str(drawing), "--named", "--out", str(tmp_path / "named")]) == 0
+    doc = json.loads((tmp_path / "named" / "curves.json").read_text(encoding="utf-8"))
+    assert doc["meta"]["form"] == "named" and doc["meta"]["named"] is True
 
 
 def test_demo_uses_the_desmos_budget_unless_a_tolerance_is_given(drawing, tmp_path):

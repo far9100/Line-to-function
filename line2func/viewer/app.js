@@ -832,7 +832,7 @@ async function download(file) {
 function copyAll() {
   const result = S.result;
   if (!result || result.desmos === null) return;
-  const n = result.doc.curves.length;
+  const n = result.desmos.split("\n").filter((line) => line.trim()).length; // equations: curves, or functions
   if (n > DESMOS_LIMIT && !S.copyArmed) { S.copyArmed = true; toast(t("result.confirmCopy", { n, limit: DESMOS_LIMIT })); return; }
   S.copyArmed = false;
   navigator.clipboard.writeText(result.desmos).then(

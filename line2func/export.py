@@ -5,6 +5,12 @@ flipped with ``y' = height - y`` before its power coefficients are printed.
 Numbers are printed with a fixed number of decimals and never in scientific
 notation, because Desmos reads ``e`` as Euler's number, so ``1e-5`` would be
 "1 × e − 5" and silently draw the wrong curve.
+
+Each curve is written in one of three forms (:data:`FORMS`): parametric
+(``x(t), y(t)``, the default), named (recognized lines and arcs as
+``y = mx + c`` / ``(x-h)^2 + (y-k)^2 = r^2``, :mod:`line2func.shapes`) or as
+explicit functions (pieces of ``y = f(x)`` / ``x = g(y)``,
+:mod:`line2func.functions`).
 """
 
 from __future__ import annotations
@@ -16,12 +22,14 @@ from xml.sax.saxutils import quoteattr
 
 import numpy as np
 
-from line2func.curves import CurveSet
+from line2func.curves import Curve, CurveSet
+from line2func.functions import FUNCTION_TOLERANCE, attach, curve_functions
 from line2func.geometry import flip_y, to_power
 from line2func.render import render_overlay, save_png
 
 DESMOS_CURVE_LIMIT = 5000  # the most curves line2func makes for Desmos by default (demo); more gets a warning
 DECIMALS = 2
+FORMS = ("parametric", "named", "function")  # how desmos.txt and equations.tex write each curve
 
 
 def format_number(value: float, decimals: int = DECIMALS) -> str:
@@ -56,42 +64,72 @@ def desmos_line(ctrl, height: float, decimals: int = DECIMALS) -> str:
     return rf"\left({x},\ {y}\right)"
 
 
-def to_desmos(curves: CurveSet, decimals: int = DECIMALS, named: bool = False) -> str:
+def _form(named: bool, form: str | None) -> str:
+    """The form to write: ``form`` if given, else "named" when ``named``, else "parametric"."""
+    form = form if form is not None else ("named" if named else "parametric")
+    if form not in FORMS:
+        raise ValueError(f"unknown form {form!r}; expected one of: {', '.join(FORMS)}")
+    return form
+
+
+def _functions(c: Curve, height: float, tolerance: float) -> list[str]:
+    """The curve's function equations: ``Curve.functions``, or made now with ``tolerance`` px."""
+    return c.functions if c.functions is not None else curve_functions(c.ctrl, height, tolerance)[0]
+
+
+def to_desmos(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, form: str | None = None,
+              function_tolerance: float = FUNCTION_TOLERANCE) -> str:
     """All curves, one Desmos expression per line.
 
-    With ``named=True``, curves recognized as lines or arcs (``Curve.shape``) are
-    written as ``y = mx + c`` / ``(x-h)^2 + (y-k)^2 = r^2`` with their domain.
+    ``form`` (:data:`FORMS`) picks how each curve is written: "parametric" (the
+    default), "named" (the same as ``named=True``: curves recognized as lines or
+    arcs, ``Curve.shape``, as ``y = mx + c`` / ``(x-h)^2 + (y-k)^2 = r^2`` with
+    their domain) or "function" (every curve as pieces of ``y = f(x)`` /
+    ``x = g(y)``: its ``Curve.functions``, or made within ``function_tolerance``
+    px, see :mod:`line2func.functions`).
     """
     from line2func.shapes import named_latex
 
+    form = _form(named, form)
     out = []
     for c in curves:
-        if named and c.shape is not None:
+        if form == "function":
+            out.extend(_functions(c, curves.height, function_tolerance))
+        elif form == "named" and c.shape is not None:
             out.append(named_latex(c.shape, curves.height))
         else:
             out.append(desmos_line(c.ctrl, curves.height, decimals))
     return "".join(line + "\n" for line in out)
 
 
-def to_latex(curves: CurveSet, decimals: int = DECIMALS, named: bool = False) -> str:
-    """A LaTeX ``align*`` block listing every curve (parametric, or named when ``named``)."""
+def to_latex(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, form: str | None = None,
+             function_tolerance: float = FUNCTION_TOLERANCE) -> str:
+    """A LaTeX ``align*`` block listing every curve, in the ``form`` of :func:`to_desmos`
+    (as functions: one row per piece, numbered curve.piece)."""
     from line2func.shapes import named_latex
 
-    lines = [
-        f"% line2func: {len(curves)} curves, {curves.num_strokes} strokes, "
-        f"image {curves.width}x{curves.height}, y axis up, 0 <= t <= 1",
-        r"\begin{align*}",
-    ]
+    form = _form(named, form)
+    rows = []
     for i, c in enumerate(curves):
-        end = r" \\" if i < len(curves) - 1 else ""
-        if named and c.shape is not None:
+        if form == "function":
+            for j, eq in enumerate(_functions(c, curves.height, function_tolerance)):
+                eq = eq.replace(r"\left\{", r",\quad \left\{", 1)
+                rows.append(rf"&\text{{{i}.{j}:}}\ {eq} &&")
+        elif form == "named" and c.shape is not None:
             eq = named_latex(c.shape, curves.height).replace(r"\left\{", r",\quad \left\{", 1)
-            lines.append(rf"&\text{{{i}:}}\ {eq} &&{end}")
-            continue
-        k = math_coefficients(c.ctrl, curves.height)
-        x = _polynomial(k[:, 0], decimals)
-        y = _polynomial(k[:, 1], decimals)
-        lines.append(rf"x_{{{i}}}(t) &= {x}, & y_{{{i}}}(t) &= {y}{end}")
+            rows.append(rf"&\text{{{i}:}}\ {eq} &&")
+        else:
+            k = math_coefficients(c.ctrl, curves.height)
+            x = _polynomial(k[:, 0], decimals)
+            y = _polynomial(k[:, 1], decimals)
+            rows.append(rf"x_{{{i}}}(t) &= {x}, & y_{{{i}}}(t) &= {y}")
+    head = f"% line2func: {len(curves)} curves, {curves.num_strokes} strokes, "
+    if form == "function":
+        head += f"{len(rows)} functions y = f(x) / x = g(y), image {curves.width}x{curves.height}, y axis up"
+    else:
+        head += f"image {curves.width}x{curves.height}, y axis up, 0 <= t <= 1"
+    lines = [head, r"\begin{align*}"]
+    lines += [row + (r" \\" if i < len(rows) - 1 else "") for i, row in enumerate(rows)]
     lines.append(r"\end{align*}")
     return "\n".join(lines) + "\n"
 
@@ -148,23 +186,33 @@ def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000
     return "\n".join(parts) + "\n"
 
 
-def output_texts(curves: CurveSet, named: bool = False) -> dict[str, str]:
-    """The text outputs by file name: ``curves.json``, ``out.svg``, ``desmos.txt`` and ``equations.tex``."""
+def output_texts(curves: CurveSet, named: bool = False, form: str | None = None,
+                 function_tolerance: float = FUNCTION_TOLERANCE) -> dict[str, str]:
+    """The text outputs by file name: ``curves.json``, ``out.svg``, ``desmos.txt`` and ``equations.tex``.
+
+    ``named`` and ``form`` as in :func:`to_desmos`. As functions, curves without
+    ``Curve.functions`` get them first (:func:`line2func.functions.attach`), so
+    ``curves.json`` lists them too.
+    """
+    form = _form(named, form)
+    if form == "function" and any(c.functions is None for c in curves):
+        attach(curves, function_tolerance)
     return {
         "curves.json": json.dumps(curves.to_dict(), indent=1),
         "out.svg": to_svg(curves),
-        "desmos.txt": to_desmos(curves, named=named),
-        "equations.tex": to_latex(curves, named=named),
+        "desmos.txt": to_desmos(curves, form=form, function_tolerance=function_tolerance),
+        "equations.tex": to_latex(curves, form=form, function_tolerance=function_tolerance),
     }
 
 
-def write_outputs(curves: CurveSet, out_dir: str | Path, source_image=None, named: bool = False) -> dict[str, Path]:
+def write_outputs(curves: CurveSet, out_dir: str | Path, source_image=None, named: bool = False,
+                  form: str | None = None, function_tolerance: float = FUNCTION_TOLERANCE) -> dict[str, Path]:
     """Write ``curves.json``, ``out.svg``, ``desmos.txt``, ``equations.tex`` and,
     when ``source_image`` is given, ``overlay.png`` and ``source.png``.
-    ``named`` writes recognized lines and arcs as named equations."""
+    ``named`` and ``form`` pick how the equations are written (:func:`to_desmos`)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    texts = output_texts(curves, named=named)
+    texts = output_texts(curves, named=named, form=form, function_tolerance=function_tolerance)
     paths = {}
     for key, name in (("curves", "curves.json"), ("svg", "out.svg"), ("desmos", "desmos.txt"), ("latex", "equations.tex")):
         paths[key] = out / name

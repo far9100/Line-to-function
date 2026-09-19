@@ -13,16 +13,18 @@ to y-up coordinates. Layout::
       "curves": [
         {"id": 0, "stroke": 0, "ctrl": [[x0, y0], [x1, y1], [x2, y2], [x3, y3]],
          "confidence": 1.0, "tags": [],
-         "width": 2.3, "color": "#1a1a1a",                     (optional)
-         "shape": {"type": "line", ...} | {"type": "arc", ...}} (optional)
+         "width": 2.3, "color": "#1a1a1a",                      (optional)
+         "shape": {"type": "line", ...} | {"type": "arc", ...}, (optional)
+         "functions": ["y=...", "x=..."]}                       (optional)
       ]
     }
 
 Curves that share a ``stroke`` id are consecutive pieces of one drawn stroke,
 listed in drawing order. The optional fields are written only when known:
-``width`` (measured line width, px), ``color`` (measured ink color) and
-``shape`` (the curve recognized as a straight line or circular arc, see
-:mod:`line2func.shapes`).
+``width`` (measured line width, px), ``color`` (measured ink color), ``shape``
+(the curve recognized as a straight line or circular arc, see
+:mod:`line2func.shapes`) and ``functions`` (the curve as Desmos equations
+``y = f(x)`` / ``x = g(y)``, see :mod:`line2func.functions`).
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ class Curve:
     width: float | None = None  # measured line width, px
     color: str | None = None  # measured ink color, "#rrggbb"
     shape: dict | None = None  # recognized line / arc (line2func.shapes)
+    functions: list[str] | None = None  # the curve as y = f(x) / x = g(y) equations (line2func.functions)
 
     def __post_init__(self) -> None:
         self.ctrl = as_ctrl(self.ctrl)
@@ -67,6 +70,8 @@ class Curve:
             isinstance(self.color, str) and len(self.color) == 7 and self.color.startswith("#")
         ):
             raise ValueError(f"color must look like '#rrggbb', got {self.color!r}")
+        if self.functions is not None:
+            self.functions = [str(f) for f in self.functions]
 
 
 @dataclass
@@ -143,6 +148,8 @@ class CurveSet:
             d["color"] = c.color
         if c.shape is not None:
             d["shape"] = c.shape
+        if c.functions is not None:
+            d["functions"] = list(c.functions)
         return d
 
     @classmethod
@@ -164,6 +171,7 @@ class CurveSet:
                 width=item.get("width"),
                 color=item.get("color"),
                 shape=item.get("shape"),
+                functions=item.get("functions"),
             )
             for item in data.get("curves", [])
         ]

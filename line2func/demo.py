@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 
 from line2func import lineart, pipeline
-from line2func.export import DESMOS_CURVE_LIMIT, write_outputs
+from line2func.export import DESMOS_CURVE_LIMIT, FORMS, write_outputs
+from line2func.functions import FUNCTION_TOLERANCE, attach
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,9 +34,15 @@ def build_parser() -> argparse.ArgumentParser:
                         "faint strokes stay whole, unless the paper itself would be traced)")
     p.add_argument("--no-refine", action="store_true",
                    help="skip snapping the curves to the ink centerline")
-    p.add_argument("--named", action="store_true",
-                   help="write straight lines as y = mx + c and circular arcs as (x-h)^2 + (y-k)^2 = r^2 "
-                        "in desmos.txt / equations.tex")
+    p.add_argument("--form", choices=FORMS, default=None,
+                   help="how desmos.txt / equations.tex write each curve: parametric (x(t), y(t)), named (straight "
+                        "lines as y = mx + c and circular arcs as (x-h)^2 + (y-k)^2 = r^2, the others parametric) "
+                        "or function (every curve cut into pieces of y = f(x) / x = g(y), each within "
+                        "--function-tolerance) (default: parametric)")
+    p.add_argument("--named", action="store_true", help="the same as --form named")
+    p.add_argument("--function-tolerance", type=float, default=FUNCTION_TOLERANCE, metavar="PX",
+                   help=f"with --form function: the largest distance (px) between a function and its curve "
+                        f"(default: {FUNCTION_TOLERANCE})")
     p.add_argument("--shape-tolerance", type=float, default=0.5,
                    help="max deviation (px) for recognizing lines and arcs (default: 0.5)")
     p.add_argument("--upscale", default="auto", choices=("auto", "1", "2", "3", "4"),
@@ -81,6 +88,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.curves is not None and args.curves < 1:
         print("error: --curves must be at least 1", file=sys.stderr)
         return 2
+    if args.named and args.form not in (None, "named"):
+        print("error: --named is short for --form named; give only one of them", file=sys.stderr)
+        return 2
+    if not args.function_tolerance > 0:
+        print("error: --function-tolerance must be positive", file=sys.stderr)
+        return 2
+    form = args.form or ("named" if args.named else "parametric")
     # a number of curves by default (the Desmos budget); a given tolerance traces to that instead
     if args.curves is not None:
         curve_count = args.curves
@@ -125,18 +139,22 @@ def main(argv: list[str] | None = None) -> int:
         decisions=None if args.decisions == "rules" else args.decisions,
     )
     n_shapes = sum(c.shape is not None for c in curves)
+    functions = attach(curves, args.function_tolerance) if form == "function" else None
     elapsed = time.perf_counter() - t0
     curves.meta.update(
         source=args.image.name,
         lineart=args.lineart,
         vectorizer=args.vectorizer,
         refined=not args.no_refine,
-        named=args.named,
+        named=form == "named",
+        form=form,
         seconds=round(elapsed, 3),
     )
+    if functions is not None:
+        curves.meta["functions"] = functions
     if args.threshold is not None:
         curves.meta["threshold"] = args.threshold
-    paths = write_outputs(curves, args.out, source_image=rgb, named=args.named)
+    paths = write_outputs(curves, args.out, source_image=rgb, form=form, function_tolerance=args.function_tolerance)
 
     megapixels = curves.width * curves.height / 1e6
     extras = []
@@ -163,9 +181,13 @@ def main(argv: list[str] | None = None) -> int:
         extras.append(f"merged from {count['before']} to {count['target']}")
     elif count and count["after"] < count["target"] and args.curves is None:
         extras.append(f"all curves of the fine tracing, fewer than the {count['target']} allowed")
+    as_functions = ""
+    if functions is not None:
+        as_functions = (f"; {functions['count']} functions y = f(x) / x = g(y), "
+                        f"max error {functions['max_error']:.3f} px")
     print(f"{args.image.name}: {curves.width}x{curves.height}, {len(curves)} curves in "
           f"{curves.num_strokes} strokes, {elapsed:.2f} s ({elapsed / max(megapixels, 1e-9):.2f} s/MP); "
-          f"{n_shapes} recognized as lines or arcs{' (named in exports)' if args.named else ''}"
+          f"{n_shapes} recognized as lines or arcs{' (named in exports)' if form == 'named' else ''}{as_functions}"
           + (f" [{', '.join(extras)}]" if extras else ""))
     for key in ("curves", "svg", "desmos", "latex", "overlay"):
         print(f"  {paths[key]}")
@@ -179,6 +201,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"warning: {len(curves)} curves, more than the {DESMOS_CURVE_LIMIT} Desmos budget. Leave out "
               f"--tolerance and --curves (then line2func makes at most {DESMOS_CURVE_LIMIT}), or use a "
               f"simpler image.", file=sys.stderr)
+    if functions is not None and functions["count"] > DESMOS_CURVE_LIMIT:
+        # fewer, longer curves each give somewhat more functions (on the test drawings +2% with 7% fewer curves,
+        # +5 to 10% with 37 to 44% fewer); the power keeps the suggestion within the budget
+        suggested = max(1, int(len(curves) * (DESMOS_CURVE_LIMIT / functions["count"]) ** 1.4))
+        print(f"warning: {functions['count']} functions, more than the {DESMOS_CURVE_LIMIT} Desmos budget "
+              f"({functions['count'] / len(curves):.2f} per curve). For about {DESMOS_CURVE_LIMIT} functions, "
+              f"try --curves {suggested}.", file=sys.stderr)
     if len(curves) == 0:
         print("warning: no lines found. If the drawing is light on dark or a photo, "
               "try --lineart canny or --lineart xdog.", file=sys.stderr)

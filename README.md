@@ -13,7 +13,8 @@ line2func traces every line in a drawing (or photo) into cubic parametric
 curves. You can inspect the equations curve by curve in a local web viewer,
 paste them into [Desmos](https://www.desmos.com/calculator), save a scalable
 SVG, or get LaTeX. Straight lines and circular arcs can be written as named
-equations: `y = mx + c` and `(x−h)² + (y−k)² = r²`.
+equations, `y = mx + c` and `(x−h)² + (y−k)² = r²`, and every curve can be cut
+into explicit functions `y = f(x)` / `x = g(y)`.
 
 ```
 x(t) = −40.00·t³ +  60.00·t² +  60.00·t + 10.00
@@ -157,9 +158,9 @@ light lines on a dark background are detected and inverted automatically.
 
 | File | Contents |
 |---|---|
-| `curves.json` | Every curve: 4 control points, stroke id, confidence, measured width and color, and its recognized shape (line/arc) if any |
+| `curves.json` | Every curve: 4 control points, stroke id, confidence, measured width and color, its recognized shape (line/arc) if any, and with `--form function` its functions |
 | `out.svg` | Vector version; each stroke in its measured width and color. Opens in browsers, Inkscape, Illustrator |
-| `desmos.txt` | One Desmos expression per line (parametric, or named with `--named`) |
+| `desmos.txt` | One Desmos expression per line: parametric, named (`--form named`) or functions (`--form function`), section 5 |
 | `equations.tex` | The same equations as a LaTeX `align*` block |
 | `overlay.png` | The curves drawn over the original, one color per stroke, for a quick check |
 | `source.png` | A copy of the input (shown behind the curves in the viewer) |
@@ -224,7 +225,7 @@ python -m line2func.serve out/ --no-browser    # just print the URL
 | Inspect a curve | hover it (tooltip with `x(t)`, `y(t)`); click to select |
 | Browse all equations | scroll the list on the right; click a row to jump to the curve |
 | Next / previous curve | `↓` / `↑`; `Esc` deselects |
-| Copy an equation | select a curve, then **Copy for Desmos** (parametric) or **Copy named** (for lines/arcs) |
+| Copy an equation | select a curve, then **Copy for Desmos** (parametric), **Copy named** (for lines/arcs) or **Copy functions** (results made with `--form function`) |
 | Background | checkbox, **Original** / **Line art** (photos, in the app) / **Missed detail** (after a quality check) menu, and opacity slider |
 | True-to-scale look | **Measured style**: draws every curve in its measured width and ink color, and fills filled areas |
 | Download | **SVG**, **JSON**, **Desmos**, **LaTeX** buttons (and **ZIP** in the app) |
@@ -249,7 +250,7 @@ A parametric line looks like this (Desmos's default domain 0 ≤ t ≤ 1 is exac
 \left(-40.00t^{3}+60.00t^{2}+60.00t+10.00,\ 20.00t^{3}-270.00t^{2}+250.00t+10.00\right)
 ```
 
-With `--named`, straight lines and circular arcs are written in closed form:
+With `--form named` (or `--named`), straight lines and circular arcs are written in closed form:
 
 ```
 y=0.5000x+5.00\left\{10.00\le x\le 90.00\right\}
@@ -266,6 +267,46 @@ Numbers never use scientific notation, because Desmos would read `1e-5` as
 (`--curves N` for another count); a drawing that needs fewer keeps all of its
 finely traced curves. Above 5,000 line2func warns you. If Desmos gets slow on
 your computer, ask for fewer, e.g. `--curves 2000`.
+
+#### Functions instead of parametric curves: `--form function`
+
+With `--form function`, every curve is written as explicit functions. The arch
+from the top of this page becomes three: rising steeply (`x = g(y)`), flat over
+the top (`y = f(x)`) and falling (`x = g(y)`):
+
+```
+x=17.92+0.3813\left(y-36.29\right)+0.00561\left(y-36.29\right)^{2}+0.0000977\left(y-36.29\right)^{3}\left\{10.00\le y\le 62.58\right\}
+y=70.05-0.0171\left(x-49.49\right)-0.03067\left(x-49.49\right)^{2}\left\{33.59\le x\le 65.40\right\}
+x=81.52-0.4101\left(y-36.01\right)-0.00564\left(y-36.01\right)^{2}-0.0000929\left(y-36.01\right)^{3}\left\{10.00\le y\le 62.03\right\}
+```
+
+- Each curve is cut where its slope is +1 or −1. Where it is flatter it becomes
+  `y = f(x)`, where it is steeper `x = g(y)`. In between the curve never turns
+  back, so the function exists. Where it does turn back (a cusp), a new piece
+  starts.
+- Each piece is a polynomial of degree 1 to 3, centered on the piece:
+  `y = a + b(x−c) + d(x−c)² + e(x−c)³`. Straight pieces are written
+  `y = mx + c`. Every piece passes through both of its ends, so neighbouring
+  pieces and curves join exactly.
+- Every function stays within `--function-tolerance` (default 0.25 px) of its
+  curve, checked on the printed, rounded numbers. A piece that does not fit is
+  halved. Circular arcs are approximated like any other curve.
+
+There are more functions than curves. On the four test drawings (section 8),
+at up to 5,000 curves:
+
+| | Curves | Functions | Per curve | Straight pieces |
+|---|---|---|---|---|
+| Drawing 1 | 3,541 | 5,291 | 1.49 | 73% |
+| Drawing 2 | 5,000 | 7,249 | 1.45 | 72% |
+| Drawing 3 | 5,000 | 8,145 | 1.63 | 65% |
+| Drawing 4 | 5,000 | 6,969 | 1.39 | 72% |
+
+Making the functions takes under a second. Above 5,000 functions `demo` warns
+and suggests a smaller `--curves`. Fewer, longer curves each give a few more
+functions, and the suggestion allows for that: on the test drawings it gave
+4,555 to 4,993 functions. In the viewer, **Copy functions** copies the
+functions of the selected curve.
 
 ### 6. Photos and color images
 
@@ -310,7 +351,9 @@ python -m line2func.demo IMAGE [options]
 | `--tolerance PX` | off | Trace to this max curve-fitting error instead of a number of curves (the app works this way, with 1.0). Larger gives fewer, smoother curves |
 | `--decisions {learned,rules,PATH}` | `learned` | Who decides where strokes continue, where breaks are joined, which junctions are one crossing and where corners are: the learned scorer, the angle rules, or other learned weights (section 8) |
 | `--threshold 0..1` | automatic | Ink threshold. Automatic: Otsu's, but for line art at most 0.25 so light strokes stay whole (kept at Otsu's when the paper itself would be traced). Lower it if faint lines are missed, raise it if paper texture is traced |
-| `--named` | off | Write lines and arcs as named equations in `desmos.txt` / `equations.tex` |
+| `--form {parametric,named,function}` | `parametric` | How `desmos.txt` / `equations.tex` write each curve: parametric, named (lines and arcs; the other curves parametric) or as functions `y = f(x)` / `x = g(y)` (section 5) |
+| `--named` | off | The same as `--form named` |
+| `--function-tolerance PX` | `0.25` | With `--form function`: the largest distance between a function and its curve |
 | `--shape-tolerance PX` | `0.5` | How close a curve must be to a line/circle to count as one |
 | `--no-refine` | refine on | Skip snapping curves to the ink centerline (refinement roughly halves the distance to the true lines) |
 | `--upscale {auto,1,2,3,4}` | `auto` | Trace at N× resolution, then map the curves back. `auto` uses 2× when lines are thinner than ~1.75 px. The tolerance stays in original pixels |
@@ -692,7 +735,7 @@ outlines and the rings that fill them in Desmos are on by default; `demo` asks
 for up to 5,000 curves, the app for a tolerance; `optimize=True` needs PyTorch):
 
 ```python
-from line2func import lineart, pipeline
+from line2func import functions, lineart, pipeline
 from line2func.export import write_outputs
 
 rgb = lineart.load_rgb("drawing.png")
@@ -703,7 +746,9 @@ curves, ink = pipeline.trace(rgb, upscale="auto", decisions="rules")  # the angl
 
 for c in curves:
     print(c.stroke, c.ctrl.tolist(), c.width, c.color, c.shape and c.shape["type"])
-write_outputs(curves, "out", source_image=rgb, named=True)
+write_outputs(curves, "out", source_image=rgb, named=True)  # lines and arcs as named equations
+report = functions.attach(curves)  # every curve as y = f(x) / x = g(y) pieces (c.functions), within 0.25 px
+write_outputs(curves, "out_functions", source_image=rgb, form="function")
 ```
 
 The building blocks, step by step (the baseline engine on its own uses the
@@ -745,6 +790,7 @@ line2func/
   lineart.py  lineart_model.py  weights.py # line extraction, pretrained model, downloads
   baseline.py  fit.py                      # baseline engine, Schneider fitting
   attributes.py  shapes.py  export.py      # refinement, width/color, lines/arcs, exports
+  functions.py                             # curves as functions y = f(x) / x = g(y) (--form function)
   residual.py  outline.py  fill.py         # second pass, thick strokes as outlines, rings for Desmos
   budget.py  optimize.py  quality.py       # an exact number of curves, render-and-compare, quality check
   decisions.py  decision_features.py      # the tracer's decisions as scores; candidate features
@@ -759,7 +805,7 @@ tests/          # pytest suite
 ```
 
 ```bash
-python -m pytest            # about 340 tests; model tests skip without PyTorch, viewer JS checks without Node.js
+python -m pytest            # about 360 tests; model tests skip without PyTorch, viewer JS checks without Node.js
 ```
 
 Generated folders (`out/`, `runs/`, `data/`, `.venv/`) are git-ignored.
@@ -777,6 +823,7 @@ The baseline engine is the one to use; the neural engine is experimental.
 - [x] Second pass over uncovered ink, thick strokes as filled outlines, render-and-compare (`--optimize`)
 - [x] Learned decisions (the default; `--decisions rules` for the angle rules)
 - [x] Solid areas such as heavy eyelashes, with rings for Desmos; up to 5,000 curves by default; light and very faint lines
+- [x] Function mode: every curve as pieces of `y = f(x)` / `x = g(y)` (`--form function`)
 - [ ] Blind test on real drawings (tooling ready; needs human raters)
 - [ ] Optional: retrain the neural engine on these line styles and fine-tune it on real drawings
 
@@ -798,7 +845,7 @@ The baseline engine is the one to use; the neural engine is experimental.
 
 ## 繁體中文
 
-line2func 會把圖（線稿或照片）裡的每一條線描成三次參數曲線。你可以在本機的網頁檢視器中逐條查看算式、把算式貼進 [Desmos](https://www.desmos.com/calculator)、存成可任意縮放的 SVG，或輸出 LaTeX。直線和圓弧還能寫成具名算式：`y = mx + c` 與 `(x−h)² + (y−k)² = r²`。
+line2func 會把圖（線稿或照片）裡的每一條線描成三次參數曲線。你可以在本機的網頁檢視器中逐條查看算式、把算式貼進 [Desmos](https://www.desmos.com/calculator)、存成可任意縮放的 SVG，或輸出 LaTeX。直線和圓弧還能寫成具名算式：`y = mx + c` 與 `(x−h)² + (y−k)² = r²`；每條曲線也能切成顯函數 `y = f(x)`／`x = g(y)`。
 
 ```
 x(t) = −40.00·t³ +  60.00·t² +  60.00·t + 10.00
@@ -913,9 +960,9 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 
 | 檔案 | 內容 |
 |---|---|
-| `curves.json` | 每條曲線的 4 個控制點、所屬筆畫、信心值、量測到的線寬與顏色，以及辨識出的形狀（直線／圓弧，若有） |
+| `curves.json` | 每條曲線的 4 個控制點、所屬筆畫、信心值、量測到的線寬與顏色、辨識出的形狀（直線／圓弧，若有），以及 `--form function` 時的函數 |
 | `out.svg` | 向量圖，每一筆畫使用量測到的線寬與顏色；可用瀏覽器、Inkscape、Illustrator 開啟 |
-| `desmos.txt` | 每行一個 Desmos 算式（參數式；加上 `--named` 時直線與圓弧改用具名算式） |
+| `desmos.txt` | 每行一個 Desmos 算式：參數式、具名式（`--form named`）或函數（`--form function`），見第 5 節 |
 | `equations.tex` | 同樣的算式，寫成 LaTeX `align*` 區塊 |
 | `overlay.png` | 曲線疊在原圖上，每一筆畫一種顏色，方便快速檢查 |
 | `source.png` | 輸入圖的副本（在檢視器中顯示在曲線後方） |
@@ -969,7 +1016,7 @@ python -m line2func.serve out/ --no-browser    # 只印出網址，不開瀏覽�
 | 查看曲線 | 滑過曲線（提示框顯示 `x(t)`、`y(t)`）；點擊選取 |
 | 瀏覽所有算式 | 捲動右側清單；點一列就會跳到該曲線 |
 | 上一條／下一條 | `↑`／`↓`；`Esc` 取消選取 |
-| 複製算式 | 選取曲線後按〔複製到 Desmos〕（參數式），直線與圓弧可按〔複製具名算式〕 |
+| 複製算式 | 選取曲線後按〔複製到 Desmos〕（參數式），直線與圓弧可按〔複製具名算式〕，`--form function` 的結果可按〔複製函數〕 |
 | 背景 | 勾選框、〔原圖〕／〔線稿〕（App 裡的照片）／〔遺漏細節〕（做過品質檢查後）選單，以及透明度滑桿 |
 | 實際樣貌 | 〔實際樣貌〕：用量測到的線寬與墨色畫出每條曲線，並填滿填色區域 |
 | 下載 | 〔SVG〕〔JSON〕〔Desmos〕〔LaTeX〕按鈕（App 裡還有〔ZIP〕） |
@@ -989,7 +1036,7 @@ python -m line2func.serve out/ --no-browser    # 只印出網址，不開瀏覽�
 \left(-40.00t^{3}+60.00t^{2}+60.00t+10.00,\ 20.00t^{3}-270.00t^{2}+250.00t+10.00\right)
 ```
 
-加上 `--named` 時，直線與圓弧會寫成具名算式：
+加上 `--form named`（或 `--named`）時，直線與圓弧會寫成具名算式：
 
 ```
 y=0.5000x+5.00\left\{10.00\le x\le 90.00\right\}
@@ -1001,6 +1048,31 @@ y=0.5000x+5.00\left\{10.00\le x\le 90.00\right\}
 數字一律不用科學記號，因為 Desmos 會把 `1e-5` 讀成 `1·e − 5`。四捨五入讓任何一點的位置最多偏移約 0.02 px。
 
 **預設最多 5,000 條曲線。** `demo` 最多產生 5,000 條曲線（用 `--curves N` 指定其他數量）；需要的曲線比這少的圖，會保留細緻描線的全部曲線。超過 5,000 條時 line2func 會提出警告。如果在你的電腦上 Desmos 變慢，可以指定少一點，例如 `--curves 2000`。
+
+#### 用函數代替參數式：`--form function`
+
+加上 `--form function` 時，每條曲線都會寫成顯函數。本頁開頭那道拱形會變成三段：陡升的一段（`x = g(y)`）、頂端平緩的一段（`y = f(x)`）和陡降的一段（`x = g(y)`）：
+
+```
+x=17.92+0.3813\left(y-36.29\right)+0.00561\left(y-36.29\right)^{2}+0.0000977\left(y-36.29\right)^{3}\left\{10.00\le y\le 62.58\right\}
+y=70.05-0.0171\left(x-49.49\right)-0.03067\left(x-49.49\right)^{2}\left\{33.59\le x\le 65.40\right\}
+x=81.52-0.4101\left(y-36.01\right)-0.00564\left(y-36.01\right)^{2}-0.0000929\left(y-36.01\right)^{3}\left\{10.00\le y\le 62.03\right\}
+```
+
+- 每條曲線在斜率為 +1 或 −1 的地方切開。較平的部分寫成 `y = f(x)`，較陡的部分寫成 `x = g(y)`。切點之間曲線不會往回走，所以函數一定存在；曲線往回折的地方（尖點）會從新的一段開始。
+- 每一段都是 1 到 3 次的多項式，以該段的中心展開：`y = a + b(x−c) + d(x−c)² + e(x−c)³`；直的部分寫成 `y = mx + c`。每一段都通過自己的兩個端點，所以相鄰的段落與曲線會精確相接。
+- 每個函數與曲線的距離都在 `--function-tolerance`（預設 0.25 px）以內，而且是用印出來、四捨五入後的數字檢查；不合格的段落會二分。圓弧和其他曲線一樣用多項式近似。
+
+函數會比曲線多。四張測試圖（見第 8 節）在最多 5,000 條曲線時：
+
+| | 曲線 | 函數 | 每條曲線 | 直的段落 |
+|---|---|---|---|---|
+| 圖 1 | 3,541 | 5,291 | 1.49 | 73% |
+| 圖 2 | 5,000 | 7,249 | 1.45 | 72% |
+| 圖 3 | 5,000 | 8,145 | 1.63 | 65% |
+| 圖 4 | 5,000 | 6,969 | 1.39 | 72% |
+
+產生函數不到一秒。超過 5,000 條函數時 `demo` 會警告，並建議較小的 `--curves`。曲線越少、越長，每條切出的函數就會多一些，建議值已經考慮到這點：在測試圖上得到 4,555 到 4,993 條函數。在檢視器中，〔複製函數〕會複製選取曲線的所有函數。
 
 ### 6. 照片與彩色圖片
 
@@ -1042,7 +1114,9 @@ python -m line2func.demo IMAGE [options]
 | `--tolerance PX` | 關閉 | 改用曲線擬合的最大誤差來描線，而不是指定曲線數量（App 就是這樣，預設 1.0）。數值越大，曲線越少、越平滑 |
 | `--decisions {learned,rules,PATH}` | `learned` | 由誰決定線條在交叉處怎麼接、哪些斷口要接起來、哪些相鄰的交叉點其實是同一個淺角交叉、哪裡是轉角：學習式評分器、角度規則，或其他學習權重（見第 8 節） |
 | `--threshold 0..1` | 自動 | 墨跡門檻。自動：採用 Otsu 門檻，但線稿最高只到 0.25，讓淺色的筆畫保持完整（如果連紙面都會被描出來，就維持 Otsu 門檻）。淡的線被漏掉時調低，紙張紋理被描出來時調高 |
-| `--named` | 關閉 | 在 `desmos.txt`／`equations.tex` 中把直線與圓弧寫成具名算式 |
+| `--form {parametric,named,function}` | `parametric` | `desmos.txt`／`equations.tex` 怎麼寫每條曲線：參數式、具名式（直線與圓弧；其他曲線仍是參數式），或函數 `y = f(x)`／`x = g(y)`（見第 5 節） |
+| `--named` | 關閉 | 等於 `--form named` |
+| `--function-tolerance PX` | `0.25` | `--form function` 時，函數與曲線之間允許的最大距離 |
 | `--shape-tolerance PX` | `0.5` | 曲線要多接近直線或圓才算是直線或圓弧 |
 | `--no-refine` | 精修開啟 | 跳過把曲線貼齊墨跡中心線的步驟（精修約可讓與真實線條的距離減半） |
 | `--upscale {auto,1,2,3,4}` | `auto` | 以 N 倍解析度描線，再把曲線換算回原尺寸。`auto` 在線條細於約 1.75 px 時放大 2 倍；容許誤差仍以原圖像素計 |
@@ -1307,7 +1381,7 @@ python -m line2func.train_decisions --data data/decisions_v1 --out runs/decision
 一次跑完整個流程，和 `demo` 與 App 的做法相同（第二遍、外框和讓外框在 Desmos 裡填滿的圈線預設開啟；`demo` 指定最多 5,000 條曲線，App 則指定容差；`optimize=True` 需要 PyTorch）：
 
 ```python
-from line2func import lineart, pipeline
+from line2func import functions, lineart, pipeline
 from line2func.export import write_outputs
 
 rgb = lineart.load_rgb("drawing.png")
@@ -1318,7 +1392,9 @@ curves, ink = pipeline.trace(rgb, upscale="auto", decisions="rules")  # 改由�
 
 for c in curves:
     print(c.stroke, c.ctrl.tolist(), c.width, c.color, c.shape and c.shape["type"])
-write_outputs(curves, "out", source_image=rgb, named=True)
+write_outputs(curves, "out", source_image=rgb, named=True)  # 直線與圓弧寫成具名算式
+report = functions.attach(curves)  # 每條曲線切成 y = f(x)／x = g(y)（c.functions），誤差 0.25 px 以內
+write_outputs(curves, "out_functions", source_image=rgb, form="function")
 ```
 
 也可以一步一步使用各個元件（單獨使用傳統引擎時採用角度規則與 Otsu 門檻，不含流程裡額外的步驟）：
@@ -1356,6 +1432,7 @@ line2func/
   lineart.py  lineart_model.py  weights.py # 抽線稿、預訓練模型、權重下載
   baseline.py  fit.py                      # 傳統引擎、Schneider 擬合
   attributes.py  shapes.py  export.py      # 精修、線寬顏色、直線圓弧、匯出
+  functions.py                             # 把曲線寫成函數 y = f(x)／x = g(y)（--form function）
   residual.py  outline.py  fill.py         # 第二遍描線、粗筆畫外框、Desmos 用的圈線
   budget.py  optimize.py  quality.py       # 指定曲線數量、渲染後比對、品質檢查
   decisions.py  decision_features.py      # 描線決策的評分介面、候選特徵
@@ -1370,7 +1447,7 @@ tests/          # pytest 測試
 ```
 
 ```bash
-python -m pytest            # 約 340 個測試；沒有 PyTorch 時略過模型測試，沒有 Node.js 時略過檢視器 JS 檢查
+python -m pytest            # 約 360 個測試；沒有 PyTorch 時略過模型測試，沒有 Node.js 時略過檢視器 JS 檢查
 ```
 
 產生的資料夾（`out/`、`runs/`、`data/`、`.venv/`）已列在 `.gitignore`。
@@ -1388,6 +1465,7 @@ python -m pytest            # 約 340 個測試；沒有 PyTorch 時略過模型
 - [x] 第二遍描線、粗筆畫改為填滿的外框、渲染後比對（`--optimize`）
 - [x] 學習式決策（預設；`--decisions rules` 改用角度規則）
 - [x] 粗重睫毛等實心區域，並加上 Desmos 用的圈線；預設最多 5,000 條曲線；淺色與極淡的線
+- [x] 函數模式：每條曲線切成 `y = f(x)`／`x = g(y)` 的顯函數（`--form function`）
 - [ ] 真實線稿的盲測（工具已完成，需要人工評分者）
 - [ ] 選用：以這些線條風格重新訓練神經網路引擎，並在真實線稿上微調
 

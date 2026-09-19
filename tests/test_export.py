@@ -1,3 +1,5 @@
+import json
+import re
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -110,3 +112,36 @@ def test_output_texts_match_the_written_files(tmp_path):
     assert set(texts) == set(names.values())
     for key, name in names.items():
         assert paths[key].read_bytes() == texts[name].encode("utf-8")
+
+
+def test_the_arch_as_functions():
+    """The README's arch rises steeply, turns flat at the top and falls: x = g(y), y = f(x), x = g(y)."""
+    cs = arch_set()
+    lines = to_desmos(cs, form="function").splitlines()
+    assert [line[:2] for line in lines] == ["x=", "y=", "x="]
+    assert all(line.endswith(r"\right\}") and not re.search(r"\d[eE][+-]?\d", line) for line in lines)
+    latex = to_latex(cs, form="function")
+    assert latex.startswith("% line2func: 1 curves, 1 strokes, 3 functions y = f(x) / x = g(y), image 120x100")
+    assert r"&\text{0.0:}\ x=" in latex and r"&\text{0.2:}\ x=" in latex and r",\quad \left\{" in latex
+    assert latex.count(r" \\") == 2  # rows end with \\ except the last
+
+
+def test_forms_and_the_named_flag():
+    cs = arch_set()
+    assert to_desmos(cs, named=True) == to_desmos(cs, form="named")
+    assert to_desmos(cs) == to_desmos(cs, form="parametric") == PLAN_LINE + "\n"
+    assert to_latex(cs, form="parametric") == to_latex(cs)
+    with pytest.raises(ValueError):
+        to_desmos(cs, form="implicit")
+
+
+def test_function_outputs_list_the_functions_in_curves_json():
+    cs = arch_set()
+    texts = output_texts(cs, form="function")
+    doc = json.loads(texts["curves.json"])
+    assert doc["curves"][0]["functions"] == texts["desmos.txt"].splitlines()
+    assert CurveSet.from_dict(doc).curves[0].functions == cs.curves[0].functions
+    # a tighter tolerance makes new functions only where none are attached yet
+    assert to_desmos(cs, form="function", function_tolerance=0.01) == texts["desmos.txt"]
+    cs.curves[0].functions = None
+    assert len(to_desmos(cs, form="function", function_tolerance=0.01).splitlines()) > 3
