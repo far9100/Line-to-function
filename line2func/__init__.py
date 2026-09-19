@@ -12,7 +12,7 @@ from line2func.geometry import (
 )
 from line2func.render import rasterize, render_lineart, render_overlay
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "Curve",

@@ -846,14 +846,14 @@ tests/          # pytest suite
 ```
 
 ```bash
-python -m pytest            # about 360 tests; model tests skip without PyTorch, viewer JS checks without Node.js
+python -m pytest            # about 370 tests; model tests skip without PyTorch, viewer JS checks without Node.js
 ```
 
 Generated folders (`out/`, `runs/`, `data/`, `.venv/`) are git-ignored.
 
 ### 13. Status and roadmap
 
-The baseline engine is the one to use; the neural engine is experimental.
+This is version 1.0. The baseline engine is the one to use; the neural engine is experimental.
 
 - [x] Geometry core and renderer
 - [x] Baseline engine; SVG, Desmos and LaTeX export; viewer; `demo` and `serve`
@@ -865,6 +865,7 @@ The baseline engine is the one to use; the neural engine is experimental.
 - [x] Learned decisions (the default; `--decisions rules` for the angle rules)
 - [x] Solid areas such as heavy eyelashes, with rings for Desmos; up to 5,000 curves by default; light and very faint lines
 - [x] Function mode: every curve as pieces of `y = f(x)` / `x = g(y)` (`--form function`)
+- [x] One-screen web page with three display modes; lines broken into dots and dashes kept; a noise filter slider (`--denoise`)
 - [ ] Blind test on real drawings (tooling ready; needs human raters)
 - [ ] Optional: retrain the neural engine on these line styles and fine-tune it on real drawings
 
@@ -1513,14 +1514,14 @@ tests/          # pytest 測試
 ```
 
 ```bash
-python -m pytest            # 約 360 個測試；沒有 PyTorch 時略過模型測試，沒有 Node.js 時略過檢視器 JS 檢查
+python -m pytest            # 約 370 個測試；沒有 PyTorch 時略過模型測試，沒有 Node.js 時略過檢視器 JS 檢查
 ```
 
 產生的資料夾（`out/`、`runs/`、`data/`、`.venv/`）已列在 `.gitignore`。
 
 ### 13. 現況與路線圖
 
-建議使用傳統引擎；神經網路引擎是實驗功能。
+這是 1.0 版。建議使用傳統引擎；神經網路引擎是實驗功能。
 
 - [x] 幾何核心與渲染器
 - [x] 傳統引擎；SVG、Desmos、LaTeX 匯出；檢視器；`demo` 與 `serve`
@@ -1532,6 +1533,7 @@ python -m pytest            # 約 360 個測試；沒有 PyTorch 時略過模型
 - [x] 學習式決策（預設；`--decisions rules` 改用角度規則）
 - [x] 粗重睫毛等實心區域，並加上 Desmos 用的圈線；預設最多 5,000 條曲線；淺色與極淡的線
 - [x] 函數模式：每條曲線切成 `y = f(x)`／`x = g(y)` 的顯函數（`--form function`）
+- [x] 單一畫面的網頁版，三種顯示方式；斷成點和虛線的線會保留；去雜訊強度拖動條（`--denoise`）
 - [ ] 真實線稿的盲測（工具已完成，需要人工評分者）
 - [ ] 選用：以這些線條風格重新訓練神經網路引擎，並在真實線稿上微調
 
