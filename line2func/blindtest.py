@@ -1,4 +1,4 @@
-"""Blind comparison of the two engines on real drawings (the third enabling condition, README Evaluation).
+"""Blind comparison of the two engines on real drawings (the third enabling condition, docs/details.md, Evaluation).
 
     python -m line2func.eval --ckpt runs/m3/best.pt --fullset data/full_v1   # builds the kit
     # raters open runs/m3/blindtest/index.html, vote, and click "Export votes"

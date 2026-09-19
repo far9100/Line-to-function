@@ -175,7 +175,7 @@ def test_light_lines_on_dark_background_via_lineart():
 
 
 def test_clean_random_scenes_meet_targets():
-    """The baseline's targets (README, Evaluation): F_GT@2 >= 0.97 on clean drawings, <= 5 s CPU per MP."""
+    """The baseline's targets (docs/details.md, Evaluation): F_GT@2 >= 0.97 on clean drawings, <= 5 s CPU per MP."""
     rng = np.random.default_rng(7)
     scores, seconds, pixels = [], 0.0, 0
     for _ in range(6):

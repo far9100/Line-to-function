@@ -1,4 +1,4 @@
-"""Accuracy metrics between traced curves and ground truth (the README's Evaluation section).
+"""Accuracy metrics between traced curves and ground truth (docs/details.md, Evaluation).
 
 * :func:`f_score` - F_GT@2: how much curve length matches within 2 px;
   :func:`chamfer` - mean distance both ways.

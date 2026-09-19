@@ -9,7 +9,7 @@
                                    # and a blind-test kit for real drawings in data/full_v1
     python -m line2func.eval --valset data/val_v1 --decisions learned   # a decision scorer vs the rules
 
-Scene evaluation reports the metrics of the README's Evaluation section per
+Scene evaluation reports the metrics of docs/details.md's Evaluation section per
 subset (clean, hard, hard2, thin): F_GT@2, crossing continuity, gap closure,
 fragments per stroke, curve count ratio and CPU seconds per megapixel, plus the
 decision metrics. ``--decisions`` also checks a scorer's gates (G1-G7). Single-curve
@@ -195,7 +195,7 @@ def _print_multi(r: dict) -> None:
 
 
 def gate(base: dict, model: dict) -> list[dict]:
-    """The conditions for enabling the neural engine (README, Evaluation), checked on synthetic scenes.
+    """The conditions for enabling the neural engine (docs/details.md, Evaluation), checked on synthetic scenes.
 
     The third condition (a blind test on real drawings, >= 60% rated better or
     tied) needs human raters; see :mod:`line2func.blindtest`.
