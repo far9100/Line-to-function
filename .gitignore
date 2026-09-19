@@ -8,11 +8,14 @@ dist/
 .venv/
 venv/
 
-# generated at the repository root: demo output, training runs, synthetic datasets
+# generated at the repository root: demo output, training runs, synthetic datasets, the online page
 # (anchored with "/": line2func/data/ holds the bundled scorer, tests/data/ the golden digests)
 /out/
 /runs/
 /data/
+/_site/
+# Pyodide for tests/test_pyodide.py (npm ci --prefix tests/pyodide)
+node_modules/
 
 # kept locally, not published: the development log and test drawings (third-party art)
 /docs/progress.md

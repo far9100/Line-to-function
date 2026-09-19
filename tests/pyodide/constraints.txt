@@ -1,0 +1,5 @@
+# The numpy, SciPy and Pillow of Pyodide 314.0.7 (line2func.website.PYODIDE_VERSION): the online page runs
+# line2func with these, so the Pages workflow tests with them too.
+numpy==2.4.6
+scipy==1.18.0
+pillow==12.2.0

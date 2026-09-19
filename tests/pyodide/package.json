@@ -1,0 +1,9 @@
+{
+  "name": "line2func-pyodide-tests",
+  "private": true,
+  "description": "Pyodide for tests/test_pyodide.py: line2func's online engine in WebAssembly under Node.js",
+  "type": "module",
+  "dependencies": {
+    "pyodide": "314.0.7"
+  }
+}
