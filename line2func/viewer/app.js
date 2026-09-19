@@ -1,10 +1,12 @@
 // line2func app: one page, the curve viewer. Without an image it shows a drop zone; a dropped (chosen or
 // pasted) line drawing is shown in place, and Convert traces it into functions or parametric equations like
-// the command line does (up to 5,000 curves, with a quality check). Served by `python -m line2func`. When
-// `python -m line2func.serve out/` serves it, the same page is the plain result viewer ("static" mode:
-// /api/info answers {mode: "static"} or nothing).
+// the command line does (up to 5,000 curves, with a quality check). /api/info says who does the work:
+// - "app": `python -m line2func` serves the page and traces on this computer;
+// - "web": the online page (static files, line2func/website.py) traces in the browser (engine.js, Pyodide);
+// - "static" (or no answer): `python -m line2func.serve out/` shows a saved result, the plain result viewer.
 import { t, setLang, getLang, detectLang, onLangChange } from "./i18n.js";
 import { createViewer, DESMOS_LIMIT } from "./viewer.js";
+import { createEngine } from "./engine.js";
 
 // ---------- input guards and handlers: registered first, before anything can fail ----------
 let dragTimer = 0, internalDrag = false;
@@ -25,20 +27,22 @@ const viewer = createViewer({
 
 const FORMS = ["function", "parametric"]; // how the lines are written (line2func.export)
 const DENOISE = 50; // = line2func.pipeline.DENOISE, the noise filters' default strength (tests check it)
-// the server's stages in the order they run (pipeline.trace, app.run_job) -> the step shown, and typical cost
-const STEP_OF = { resize: "prepare", load_model: "prepare", lineart: "prepare", upscale: "prepare",
+// the stages in the order they run (the online engine's start, pipeline.trace, app.run_job) -> the step shown,
+// and typical cost
+const STEP_OF = { load_engine: "prepare", resize: "prepare", load_model: "prepare", lineart: "prepare", upscale: "prepare",
                   vectorize: "trace", refine: "trace", measure: "finish", outline: "finish", residual: "finish",
                   fill: "finish", count: "finish", optimize: "finish", shapes: "finish", export: "finish", quality: "quality" };
-const WEIGHTS = { resize: 1, load_model: 6, lineart: 6, upscale: 3, vectorize: 45, refine: 20, measure: 8,
+const WEIGHTS = { load_engine: 12, resize: 1, load_model: 6, lineart: 6, upscale: 3, vectorize: 45, refine: 20, measure: 8,
                   outline: 5, residual: 8, fill: 3, count: 10, optimize: 10, shapes: 6, export: 3, quality: 14 };
 const NEVER = ["load_model", "optimize"]; // stages the page's conversions do not run
 
 const S = {
-  mode: "boot", info: null, gone: false,
+  mode: "boot", info: null, gone: false, engine: null,
   view: "empty", // empty (the drop zone), preview (an image to convert) or result
   image: null, form: "function", denoise: DENOISE, denoiseOn: true, jobs: new Map(),
   trace: null, result: null, ticket: 0, copyArmed: false,
 };
+const converts = () => S.mode === "app" || S.mode === "web"; // the page can open and convert images
 
 // ---------- small helpers ----------
 let toastTimer = 0;
@@ -102,7 +106,8 @@ async function boot() {
     const response = await fetch("api/info", { cache: "no-store" });
     if (response.ok) info = await response.json();
   } catch { /* the plain viewer may not answer at all */ }
-  if (info && info.mode === "app") startApp(info);
+  if (info?.mode === "app") startApp(info);
+  else if (info?.mode === "web") startWeb(info);
   else startStatic(info);
 }
 
@@ -122,10 +127,11 @@ function renderAll() {
   document.title = t(S.mode === "static" ? "static.title" : "app.title");
   for (const button of document.querySelectorAll("[data-lang]")) button.setAttribute("aria-pressed", String(button.dataset.lang === getLang()));
   viewer.rerender();
-  if (S.mode !== "app") return;
+  if (!converts()) return;
   $("#import-limits").textContent = t("import.limits", { mb: Math.round(S.info.limits.max_bytes / 1048576) });
   renderFileName();
   renderConvert();
+  renderEngine();
   if (S.trace) renderRunning();
   renderBanner();
 }
@@ -135,9 +141,7 @@ async function startStatic(info) {
   S.mode = "static";
   S.view = "result";
   document.documentElement.dataset.mode = "static";
-  let saved = null;
-  try { saved = localStorage.getItem("line2func.lang"); } catch { /* storage may be blocked */ }
-  initLang(saved);
+  initLang(readLocal("line2func.lang"));
   setupResult();
   viewer.setLoading();
   // the server lists the optional files it has; an older server doesn't, so try them all
@@ -148,34 +152,78 @@ async function startStatic(info) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const doc = await response.json();
     viewer.load(doc, { original: source("source.png"), quality: source("quality.png"), qualityJson: source("quality.json") });
-    S.result = { base: "data/", doc, name: doc.meta?.source || "line2func", desmos: null, snap: null };
+    S.result = { url: (file) => "data/" + file, doc, name: doc.meta?.source || "line2func", desmos: null, snap: null };
     prefetchDesmos(S.result);
   } catch (err) {
     viewer.fail(err.message);
   }
 }
 
-// ---------- app mode ----------
+// ---------- app mode: python -m line2func traces on this computer ----------
 async function startApp(info) {
   S.mode = "app";
   S.info = info;
   document.documentElement.dataset.mode = "app";
   viewer.setDesmosWarning(false); // the result banner says it
-  const saved = info.settings?.options || {};
-  if (FORMS.includes(saved.form)) S.form = saved.form;
-  if (typeof saved.denoise === "number" && saved.denoise >= 0 && saved.denoise <= 100) S.denoise = saved.denoise;
-  if (typeof saved.denoise_on === "boolean") S.denoiseOn = saved.denoise_on;
+  useOptions(info.settings?.options);
   initLang(info.settings?.lang);
   setupApp();
   setupResult();
   $("#quit").addEventListener("click", quit);
   connectEvents();
   if (!(await restoreSession())) showEmpty();
-  window.__l2f = {
+  window.__l2f = testHooks();
+}
+
+// ---------- web mode: the online page traces in the browser ----------
+function startWeb(info) {
+  S.mode = "web";
+  S.info = info;
+  document.documentElement.dataset.mode = "web";
+  viewer.setDesmosWarning(false); // the result banner says it
+  useOptions(readLocal("line2func.options", true));
+  S.engine = createEngine(info.engine, { onJob, onStatus: renderEngine });
+  initLang(readLocal("line2func.lang"));
+  setupApp();
+  setupResult();
+  showEmpty();
+  // the engine (about 25 MB the first time) starts at once, unless the browser asks to save data: then with
+  // the first image
+  if (!navigator.connection?.saveData) S.engine.start();
+  window.__l2f = { ...testHooks(), engine: () => S.engine.status() };
+}
+
+function readLocal(key, json = false) {
+  try {
+    const text = localStorage.getItem(key);
+    return json ? JSON.parse(text || "null") : text;
+  } catch {
+    return null; // storage may be blocked, or hold something else
+  }
+}
+
+function useOptions(saved) {
+  if (!saved || typeof saved !== "object") return;
+  if (FORMS.includes(saved.form)) S.form = saved.form;
+  if (typeof saved.denoise === "number" && saved.denoise >= 0 && saved.denoise <= 100) S.denoise = saved.denoise;
+  if (typeof saved.denoise_on === "boolean") S.denoiseOn = saved.denoise_on;
+}
+
+function testHooks() {
+  return {
     state: () => S.view, mode: () => S.mode, debug: () => viewer.debug(), info: () => S.info,
     image: () => S.image, result: () => S.result && { job: S.result.snap, name: S.result.name },
-    form: () => S.form, openFile,
+    desmos: () => S.result?.desmos ?? null, form: () => S.form, openFile,
   };
+}
+
+function renderEngine() {
+  const el = $("#engine-status");
+  if (S.mode !== "web") return;
+  const status = S.engine.status();
+  el.classList.toggle("error", status.state === "failed");
+  if (status.state === "failed") el.textContent = errorText(apiError(status.code, { detail: status.detail }));
+  else el.textContent = t(status.state === "ready" ? "engine.ready" : status.state === "idle" ? "engine.idle" : "engine.loading");
 }
 
 function setupApp() {
@@ -202,7 +250,9 @@ function setupApp() {
 }
 
 function saveOptions() {
-  api("POST", "api/settings", { options: { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn } }).catch(() => {});
+  const options = { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn };
+  if (S.mode === "app") api("POST", "api/settings", { options }).catch(() => {});
+  else try { localStorage.setItem("line2func.options", JSON.stringify(options)); } catch { /* storage may be blocked */ }
 }
 
 function saveSession() {
@@ -318,16 +368,18 @@ function onPaste(e) {
 
 let uploads = 0;
 async function openFile(file) {
-  if (S.mode !== "app") { toast(t("static.dropHint")); return; }
+  if (!converts()) { toast(t("static.dropHint")); return; }
   if (S.gone || !file) return;
   if (file.size > S.info.limits.max_bytes) { toast(errorText({ code: "too_large" }), "error"); return; }
-  // the current image and result stay until the new file has been read: a wrong file loses nothing
+  // the current image and result stay until the new file has been read: a wrong file loses nothing (online,
+  // a conversion still running stops first: the engine does one thing at a time)
+  if (S.mode === "web") cancelTrace(true);
   const mine = ++uploads;
   const name = file.name || "image.png";
   const busy = t("import.uploading", { name });
   toast(busy, "", true);
   try {
-    const info = await api("POST", "api/images", file, {
+    const info = S.mode === "web" ? await S.engine.open(file, name) : await api("POST", "api/images", file, {
       "X-Filename": encodeURIComponent(name), "Content-Type": file.type || "application/octet-stream",
     });
     if (mine !== uploads) return;
@@ -365,8 +417,12 @@ function showPreview() {
   setView("preview");
   renderConvert();
   // fitted above the convert bar (it floats 16 px above the bottom)
-  viewer.preview(`api/images/${S.image.image_id}/preview`, S.image.width, S.image.height, $("#convert-bar").offsetHeight + 24);
+  viewer.preview(previewURL(S.image.image_id), S.image.width, S.image.height, $("#convert-bar").offsetHeight + 24);
   $("#convert").focus();
+}
+
+function previewURL(imageId) {
+  return S.mode === "web" ? S.engine.previewURL(imageId) : `api/images/${imageId}/preview`;
 }
 
 function clearImage() {
@@ -379,7 +435,7 @@ function clearImage() {
 function renderFileName() {
   const el = $("#file-name");
   const img = S.image;
-  el.hidden = !(S.mode === "app" && img);
+  el.hidden = !(converts() && img);
   el.textContent = img ? `${img.name} · ${img.width} × ${img.height}` : "";
 }
 
@@ -394,7 +450,7 @@ function renderDenoise() {
 function renderConvert() {
   for (const radio of document.querySelectorAll("input[name=form]")) radio.checked = radio.value === S.form;
   renderDenoise();
-  let note = t("convert.note", { n: new Intl.NumberFormat().format(S.info.desmos_limit) });
+  let note = t(S.mode === "web" ? "convert.noteWeb" : "convert.note", { n: new Intl.NumberFormat().format(S.info.desmos_limit) });
   if (S.image?.suggested === "photo") note += " " + t("convert.photo");
   $("#convert-note").textContent = note;
 }
@@ -409,13 +465,14 @@ function startTrace() {
   const params = { image_id: img.image_id, kind: "trace", method: "none", scale: "auto", form: S.form,
                    curves: S.info.desmos_limit, quality: true, denoise: S.denoiseOn ? S.denoise : 0 };
   const checked = img.width * img.height * img.auto_scale ** 2 <= S.info.limits.quality_max_pixels;
-  S.trace = { jobId: null, snap: null, params, checked, started: performance.now(), group: null };
+  S.trace = { jobId: null, snap: null, params, checked, started: performance.now(), group: null, engine: false };
   $("#running").hidden = false;
   renderRunning();
   S.trace.timer = setInterval(renderElapsed, 200);
   $("#cancel").focus();
-  api("POST", "api/jobs", params).then((snap) => {
-    if (mine !== S.ticket || !S.trace) { api("POST", `api/jobs/${snap.job_id}/cancel`).catch(() => {}); return; }
+  const submitted = S.mode === "web" ? S.engine.trace(params) : api("POST", "api/jobs", params);
+  submitted.then((snap) => {
+    if (mine !== S.ticket || !S.trace) { cancelJob(snap.job_id); return; }
     S.trace.jobId = snap.job_id;
     onTraceUpdate(S.jobs.get(snap.job_id) || snap);
   }, (err) => {
@@ -423,6 +480,11 @@ function startTrace() {
     stopRunning();
     toast(errorText(err), "error");
   });
+}
+
+function cancelJob(jobId) {
+  if (S.mode === "web") S.engine.cancel(jobId);
+  else api("POST", `api/jobs/${jobId}/cancel`).catch(() => {});
 }
 
 function stopRunning() {
@@ -436,7 +498,7 @@ function cancelTrace(silent) {
   if (!trace) return;
   S.ticket++;
   stopRunning();
-  if (trace.jobId) api("POST", `api/jobs/${trace.jobId}/cancel`).catch(() => {});
+  if (trace.jobId) cancelJob(trace.jobId);
   if (!silent) { toast(t("run.cancelled")); $("#convert").focus(); }
 }
 
@@ -449,6 +511,7 @@ function onJob(snap) {
 function onTraceUpdate(snap) {
   const trace = S.trace;
   trace.snap = snap;
+  if (snap.stage === "load_engine") trace.engine = true; // this conversion waits for the online engine to start
   if (snap.state === "done") { stopRunning(); loadResult(snap); return; }
   if (snap.state === "error") { stopRunning(); toast(errorText(apiError(snap.error?.code, snap.error)), "error"); return; }
   if (snap.state === "cancelled") { stopRunning(); return; }
@@ -470,9 +533,11 @@ function renderRunning() {
     if (step === current) { li.className = "active"; passed = false; } else if (passed && current) li.className = "done";
     list.append(li);
   }
-  $("#run-stage").textContent = !snap || snap.state === "queued" ? t("run.queued") : stage ? t("stage." + stage, {}, stage) : "";
+  const waiting = !snap || snap.state === "queued"; // online, nothing waits behind another job
+  $("#run-stage").textContent = waiting ? (S.mode === "web" ? "" : t("run.queued")) : stage ? t("stage." + stage, {}, stage) : "";
   // progress: the share of the typical work before the current stage
-  const order = Object.keys(WEIGHTS).filter((s) => !NEVER.includes(s) && (s !== "quality" || trace.checked));
+  const order = Object.keys(WEIGHTS).filter((s) => !NEVER.includes(s) && (s !== "quality" || trace.checked)
+                                                && (s !== "load_engine" || trace.engine));
   const total = order.reduce((sum, s) => sum + WEIGHTS[s], 0);
   const index = stage ? order.indexOf(stage) : -1;
   const done = index > 0 ? order.slice(0, index).reduce((sum, s) => sum + WEIGHTS[s], 0) : 0;
@@ -495,24 +560,31 @@ function setupResult() {
   $("#copy-all").addEventListener("click", copyAll);
 }
 
+// A result's files by name ("zip": all of them): from the local server, or blob: URLs of the online engine.
+function resultURL(snap) {
+  if (S.mode === "web") return (file) => S.engine.fileURL(snap.job_id, file);
+  const base = `api/jobs/${snap.job_id}/`;
+  return (file) => base + (file === "zip" ? "zip" : "data/" + file);
+}
+
 async function loadResult(snap) {
   const mine = ++S.ticket;
-  const base = `api/jobs/${snap.job_id}/data/`;
+  const url = resultURL(snap);
   S.result = null;
   setView("result");
   viewer.setLoading();
   try {
-    const response = await fetch(base + "curves.json");
+    const response = await fetch(url("curves.json"));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const doc = await response.json();
     if (mine !== S.ticket) return;
     const files = new Set(snap.files);
     viewer.load(doc, {
-      original: `api/images/${snap.image_id}/preview`,
-      quality: files.has("quality.png") ? base + "quality.png" : null,
-      qualityJson: files.has("quality.json") ? base + "quality.json" : null,
+      original: previewURL(snap.image_id),
+      quality: files.has("quality.png") ? url("quality.png") : null,
+      qualityJson: files.has("quality.json") ? url("quality.json") : null,
     });
-    S.result = { base, doc, snap, name: S.image?.name || doc.meta?.source || "line2func", desmos: null };
+    S.result = { url, doc, snap, name: S.image?.name || doc.meta?.source || "line2func", desmos: null };
     S.copyArmed = false;
     prefetchDesmos(S.result);
     renderBanner();
@@ -524,7 +596,7 @@ async function loadResult(snap) {
 
 function prefetchDesmos(result) {
   // fetched ahead, so "Copy all" can write to the clipboard right inside the click
-  fetch(result.base + "desmos.txt").then((r) => (r.ok ? r.text() : null)).then((text) => { result.desmos = text; }).catch(() => {});
+  fetch(result.url("desmos.txt")).then((r) => (r.ok ? r.text() : null)).then((text) => { result.desmos = text; }).catch(() => {});
 }
 
 function stemOf(name) {
@@ -536,7 +608,7 @@ async function download(file) {
   const result = S.result;
   if (!result) return;
   const name = DOWNLOAD_NAMES[file].replace("{stem}", stemOf(result.name));
-  const url = file === "zip" ? result.base.replace(/data\/$/, "zip") : result.base + file;
+  const url = result.url(file);
   if (S.mode === "app" && window.showSaveFilePicker) {
     let handle = null;
     try {
@@ -559,7 +631,7 @@ async function download(file) {
     }
   }
   const a = document.createElement("a");
-  a.href = url + "?download";
+  a.href = S.mode === "web" ? url : url + "?download"; // a blob: URL takes no query
   a.download = name;
   document.body.append(a);
   a.click();
@@ -599,7 +671,7 @@ function onKey(e) {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && !e.altKey && !e.shiftKey && (e.key === "o" || e.key === "O")) {
     e.preventDefault(); // never let the browser open a file in this window
-    if (S.mode === "app" && !S.gone) $("#file-input").click();
+    if (converts() && !S.gone) $("#file-input").click();
     return;
   }
   if (mod || e.altKey || isFormField(e.target)) return;

@@ -5,9 +5,21 @@
 // A translation may be {one, other} for English plurals, chosen by vars.n.
 // Numbers passed as vars are formatted for the language; numbers inside
 // equations are never localized (they are built elsewhere).
-import STRINGS from "./i18n.json" with { type: "json" };
+const STRINGS = await loadStrings(new URL("./i18n.json", import.meta.url));
 
 export const LANGS = ["en", "zh-TW"];
+
+// i18n.json next to this module: fetched in a browser (a JSON module import would need a newer browser than
+// the rest of the page), read from disk under Node.js (the tests import the viewer's modules).
+async function loadStrings(url) {
+  if (url.protocol === "file:") {
+    const { readFile } = await import("node:fs/promises");
+    return JSON.parse(await readFile(url, "utf8"));
+  }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`i18n.json: HTTP ${response.status}`);
+  return response.json();
+}
 let lang = "en";
 const listeners = new Set();
 const pluralRules = new Map();

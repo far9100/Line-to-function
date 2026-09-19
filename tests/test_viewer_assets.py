@@ -38,7 +38,7 @@ def test_the_page_knows_every_stage():
     def names(table: str) -> list[str]:
         return re.findall(r"(\w+):", re.search(rf"const {table} = \{{(.*?)\}};", source, re.S).group(1))
 
-    stages = [*pipeline.STAGES, "resize", "load_model", "export", "quality"]
+    stages = [*pipeline.STAGES, "load_engine", "resize", "load_model", "export", "quality"]
     assert set(stages) <= set(names("STEP_OF")) and set(stages) <= set(names("WEIGHTS"))
     ran = [s for s in names("WEIGHTS") if s in pipeline.STAGES]
     assert ran == [s for s in pipeline.STAGES if s in ran]  # the progress bar relies on this order

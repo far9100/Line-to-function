@@ -57,11 +57,12 @@ def test_every_key_is_used_or_built_from_a_code():
 
 def test_codes_from_the_server_are_translated():
     en = STRINGS["en"]
-    for stage in (*pipeline.STAGES, "resize", "load_model", "export", "quality", "encode"):
+    for stage in (*pipeline.STAGES, "load_engine", "resize", "load_model", "export", "quality", "encode"):
         assert f"stage.{stage}" in en, stage
     # the error codes of the local server, of the jobs it shares with the browser version, and of that version
     sources = "".join((VIEWER.parent / name).read_text(encoding="utf-8") for name in SERVER_SOURCES)
     codes = set(re.findall(r'ApiError\(HTTPStatus\.\w+, "(\w+)"', sources)) | {"out_of_memory", "internal"}
+    codes |= {"engine_failed", "engine_crashed"}  # from the online engine (viewer/engine.js)
     generic = {"bad_json", "bad_request", "forbidden", "length_required", "not_found", "not_ready"}  # -> error.generic
     assert sorted(c for c in codes - generic if f"error.{c}" not in en) == []
     for warning in ("no_lines", "over_desmos_limit", "quality_skipped"):

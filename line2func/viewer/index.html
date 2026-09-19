@@ -29,7 +29,10 @@
     }
   }
   [hidden] { display: none !important; }
+  /* data-mode: "app" (python -m line2func), "web" (the online page) or "static" (a saved result) */
   html[data-mode="static"] [data-app-only] { display: none !important; }
+  html:not([data-mode="app"]) [data-local-only] { display: none !important; }
+  html:not([data-mode="web"]) [data-web-only] { display: none !important; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -121,6 +124,7 @@
   .dropzone svg { width: 52px; height: 52px; color: var(--accent); }
   .dropzone h1 { font-size: 22px; margin: 10px 0 6px; font-weight: 650; }
   .dropzone p { margin: 8px 0; }
+  #engine-status.error { color: var(--danger); }
   .dropzone .primary { padding: 7px 18px; font-size: 15px; }
   #convert-bar {
     position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px);
@@ -198,12 +202,12 @@
     <button type="button" data-lang="zh-TW" lang="zh-TW" aria-pressed="false">中文</button>
     <button type="button" data-lang="en" lang="en" aria-pressed="true">EN</button>
   </div>
-  <button type="button" id="quit" data-app-only data-i18n="app.quit" data-i18n-title="app.quitTitle">Quit</button>
+  <button type="button" id="quit" data-local-only data-i18n="app.quit" data-i18n-title="app.quitTitle">Quit</button>
 </header>
 
 <main>
-  <!-- the one screen: the curve viewer. In the app (python -m line2func) it shows a drop zone while there is
-       no image and a convert bar for a dropped one; python -m line2func.serve shows a saved result in it -->
+  <!-- the one screen: the curve viewer. In the app (python -m line2func) and online it shows a drop zone while
+       there is no image and a convert bar for a dropped one; python -m line2func.serve shows a saved result in it -->
   <section id="result" class="screen">
     <div class="toolbar">
       <span id="stats"></span>
@@ -241,6 +245,8 @@
             <p><button type="button" id="choose" class="primary" data-i18n="import.choose">Choose a file…</button></p>
             <p class="hint" data-i18n="import.paste">You can also paste an image with Ctrl+V.</p>
             <p class="hint" id="import-limits"></p>
+            <p class="hint" data-web-only data-i18n="web.local">Runs in your browser: the image is not uploaded anywhere.</p>
+            <p class="hint" id="engine-status" data-web-only role="status"></p>
           </div>
         </div>
         <div id="convert-bar" data-app-only hidden>
