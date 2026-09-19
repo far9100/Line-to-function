@@ -60,6 +60,32 @@ Windows 11.
 
 ### 2. Trace your first drawing
 
+#### Online, without installing
+
+<https://far9100.github.io/Line-to-function/> is the web page below, with
+line2func running in your browser through [Pyodide](https://pyodide.org)
+(Python compiled to WebAssembly). Nothing is installed and the image never
+leaves your computer. Pyodide with numpy, SciPy and Pillow, about 25 MB, comes
+from the jsDelivr CDN on the first visit; the browser keeps it for later.
+
+- It traces like `python -m line2func` (up to 5,000 curves, with the quality
+  check), within tighter limits for a browser tab: files up to 32 MB, images
+  kept at up to 2048 px, traced and quality-checked at up to 1.5 megapixels
+  (larger ones are shrunk first).
+- It takes 1.5 to 2 times as long as installed. Five real drawings of about
+  0.6 megapixels took 17–56 s each (Edge or Node.js on a Ryzen 7 9700X,
+  including the quality check), against 11–30 s installed, and used up to
+  about 460 MB of memory. Slower computers and phones take longer, and a phone
+  may run out of memory on a large drawing.
+- WebAssembly rounds some calculations slightly differently, so a curve or two
+  can come out differently from the installed version; the share of lines kept
+  is the same.
+- **Cancel** stops at once. There is no **Quit**: close the tab.
+- It needs Chrome, Edge or Firefox 112 or newer, or Safari 16.4 or newer. The
+  settings and the language are kept in the browser.
+
+Photos and the other options (sections 6 and 7) need the installed version.
+
 #### In the browser (drag and drop)
 
 ```bash
@@ -803,7 +829,10 @@ rasterizer), `line2func.fit.fit_polyline` (Schneider fitting),
 ```
 line2func/
   app.py  browser.py  __main__.py          # the web page's server (python -m line2func), browser launcher
-  viewer/                                  # web page: index.html, app.js, viewer.js, i18n.js, i18n.json
+  jobs.py                                  # the web page's jobs: reading images, tracing (server and online)
+  web.py  website.py                       # the online page's engine (Pyodide), building the online page
+  viewer/                                  # web page: index.html, app.js, viewer.js, i18n.js, i18n.json;
+                                           #   engine.js, worker.js: tracing in the browser (online)
   demo.py  serve.py  pipeline.py           # commands, and the tracing flow they share
   lineart.py  lineart_model.py  weights.py # line extraction, pretrained model, downloads
   baseline.py  fit.py                      # baseline engine, Schneider fitting
@@ -819,14 +848,28 @@ line2func/
   train.py  model/                         # networks, data, losses, tiled inference
 configs/        # training configs
 docs/           # details.md (this manual), third_party.md (licenses of third-party code and weights)
-tests/          # pytest suite
+tests/          # pytest suite; tests/pyodide/: Pyodide for the WebAssembly test
+.github/workflows/pages.yml   # tests, builds and publishes the online page
 ```
 
 ```bash
-python -m pytest            # about 370 tests; model tests skip without PyTorch, viewer JS checks without Node.js
+python -m pytest            # about 390 tests; model tests skip without PyTorch, viewer JS checks without Node.js
+npm ci --prefix tests/pyodide && LINE2FUNC_PYODIDE=1 python -m pytest tests/test_pyodide.py   # in WebAssembly
 ```
 
-Generated folders (`out/`, `runs/`, `data/`, `.venv/`) are git-ignored.
+The online page (section 2) is built by
+
+```bash
+python -m line2func.website --out _site            # the page, api/info, line2func as a ZIP
+python -m line2func.website --out _site --serve    # and try it at http://127.0.0.1:8000/
+```
+
+and published by `.github/workflows/pages.yml` on every push to `main`, once
+the tests pass (in the repository settings, Pages must use "GitHub Actions").
+Pyodide comes from jsDelivr; `--pyodide-url` points the page to another copy
+of Pyodide 314.0.7.
+
+Generated folders (`out/`, `runs/`, `data/`, `_site/`, `.venv/`) are git-ignored.
 
 ### 13. Status and roadmap
 
@@ -843,6 +886,7 @@ This is version 1.0. The baseline engine is the one to use; the neural engine is
 - [x] Solid areas such as heavy eyelashes, with rings for Desmos; up to 5,000 curves by default; light and very faint lines
 - [x] Function mode: every curve as pieces of `y = f(x)` / `x = g(y)` (`--form function`)
 - [x] One-screen web page with three display modes; lines broken into dots and dashes kept; a noise filter slider (`--denoise`)
+- [x] Online page: the web page with line2func running in the browser (Pyodide), published with GitHub Pages
 - [ ] Blind test on real drawings (tooling ready; needs human raters)
 - [ ] Optional: retrain the neural engine on these line styles and fine-tune it on real drawings
 
@@ -898,6 +942,18 @@ pip install -e ".[train,dev]"     # 加上 pyyaml（設定檔）與 pytest
 已驗證的環境：torch 2.14.0+cu130、Python 3.14、RTX 5070（驅動程式 596.21）、Windows 11。
 
 ### 2. 描第一張圖
+
+#### 線上使用（免安裝）
+
+<https://far9100.github.io/Line-to-function/> 就是下面介紹的網頁版，只是 line2func 透過 [Pyodide](https://pyodide.org)（編譯成 WebAssembly 的 Python）在你的瀏覽器裡執行。不用安裝任何東西，圖片也不會離開你的電腦。Pyodide 連同 numpy、SciPy、Pillow 約 25 MB，第一次使用時從 jsDelivr CDN 下載，之後由瀏覽器保存。
+
+- 描線方式和 `python -m line2func` 相同（最多 5,000 條曲線，並做品質檢查），但為了瀏覽器分頁而限制較嚴：檔案最大 32 MB，圖片最多保留 2048 px，描線與品質檢查最多 1.5 百萬像素（更大的圖會先縮小）。
+- 所需時間是安裝版的 1.5 到 2 倍。五張約 0.6 百萬像素的真實線稿每張要 17–56 秒（Ryzen 7 9700X 上的 Edge 或 Node.js，含品質檢查），安裝版是 11–30 秒；記憶體最多用了約 460 MB。較慢的電腦與手機會更久，手機遇到大圖也可能記憶體不足。
+- WebAssembly 的部分計算捨入方式略有不同，所以偶爾會有一兩條曲線和安裝版的結果不同；保留線條的比例則相同。
+- 〔取消〕會立刻停止。沒有〔結束〕按鈕：關閉分頁即可。
+- 需要 Chrome、Edge 或 Firefox 112 以上，或 Safari 16.4 以上。設定和語言會保存在瀏覽器裡。
+
+照片和其他選項（第 6、7 節）需要安裝版。
 
 #### 用瀏覽器（拖放）
 
@@ -1443,7 +1499,10 @@ curves = run(ink)
 ```
 line2func/
   app.py  browser.py  __main__.py          # 網頁版的伺服器（python -m line2func）、瀏覽器啟動器
-  viewer/                                  # 網頁：index.html、app.js、viewer.js、i18n.js、i18n.json
+  jobs.py                                  # 網頁版的工作：讀取圖片、描線（伺服器和線上版共用）
+  web.py  website.py                       # 線上版的引擎（Pyodide）、建置線上版網頁
+  viewer/                                  # 網頁：index.html、app.js、viewer.js、i18n.js、i18n.json；
+                                           #   engine.js、worker.js：在瀏覽器裡描線（線上版）
   demo.py  serve.py  pipeline.py           # 指令，以及它們共用的描線流程
   lineart.py  lineart_model.py  weights.py # 抽線稿、預訓練模型、權重下載
   baseline.py  fit.py                      # 傳統引擎、Schneider 擬合
@@ -1459,14 +1518,25 @@ line2func/
   train.py  model/                         # 網路、資料、損失函數、分塊推論
 configs/        # 訓練設定檔
 docs/           # details.md（本說明）、third_party.md（第三方程式碼與權重的授權）
-tests/          # pytest 測試
+tests/          # pytest 測試；tests/pyodide/：WebAssembly 測試用的 Pyodide
+.github/workflows/pages.yml   # 測試、建置並發布線上版網頁
 ```
 
 ```bash
-python -m pytest            # 約 370 個測試；沒有 PyTorch 時略過模型測試，沒有 Node.js 時略過檢視器 JS 檢查
+python -m pytest            # 約 390 個測試；沒有 PyTorch 時略過模型測試，沒有 Node.js 時略過檢視器 JS 檢查
+npm ci --prefix tests/pyodide && LINE2FUNC_PYODIDE=1 python -m pytest tests/test_pyodide.py   # 在 WebAssembly 中
 ```
 
-產生的資料夾（`out/`、`runs/`、`data/`、`.venv/`）已列在 `.gitignore`。
+線上版網頁（第 2 節）用以下指令建置：
+
+```bash
+python -m line2func.website --out _site            # 網頁、api/info、打包成 ZIP 的 line2func
+python -m line2func.website --out _site --serve    # 並在 http://127.0.0.1:8000/ 試用
+```
+
+每次 push 到 `main` 且測試通過後，由 `.github/workflows/pages.yml` 發布（repo 設定裡的 Pages 要選「GitHub Actions」）。Pyodide 從 jsDelivr 載入；`--pyodide-url` 可以改用另一份 Pyodide 314.0.7。
+
+產生的資料夾（`out/`、`runs/`、`data/`、`_site/`、`.venv/`）已列在 `.gitignore`。
 
 ### 13. 現況與路線圖
 
@@ -1483,5 +1553,6 @@ python -m pytest            # 約 370 個測試；沒有 PyTorch 時略過模型
 - [x] 粗重睫毛等實心區域，並加上 Desmos 用的圈線；預設最多 5,000 條曲線；淺色與極淡的線
 - [x] 函數模式：每條曲線切成 `y = f(x)`／`x = g(y)` 的顯函數（`--form function`）
 - [x] 單一畫面的網頁版，三種顯示方式；斷成點和虛線的線會保留；去雜訊強度拖動條（`--denoise`）
+- [x] 線上版網頁：line2func 在瀏覽器裡執行（Pyodide），以 GitHub Pages 發布
 - [ ] 真實線稿的盲測（工具已完成，需要人工評分者）
 - [ ] 選用：以這些線條風格重新訓練神經網路引擎，並在真實線稿上微調

@@ -22,6 +22,19 @@ models under several licenses. These two files are the Informative Drawings
 generators; their license is the MIT license of the original project, which is
 also shipped next to them in ControlNet (`annotator/lineart/LICENSE`).
 
+## Loaded by the online page
+
+The online page (`python -m line2func.website`) bundles none of these. The
+browser loads them from the jsDelivr CDN at run time, pinned to Pyodide
+314.0.7; Pyodide checks every package against the SHA-256 in its lock file.
+
+| What | License |
+|---|---|
+| [Pyodide](https://pyodide.org) 314.0.7: CPython 3.14 compiled to WebAssembly | MPL-2.0 (Pyodide), PSF License (CPython) |
+| NumPy 2.4.6 | BSD-3-Clause |
+| SciPy 1.18.0 | BSD-3-Clause |
+| Pillow 12.2.0 | MIT-CMU (HPND) |
+
 ## Ported code
 
 | Where | From | License |

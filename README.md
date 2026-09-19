@@ -12,8 +12,9 @@
 line2func traces every line of a drawing into cubic curves and writes them as
 equations you can paste into [Desmos](https://www.desmos.com/calculator):
 parametric curves `x(t), y(t)` or explicit functions `y = f(x)` / `x = g(y)`.
-It also saves SVG and LaTeX, and shows every curve and its equation in a local
-web page. Everything runs on your own computer.
+It also saves SVG and LaTeX, and shows every curve and its equation in a web
+page: online, with nothing to install, or installed on your computer. Either
+way it runs on your own computer, and your images are not uploaded.
 
 ```
 x(t) = −40.00·t³ +  60.00·t² +  60.00·t + 10.00
@@ -21,6 +22,17 @@ y(t) =  20.00·t³ − 270.00·t² + 250.00·t + 10.00        0 ≤ t ≤ 1
 ```
 
 *(An arch from (10, 10) through (50, 70) to (90, 10), y axis up.)*
+
+### Use it online
+
+Open **<https://far9100.github.io/Line-to-function/>**: nothing to install.
+Drop a line drawing onto the page, choose functions or parametric equations
+and click **Convert**; the rest works like the installed page (below).
+line2func runs in your browser ([Pyodide](https://pyodide.org)), so the image
+is not uploaded anywhere. The first visit downloads about 25 MB; a drawing
+takes from a few seconds to a few minutes, 1.5 to 2 times as long as
+installed. Drawings over 1.5 megapixels are shrunk first; for those, photos
+and all the other options, install line2func.
 
 ### Install
 
@@ -116,7 +128,7 @@ weights: [docs/third_party.md](docs/third_party.md).
 
 ## 繁體中文
 
-line2func 會把圖裡的每一條線描成三次曲線，並寫成可以貼進 [Desmos](https://www.desmos.com/calculator) 的算式：參數式 `x(t)`、`y(t)`，或顯函數 `y = f(x)`／`x = g(y)`。它也能輸出 SVG 和 LaTeX，並在本機網頁上顯示每條曲線與它的算式。全部在你自己的電腦上執行。
+line2func 會把圖裡的每一條線描成三次曲線，並寫成可以貼進 [Desmos](https://www.desmos.com/calculator) 的算式：參數式 `x(t)`、`y(t)`，或顯函數 `y = f(x)`／`x = g(y)`。它也能輸出 SVG 和 LaTeX，並在網頁上顯示每條曲線與它的算式：可以線上直接使用、不必安裝，也可以安裝在電腦上。兩種都在你自己的電腦上執行，圖片不會上傳。
 
 ```
 x(t) = −40.00·t³ +  60.00·t² +  60.00·t + 10.00
@@ -124,6 +136,10 @@ y(t) =  20.00·t³ − 270.00·t² + 250.00·t + 10.00        0 ≤ t ≤ 1
 ```
 
 *（一道拱形：從 (10, 10) 經過 (50, 70) 到 (90, 10)，y 軸朝上。）*
+
+### 線上使用（免安裝）
+
+打開 **<https://far9100.github.io/Line-to-function/>**，不用安裝任何東西。把線稿拖進頁面，選擇寫成函數或參數方程式，再按〔確認 ▶〕；其餘操作和安裝版的網頁（見下方）相同。line2func 會在你的瀏覽器裡執行（[Pyodide](https://pyodide.org)），所以圖片不會上傳到任何地方。第一次使用要下載約 25 MB；一張圖需要幾秒到幾分鐘，所需時間是安裝版的 1.5 到 2 倍。超過 1.5 百萬像素的圖會先縮小；這類大圖、照片以及其他所有選項，請安裝 line2func。
 
 ### 安裝
 
