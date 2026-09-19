@@ -40,7 +40,7 @@ class JsBuffer:
 
 
 PAGE = {"kind": "trace", "method": "none", "scale": "auto", "form": "function", "curves": 5000, "quality": True,
-        "denoise": 50}  # what the page asks for
+        "denoise": 50, "faint_sensitivity": 50}  # what the page asks for
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +61,9 @@ def _without_seconds(doc: dict) -> dict:
     return {**doc, "meta": {k: v for k, v in doc["meta"].items() if k != "seconds"}}
 
 
-def test_the_same_image_info_and_files_as_the_local_server(local_app):
+@pytest.mark.parametrize("faint", [50, 85])
+def test_the_same_image_info_and_files_as_the_local_server(local_app, faint):
+    page = {**PAGE, "faint_sensitivity": faint}
     data = _drawing()
     img = local_app.add_image(data, "drawing.png")
     opened = web.open_image(JsBuffer(data), "drawing.png", key="k1")
@@ -69,13 +71,13 @@ def test_the_same_image_info_and_files_as_the_local_server(local_app):
     assert answer["image"] == {**img.info(), "image_id": "k1"} and answer["preview_type"] == img.preview_type
     assert opened["preview"] == img.preview
 
-    job = local_app.make_job({**PAGE, "image_id": img.id})
+    job = local_app.make_job({**page, "image_id": img.id})
     job.started = time.monotonic()
     local_app.run_job(job)
     stages = []
-    result = web.trace(data, "drawing.png", json.dumps(PAGE), stages.append, key="k1")
+    result = web.trace(data, "drawing.png", json.dumps(page), stages.append, key="k1")
     answer = json.loads(result["answer"])
-    assert answer["params"] == job.params
+    assert answer["params"] == job.params and answer["params"]["faint_sensitivity"] == faint
     assert {**answer["summary"], "seconds": 0} == {**job.summary, "seconds": 0}
     assert sorted(result["files"]) == sorted(job.files)
     for name, body in job.files.items():

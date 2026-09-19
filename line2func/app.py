@@ -31,7 +31,8 @@ Routes (errors are ``{"error": {"code", "detail", "field"}}``; the page translat
     GET  /api/events                      server-sent events: hello, job (snapshots), ping, bye
     POST /api/images                      raw image bytes (X-Filename header) -> image info
     GET  /api/images/<id>[/preview]       image info, or its upright preview (JPEG / PNG)
-    POST /api/jobs                        {image_id, kind: "lineart" | "trace", method, scale, form, curves, denoise, ...}
+    POST /api/jobs                        {image_id, kind: "lineart" | "trace", method, scale, form, curves, denoise,
+                                           faint_sensitivity, ...}
                                           -> snapshot
     GET  /api/jobs/<id>                   job snapshot (state, stage, summary, files)
     POST /api/jobs/<id>/cancel            cancel (a running job stops at its next stage)
@@ -85,7 +86,7 @@ LANGS = ("en", "zh-TW")
 IMMUTABLE = "private, max-age=31536000, immutable"  # id-addressed files never change
 MODEL_METHODS = ("informative", "informative-coarse")
 OPTION_KEYS = {"method", "scale", "tolerance", "threshold", "refine", "named", "shape_tolerance", "upscale",
-               "faint", "quality", "form", "denoise", "denoise_on"}
+               "faint", "quality", "form", "denoise", "denoise_on", "faint_sensitivity"}
 DOWNLOAD_NAMES = {
     "curves.json": "{stem}.json",
     "out.svg": "{stem}.svg",

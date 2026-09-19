@@ -7,7 +7,8 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
-const PAGE = { kind: "trace", method: "none", scale: "auto", form: "function", curves: 5000, quality: true, denoise: 50 };
+const PAGE = { kind: "trace", method: "none", scale: "auto", form: "function", curves: 5000, quality: true, denoise: 50,
+               faint_sensitivity: 50 };
 const [zipPath, imagePath, params = JSON.stringify(PAGE)] = process.argv.slice(2);
 const py = await loadPyodide();
 await py.loadPackage(["numpy", "scipy", "pillow"], { messageCallback: () => {} });

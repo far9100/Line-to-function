@@ -133,8 +133,8 @@
   }
   .convert-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
   .convert-row + .convert-row { margin-top: 8px; }
-  #denoise { width: 180px; }
-  #denoise-value { min-width: 5em; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #denoise, #faint { width: 180px; }
+  #denoise-value, #faint-value { min-width: 5em; color: var(--muted); font-variant-numeric: tabular-nums; }
   #convert { padding: 6px 16px; }
   #convert-note { margin: 6px 0 0; font-size: 12px; max-width: 640px; }
   .chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
@@ -263,6 +263,9 @@
               <input type="checkbox" id="denoise-on"><span data-i18n="convert.denoise">Remove noise</span></label>
             <input type="range" id="denoise" min="0" max="100" step="5" data-i18n-aria-label="convert.strengthLabel" data-i18n-title="convert.denoiseHint" aria-label="Noise filter strength">
             <output id="denoise-value" for="denoise"></output>
+            <label class="inline" for="faint" data-i18n-title="convert.faintHint"><span data-i18n="convert.faint">Faint lines</span></label>
+            <input type="range" id="faint" min="0" max="100" step="5" data-i18n-aria-label="convert.faintLabel" data-i18n-title="convert.faintHint" aria-label="Faint-line sensitivity">
+            <output id="faint-value" for="faint"></output>
           </div>
           <p class="hint" id="convert-note"></p>
         </div>

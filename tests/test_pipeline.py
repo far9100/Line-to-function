@@ -159,3 +159,35 @@ def test_denoise_sets_how_many_specks_and_faint_pieces_go():
     for bad in (-1, 101):
         with pytest.raises(ValueError):
             pipeline.trace(_rgb(img), denoise=bad)
+
+
+def test_faint_params_are_the_tuned_values_at_the_default_and_loosen_above_it():
+    tuned = pipeline.faint_params(pipeline.FAINT_SENSITIVITY)
+    defaults = baseline.BaselineParams()
+    assert tuned == pipeline.FAINT_TUNED and all(getattr(defaults, k) == v for k, v in tuned.items())
+    assert pipeline.faint_params(100) == pipeline.FAINT_LOOSE
+    assert pipeline.faint_params(0) == {"faint_lines": False, "very_faint_lines": False}
+    levels = [pipeline.faint_params(s)["faint_contrast"] for s in (10, 30, 50, 70, 90)]
+    assert levels == sorted(levels, reverse=True)
+    for bad in (-1, 101):
+        with pytest.raises(ValueError):
+            pipeline.faint_params(bad)
+
+
+def test_faint_sensitivity_sets_how_light_a_traced_line_may_be():
+    gt = CurveSet(200, 120, [Curve(g.line([10, 30], [190, 30]))])
+    img = render_lineart(gt, 200, 120, line_width=2.5)
+    light = render_lineart(CurveSet(200, 120, [Curve(g.line([10, 80], [190, 80]))]), 200, 120, line_width=2.0)
+    img = np.minimum(img, 255 - (255 - light) * 0.2).astype(np.uint8)  # a light line, far below the threshold
+
+    def near_light(s):
+        cs, _ = pipeline.trace(_rgb(img), upscale=1, faint_sensitivity=s)
+        return sum(abs(c.ctrl[:, 1].mean() - 80) < 3 for c in cs.curves), cs
+
+    assert near_light(0)[0] == 0 and near_light(100)[0] > 0
+    default = pipeline.trace(_rgb(img), upscale=1)[0]
+    assert default.to_dict() == near_light(pipeline.FAINT_SENSITIVITY)[1].to_dict()
+    assert default.meta["faint_sensitivity"] == pipeline.FAINT_SENSITIVITY
+    for bad in (-1, 101):
+        with pytest.raises(ValueError):
+            pipeline.trace(_rgb(img), faint_sensitivity=bad)

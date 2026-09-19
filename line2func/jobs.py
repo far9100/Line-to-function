@@ -240,6 +240,7 @@ def trace_options(p: dict, size: tuple[int, int], scale: float, quality_max_pixe
         upscale=check_choice(p, "upscale", ("auto", 1, 2), "auto"),
         faint=check_bool(p, "faint", True),
         denoise=check_number(p, "denoise", pipeline.DENOISE, 0.0, 100.0),
+        faint_sensitivity=check_number(p, "faint_sensitivity", pipeline.FAINT_SENSITIVITY, 0.0, 100.0),
         quality=check_bool(p, "quality", False),
     )
     if options["quality"]:
@@ -274,6 +275,7 @@ def run_trace(rgb: np.ndarray, image_name: str, p: dict, step: Callable[[str], N
         rgb, lineart_method=method, fit_tolerance=p["tolerance"], threshold=p["threshold"],
         refine=p["refine"], upscale=p["upscale"], shape_tolerance=p["shape_tolerance"],
         faint_lines=p["faint"], ink=ink, progress=step, curve_count=p["curves"], denoise=p["denoise"],
+        faint_sensitivity=p["faint_sensitivity"],
     )
     n_shapes = sum(c.shape is not None for c in curves)
     curves.meta.update(source=image_name, lineart=method, vectorizer="baseline", refined=p["refine"],

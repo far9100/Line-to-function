@@ -23,7 +23,7 @@ from line2func.render import render_lineart
 HERE = Path(__file__).with_name("pyodide")
 NODE = shutil.which("node")
 PAGE = {"kind": "trace", "method": "none", "scale": "auto", "form": "function", "curves": 5000, "quality": True,
-        "denoise": 50}  # what the page asks for
+        "denoise": 50, "faint_sensitivity": 50}  # what the page asks for
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("LINE2FUNC_PYODIDE") != "1" or NODE is None or not (HERE / "node_modules" / "pyodide").is_dir(),

@@ -27,6 +27,7 @@ const viewer = createViewer({
 
 const FORMS = ["function", "parametric"]; // how the lines are written (line2func.export)
 const DENOISE = 50; // = line2func.pipeline.DENOISE, the noise filters' default strength (tests check it)
+const FAINT = 50; // = line2func.pipeline.FAINT_SENSITIVITY, the faint-line sensitivity's default (tests check it)
 // the stages in the order they run (the online engine's start, pipeline.trace, app.run_job) -> the step shown,
 // and typical cost
 const STEP_OF = { load_engine: "prepare", resize: "prepare", load_model: "prepare", lineart: "prepare", upscale: "prepare",
@@ -39,7 +40,7 @@ const NEVER = ["load_model", "optimize"]; // stages the page's conversions do no
 const S = {
   mode: "boot", info: null, gone: false, engine: null,
   view: "empty", // empty (the drop zone), preview (an image to convert) or result
-  image: null, form: "function", denoise: DENOISE, denoiseOn: true, jobs: new Map(),
+  image: null, form: "function", denoise: DENOISE, denoiseOn: true, faint: FAINT, jobs: new Map(),
   trace: null, result: null, ticket: 0, copyArmed: false,
 };
 const converts = () => S.mode === "app" || S.mode === "web"; // the page can open and convert images
@@ -207,6 +208,9 @@ function useOptions(saved) {
   if (FORMS.includes(saved.form)) S.form = saved.form;
   if (typeof saved.denoise === "number" && saved.denoise >= 0 && saved.denoise <= 100) S.denoise = saved.denoise;
   if (typeof saved.denoise_on === "boolean") S.denoiseOn = saved.denoise_on;
+  if (typeof saved.faint_sensitivity === "number" && saved.faint_sensitivity >= 0 && saved.faint_sensitivity <= 100) {
+    S.faint = saved.faint_sensitivity;
+  }
 }
 
 function testHooks() {
@@ -244,13 +248,15 @@ function setupApp() {
   $("#denoise-on").addEventListener("change", (e) => { S.denoiseOn = e.target.checked; renderDenoise(); saveOptions(); });
   $("#denoise").addEventListener("input", (e) => { S.denoise = Number(e.target.value); renderDenoise(); });
   $("#denoise").addEventListener("change", saveOptions);
+  $("#faint").addEventListener("input", (e) => { S.faint = Number(e.target.value); renderFaint(); });
+  $("#faint").addEventListener("change", saveOptions);
   $("#convert").addEventListener("click", startTrace);
   $("#clear").addEventListener("click", clearImage);
   $("#cancel").addEventListener("click", () => cancelTrace(false));
 }
 
 function saveOptions() {
-  const options = { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn };
+  const options = { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn, faint_sensitivity: S.faint };
   if (S.mode === "app") api("POST", "api/settings", { options }).catch(() => {});
   else try { localStorage.setItem("line2func.options", JSON.stringify(options)); } catch { /* storage may be blocked */ }
 }
@@ -447,9 +453,15 @@ function renderDenoise() {
   $("#denoise-value").textContent = S.denoiseOn ? t("convert.strength", { n: String(S.denoise) }) : t("convert.off");
 }
 
+function renderFaint() {
+  $("#faint").value = String(S.faint);
+  $("#faint-value").textContent = S.faint > 0 ? t("convert.faintLevel", { n: String(S.faint) }) : t("convert.off");
+}
+
 function renderConvert() {
   for (const radio of document.querySelectorAll("input[name=form]")) radio.checked = radio.value === S.form;
   renderDenoise();
+  renderFaint();
   let note = t(S.mode === "web" ? "convert.noteWeb" : "convert.note", { n: new Intl.NumberFormat().format(S.info.desmos_limit) });
   if (S.image?.suggested === "photo") note += " " + t("convert.photo");
   $("#convert-note").textContent = note;
@@ -463,7 +475,8 @@ function startTrace() {
   // as the command line makes it: up to desmos_limit curves, with the quality check (the server skips that,
   // with a warning, for images that are too large)
   const params = { image_id: img.image_id, kind: "trace", method: "none", scale: "auto", form: S.form,
-                   curves: S.info.desmos_limit, quality: true, denoise: S.denoiseOn ? S.denoise : 0 };
+                   curves: S.info.desmos_limit, quality: true, denoise: S.denoiseOn ? S.denoise : 0,
+                   faint_sensitivity: S.faint };
   const checked = img.width * img.height * img.auto_scale ** 2 <= S.info.limits.quality_max_pixels;
   S.trace = { jobId: null, snap: null, params, checked, started: performance.now(), group: null, engine: false };
   $("#running").hidden = false;

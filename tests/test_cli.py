@@ -42,12 +42,19 @@ def test_demo_errors(drawing, tmp_path):
     assert demo.main([str(drawing), "--named", "--form", "function", "--out", str(tmp_path / "o")]) == 2
     assert demo.main([str(drawing), "--form", "function", "--function-tolerance", "0", "--out", str(tmp_path / "o")]) == 2
     assert demo.main([str(drawing), "--denoise", "150", "--out", str(tmp_path / "o")]) == 2
+    assert demo.main([str(drawing), "--faint-sensitivity", "-1", "--out", str(tmp_path / "o")]) == 2
 
 
 def test_demo_denoise(drawing, tmp_path, capsys):
     assert demo.main([str(drawing), "--denoise", "0", "--out", str(tmp_path / "o")]) == 0
     assert json.loads((tmp_path / "o" / "curves.json").read_text(encoding="utf-8"))["meta"]["denoise"] == 0
     assert "noise filter 0" in capsys.readouterr().out
+
+
+def test_demo_faint_sensitivity(drawing, tmp_path, capsys):
+    assert demo.main([str(drawing), "--faint-sensitivity", "90", "--out", str(tmp_path / "o")]) == 0
+    assert json.loads((tmp_path / "o" / "curves.json").read_text(encoding="utf-8"))["meta"]["faint_sensitivity"] == 90
+    assert "faint-line sensitivity 90" in capsys.readouterr().out
 
 
 def test_demo_writes_functions(drawing, tmp_path, capsys):
@@ -126,3 +133,4 @@ def test_viewer_server(drawing, tmp_path):
 
 def test_serve_requires_curves(tmp_path):
     assert serve.main([str(tmp_path), "--no-browser"]) == 2
+

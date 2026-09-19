@@ -82,14 +82,15 @@ def test_trace_options_defaults_and_checks():
     options = jobs.trace_options({}, (160, 120), 1.0, 4_000_000)
     assert options == {"tolerance": 1.0, "curves": None, "threshold": None, "refine": True, "form": "parametric",
                        "shape_tolerance": 0.5, "upscale": "auto", "faint": True, "denoise": pipeline.DENOISE,
-                       "quality": False}
+                       "faint_sensitivity": pipeline.FAINT_SENSITIVITY, "quality": False}
     assert list(options) == ["tolerance", "curves", "threshold", "refine", "form", "shape_tolerance", "upscale",
-                             "faint", "denoise", "quality"]
+                             "faint", "denoise", "faint_sensitivity", "quality"]
     assert jobs.trace_options({"named": True}, (160, 120), 1.0, 4_000_000)["form"] == "named"
     assert jobs.trace_options({"curves": 5000, "form": "function"}, (160, 120), 1.0, 4_000_000)["curves"] == 5000
     for bad, field in (({"curves": 2.5}, "curves"), ({"form": "implicit"}, "form"), ({"denoise": 101}, "denoise"),
                        ({"tolerance": "1"}, "tolerance"), ({"refine": 1}, "refine"), ({"upscale": True}, "upscale"),
-                       ({"threshold": 1.5}, "threshold"), ({"named": "yes"}, "named")):
+                       ({"threshold": 1.5}, "threshold"), ({"named": "yes"}, "named"),
+                       ({"faint_sensitivity": -1}, "faint_sensitivity")):
         assert _code(lambda bad=bad: jobs.trace_options(bad, (160, 120), 1.0, 4_000_000)) == (400, "bad_params", field)
     # the quality check is skipped, and says so, when the traced image is too large for it
     checked = jobs.trace_options({"quality": True}, (160, 120), 1.0, 160 * 120)
