@@ -13,7 +13,7 @@ HTML = (VIEWER / "index.html").read_text(encoding="utf-8")
 SCRIPTS = {p.name: p.read_text(encoding="utf-8") for p in VIEWER.glob("*.js")}
 # keys built at run time from codes the server sends (stage, step, error, ...)
 DYNAMIC = ("stage.", "step.", "error.", "warning.", "tag.", "shape.")
-SERVER_SOURCES = ("app.py", "jobs.py")  # where the error codes the page translates are raised
+SERVER_SOURCES = ("app.py", "jobs.py", "web.py")  # where the error codes the page translates are raised
 CJK = re.compile(r"[　-〿㐀-鿿豈-﫿＀-￯]")
 
 
@@ -59,7 +59,7 @@ def test_codes_from_the_server_are_translated():
     en = STRINGS["en"]
     for stage in (*pipeline.STAGES, "resize", "load_model", "export", "quality", "encode"):
         assert f"stage.{stage}" in en, stage
-    # the error codes of the local server and of the jobs it shares with the browser version
+    # the error codes of the local server, of the jobs it shares with the browser version, and of that version
     sources = "".join((VIEWER.parent / name).read_text(encoding="utf-8") for name in SERVER_SOURCES)
     codes = set(re.findall(r'ApiError\(HTTPStatus\.\w+, "(\w+)"', sources)) | {"out_of_memory", "internal"}
     generic = {"bad_json", "bad_request", "forbidden", "length_required", "not_found", "not_ready"}  # -> error.generic
