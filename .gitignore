@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# generated at the repository root: demo output, training runs, synthetic datasets
+# (anchored with "/": line2func/data/ holds the bundled scorer, tests/data/ the golden digests)
+/out/
+/runs/
+/data/
+
+# kept locally, not published: the development log and test drawings (third-party art)
+/docs/progress.md
+/*.webp
+/*.png
+/*.jpg
+/*.jpeg
+
+# tools and OS files
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

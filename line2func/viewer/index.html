@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>line2func viewer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23d9480f'/%3E%3Cpath d='M6 25C9 5 23 5 26 25' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<script>
+  // A file dropped anywhere must never navigate this window away (an app window has no Back
+  // button). app.js adds the real handlers; this guard works even if a module fails to load.
+  addEventListener("dragover", function (e) { e.preventDefault(); });
+  addEventListener("drop", function (e) { e.preventDefault(); });
+</script>
+<script type="module" src="app.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f3; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --border: #e2e2de; --border-strong: #c9c9c3;
+    --canvas: #e9e9e5; --paper: #ffffff; --accent: #d9480f; --accent-text: #ffffff; --hover: #1c7ed6;
+    --halo: rgba(255, 255, 255, 0.9); --row-hover: #f0f0ec; --row-active: #fff1e8; --danger: #c92a2a;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei UI", "PingFang TC", "Noto Sans TC", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151517; --panel: #1e1e21; --text: #ececee; --muted: #9a9aa2; --border: #2f2f34; --border-strong: #45454c;
+      --canvas: #101012; --paper: #1b1b1e; --accent: #ff7a3d; --accent-text: #1a0d05; --hover: #4dabf7;
+      --halo: rgba(0, 0, 0, 0.85); --row-hover: #26262a; --row-active: #33241c; --danger: #ff6b6b;
+    }
+  }
+  [hidden] { display: none !important; }
+  html[data-mode="static"] [data-app-only] { display: none !important; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px 14px; padding: 8px 16px; min-height: 48px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .brand { font-weight: 650; letter-spacing: -0.01em; }
+  .muted, .hint { color: var(--muted); }
+  #file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .spacer { flex: 1; }
+  button, .btn, select {
+    font: inherit; color: var(--text); background: transparent; border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; white-space: nowrap;
+  }
+  select { background: var(--panel); }
+  button:hover, .btn:hover { background: var(--row-hover); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.06); background: var(--accent); }
+  button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--hover); outline-offset: 1px; }
+  .lang { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .lang button { border: 0; border-radius: 0; padding: 4px 10px; }
+  .lang button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  input[type=range] { accent-color: var(--accent); }
+  main { flex: 1; min-height: 0; position: relative; display: flex; }
+  .screen { flex: 1; min-width: 0; min-height: 0; display: flex; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* ---------- import ---------- */
+  #import { flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px; overflow: auto; }
+  .dropzone {
+    width: min(660px, 100%); padding: 40px 24px; text-align: center; background: var(--panel);
+    border: 2px dashed var(--border-strong); border-radius: 16px;
+  }
+  .dropzone svg { width: 52px; height: 52px; color: var(--accent); }
+  .dropzone h1 { font-size: 22px; margin: 10px 0 6px; font-weight: 650; }
+  .dropzone p { margin: 8px 0; }
+  .dropzone .primary { padding: 7px 18px; font-size: 15px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; width: min(660px, 100%); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 4px; }
+  .card p { margin: 0; color: var(--muted); }
+
+  /* ---------- configure ---------- */
+  #configure { position: relative; }
+  .cfg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 10px; }
+  .compare { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .compare.single { grid-template-columns: 1fr; }
+  .compare.stacked { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .pane { margin: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--canvas); border-radius: 8px; overflow: hidden; }
+  .pane figcaption { display: flex; gap: 8px; align-items: baseline; padding: 4px 10px; font-size: 12px; color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--border); }
+  .pane figcaption strong { color: var(--text); font-weight: 600; }
+  .viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; touch-action: none; }
+  .viewport.dragging { cursor: grabbing; }
+  .viewport img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; background: #fff; transition: opacity 0.15s; }
+  .viewport img.pixelated { image-rendering: pixelated; }
+  .viewport img.stale { opacity: 0.35; }
+  .pane-msg { position: absolute; inset: auto 12px 12px 12px; margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); border: 1px solid var(--border); color: var(--danger); }
+  .spinner {
+    position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+    border: 3px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .zoom { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+  .zoom .hint { margin-right: auto; font-size: 12px; }
+  .cfg-side {
+    width: 350px; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;
+    background: var(--panel); border-left: 1px solid var(--border);
+  }
+  fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+  legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
+  .radio { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; cursor: pointer; }
+  .radio input { margin-top: 3px; accent-color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { position: relative; }
+  .chip input { position: absolute; opacity: 0; pointer-events: none; }
+  .chip span { display: inline-block; border: 1px solid var(--border-strong); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+  .chip input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .chip input:disabled + span { opacity: 0.45; cursor: not-allowed; text-decoration: line-through; }
+  .chip input:focus-visible + span { outline: 2px solid var(--hover); outline-offset: 1px; }
+  .note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .note.warn-text { color: var(--danger); }
+  code { font-family: var(--mono); font-size: 12px; background: var(--row-hover); padding: 1px 4px; border-radius: 4px; user-select: all; }
+  details summary { cursor: pointer; font-weight: 600; }
+  .grid-form { display: grid; grid-template-columns: 1fr auto; gap: 8px 10px; align-items: center; margin-top: 10px; }
+  .grid-form label { color: var(--text); }
+  .grid-form .full { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
+  .grid-form input[type=number] { width: 84px; font: inherit; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); }
+  .grid-form input[type=checkbox] { accent-color: var(--accent); }
+  .threshold { display: flex; gap: 8px; align-items: center; }
+  .threshold input[type=range] { width: 120px; }
+  .cfg-actions { margin-top: auto; display: flex; justify-content: space-between; gap: 8px; padding-top: 6px; }
+  .cfg-actions .primary { padding: 7px 16px; }
+  .overlay {
+    position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(2px);
+  }
+  .overlay .panel {
+    width: min(430px, 92%); background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  }
+  .overlay h2 { font-size: 17px; margin: 0 0 4px; }
+  #steps { list-style: none; margin: 14px 0; padding: 0; }
+  #steps li { display: flex; gap: 10px; align-items: center; padding: 3px 0; color: var(--muted); }
+  #steps li::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--border-strong); flex: none; }
+  #steps li.active { color: var(--text); font-weight: 600; }
+  #steps li.active::before { border-color: var(--accent); background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
+  #steps li.done { color: var(--text); }
+  #steps li.done::before { border-color: var(--accent); background: var(--accent); }
+  @keyframes pulse { from { opacity: 0.35; } to { opacity: 1; } }
+  .bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .bar .fill {
+    height: 100%; width: 0; background: var(--accent); transition: width 0.4s;
+    background-image: linear-gradient(45deg, rgba(255,255,255,.25) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.25) 50%, rgba(255,255,255,.25) 75%, transparent 75%);
+    background-size: 16px 16px; animation: stripes 0.8s linear infinite;
+  }
+  @keyframes stripes { to { background-position: 16px 0; } }
+  .run-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+
+  /* ---------- result (also the plain result viewer) ---------- */
+  #result { flex-direction: column; }
+  .toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  #stats { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .group { display: inline-flex; gap: 4px; align-items: center; }
+  #bg-alpha { width: 80px; }
+  .warn { color: var(--accent); font-size: 12px; }
+  #banner { padding: 6px 16px; background: var(--row-active); border-bottom: 1px solid var(--border); }
+  .banner-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 2px 0; }
+  .viewer { flex: 1; min-height: 0; display: flex; }
+  #stage { position: relative; flex: 1; min-width: 0; background: var(--canvas); overflow: hidden; }
+  #canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #canvas.dragging { cursor: grabbing; }
+  #canvas.over { cursor: pointer; }
+  #tip {
+    position: absolute; pointer-events: none; display: none; max-width: min(520px, 90%);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px; font: 12px/1.45 var(--mono); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  }
+  #message {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); padding: 24px; text-align: center;
+  }
+  aside {
+    width: 380px; display: flex; flex-direction: column; min-height: 0;
+    background: var(--panel); border-left: 1px solid var(--border);
+  }
+  #detail { padding: 12px 16px; border-bottom: 1px solid var(--border); min-height: 96px; }
+  #detail h2 { font-size: 14px; margin: 0 0 6px; }
+  #detail .eq { font: 12.5px/1.6 var(--mono); overflow-wrap: anywhere; }
+  #detail .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  #detail .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  #list { position: relative; flex: 1; overflow-y: auto; }
+  #spacer { position: relative; }
+  .row {
+    position: absolute; left: 0; right: 0; height: 68px; padding: 6px 16px;
+    border-bottom: 1px solid var(--border); cursor: pointer; overflow: hidden;
+  }
+  .row:hover { background: var(--row-hover); }
+  .row.active { background: var(--row-active); }
+  .row-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
+  .row .eq { font: 12px/1.5 var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+
+  /* ---------- always present ---------- */
+  #drop-overlay {
+    position: fixed; inset: 0; z-index: 50; pointer-events: none; display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--accent) 14%, transparent); border: 3px dashed var(--accent);
+    font-size: 22px; font-weight: 650; color: var(--text);
+  }
+  #drop-overlay div { background: var(--panel); padding: 14px 22px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18); }
+  #toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60; max-width: min(640px, 92%);
+    background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  }
+  #toast.error { background: var(--danger); color: #fff; }
+  #fatal { position: fixed; z-index: 70; }
+
+  @media (max-width: 860px) {
+    #configure { flex-direction: column; overflow-y: auto; }
+    .cfg-main { min-height: 60vh; }
+    .cfg-side { width: auto; border-left: 0; border-top: 1px solid var(--border); overflow: visible; }
+    .viewer { flex-direction: column; }
+    aside { width: auto; height: 42vh; border-left: 0; border-top: 1px solid var(--border); }
+    header, .toolbar { padding: 6px 12px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">line2func</span>
+  <span id="file-name" class="muted" data-app-only hidden></span>
+  <span class="spacer"></span>
+  <div class="lang" role="group" data-i18n-aria-label="lang.label" aria-label="Language">
+    <button type="button" data-lang="zh-TW" lang="zh-TW" aria-pressed="false">中文</button>
+    <button type="button" data-lang="en" lang="en" aria-pressed="true">EN</button>
+  </div>
+  <button type="button" id="quit" data-app-only data-i18n="app.quit" data-i18n-title="app.quitTitle">Quit</button>
+</header>
+
+<main>
+  <!-- (1) import: drop, choose or paste an image -->
+  <section id="import" class="screen" data-app-only hidden>
+    <div class="dropzone" id="dropzone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 16.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2.5"/><path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/>
+      </svg>
+      <h1 data-i18n="import.drop">Drop an image here</h1>
+      <p><button type="button" id="choose" class="primary" data-i18n="import.choose">Choose a file…</button></p>
+      <p class="hint" data-i18n="import.paste">You can also paste an image with Ctrl+V.</p>
+      <p class="hint" id="import-limits"></p>
+      <input type="file" id="file-input" accept="image/*,.tif,.tiff,.webp,.bmp" hidden>
+    </div>
+    <div class="cards">
+      <div class="card"><h2 data-i18n="import.lineart.title">Line art</h2><p data-i18n="import.lineart.body">Sketches, ink drawings, diagrams, comics and scans are traced into functions directly.</p></div>
+      <div class="card"><h2 data-i18n="import.photo.title">Photo or picture</h2><p data-i18n="import.photo.body">Photos, paintings and illustrations are first turned into line art, which you compare with the original before tracing.</p></div>
+    </div>
+  </section>
+
+  <!-- (2) configure: type, line-art preview for photos, options -->
+  <section id="configure" class="screen" data-app-only hidden>
+    <div class="cfg-main">
+      <div class="compare" id="compare">
+        <figure class="pane" id="pane-original">
+          <figcaption><strong data-i18n="cfg.original">Original</strong><span id="original-size"></span></figcaption>
+          <div class="viewport"><img id="img-original" alt="" draggable="false"></div>
+        </figure>
+        <figure class="pane" id="pane-lineart">
+          <figcaption><strong data-i18n="cfg.lineart">Line art</strong><span id="lineart-state" aria-live="polite"></span></figcaption>
+          <div class="viewport">
+            <img id="img-lineart" alt="" draggable="false">
+            <div class="spinner" id="lineart-spinner" hidden></div>
+            <p class="pane-msg" id="lineart-msg" hidden></p>
+          </div>
+        </figure>
+      </div>
+      <div class="zoom">
+        <span class="hint" data-i18n="cfg.zoomHint">Scroll to zoom, drag to pan, double-click to fit.</span>
+        <button type="button" id="zoom-out" data-i18n-aria-label="cfg.zoomOut" aria-label="Zoom out">−</button>
+        <button type="button" id="zoom-fit" data-i18n="cfg.zoomFit">Fit</button>
+        <button type="button" id="zoom-in" data-i18n-aria-label="cfg.zoomIn" aria-label="Zoom in">+</button>
+      </div>
+    </div>
+    <form class="cfg-side" id="cfg-form" novalidate>
+      <fieldset>
+        <legend data-i18n="cfg.type">This image is</legend>
+        <label class="radio"><input type="radio" name="type" value="photo"><span data-i18n="cfg.type.photo">A photo or picture: extract line art first</span></label>
+        <label class="radio"><input type="radio" name="type" value="lineart"><span data-i18n="cfg.type.lineart">Line art: trace it directly</span></label>
+        <p class="note" id="type-auto"></p>
+      </fieldset>
+      <fieldset id="method-set">
+        <legend data-i18n="cfg.method">Line-art method</legend>
+        <div class="chips">
+          <label class="chip"><input type="radio" name="method" value="informative"><span data-i18n="method.informative">Fine</span></label>
+          <label class="chip"><input type="radio" name="method" value="informative-coarse"><span data-i18n="method.informative-coarse">Coarse</span></label>
+          <label class="chip"><input type="radio" name="method" value="canny"><span data-i18n="method.canny">Canny</span></label>
+          <label class="chip"><input type="radio" name="method" value="xdog"><span data-i18n="method.xdog">XDoG</span></label>
+        </div>
+        <p class="note" id="method-note"></p>
+      </fieldset>
+      <fieldset>
+        <legend><label for="scale" data-i18n="cfg.resolution">Resolution</label></legend>
+        <select id="scale"></select>
+      </fieldset>
+      <details id="advanced">
+        <summary data-i18n="cfg.advanced">Advanced</summary>
+        <div class="grid-form">
+          <label for="opt-tolerance" data-i18n="cfg.tolerance" data-i18n-title="cfg.toleranceHint">Fitting tolerance (px)</label>
+          <input type="number" id="opt-tolerance" min="0.05" max="20" step="0.05">
+          <span class="hint full" data-i18n="cfg.threshold">Ink threshold</span>
+          <div class="full threshold">
+            <label class="inline"><input type="checkbox" id="opt-threshold-auto"><span data-i18n="cfg.auto">Automatic</span></label>
+            <input type="range" id="opt-threshold" min="0.05" max="0.95" step="0.01" data-i18n-aria-label="cfg.threshold" aria-label="Ink threshold">
+            <output id="opt-threshold-value" for="opt-threshold"></output>
+          </div>
+          <p class="note full" data-i18n="cfg.thresholdHint">Lower it if faint lines are missed; raise it if paper texture gets traced.</p>
+          <label class="full"><input type="checkbox" id="opt-refine"><span data-i18n="cfg.refine">Refine: snap curves to the ink centerline</span></label>
+          <label class="full"><input type="checkbox" id="opt-faint"><span data-i18n="cfg.faint">Also trace faint strokes</span></label>
+          <label for="opt-upscale" data-i18n="cfg.upscale">Trace thin lines enlarged</label>
+          <select id="opt-upscale">
+            <option value="auto" data-i18n="cfg.auto">Automatic</option>
+            <option value="1" data-i18n="cfg.off">Off</option>
+            <option value="2">2×</option>
+          </select>
+          <label class="full"><input type="checkbox" id="opt-named"><span data-i18n="cfg.named">Write lines and arcs as named equations</span></label>
+          <label for="opt-shape" data-i18n="cfg.shapeTolerance">Line / arc tolerance (px)</label>
+          <input type="number" id="opt-shape" min="0.05" max="10" step="0.05">
+          <label class="full"><input type="checkbox" id="opt-quality"><span data-i18n="cfg.quality">Quality check (missed-detail map)</span></label>
+          <p class="note full" id="quality-hint"></p>
+        </div>
+      </details>
+      <div class="cfg-actions">
+        <button type="button" id="back" data-i18n="cfg.back">← Another image</button>
+        <button type="submit" id="convert" class="primary" data-i18n="cfg.convert">Convert to functions ▶</button>
+      </div>
+    </form>
+    <div id="running" class="overlay" role="dialog" aria-modal="true" aria-labelledby="run-title" hidden>
+      <div class="panel">
+        <h2 id="run-title" data-i18n="run.title">Converting to functions…</h2>
+        <p class="hint" id="run-stage"></p>
+        <ol id="steps"></ol>
+        <div class="bar"><div class="fill" id="run-bar"></div></div>
+        <div class="run-foot">
+          <span class="hint" id="elapsed" aria-hidden="true"></span>
+          <button type="button" id="cancel" data-i18n="run.cancel">Cancel</button>
+        </div>
+        <p class="sr-only" id="run-live" aria-live="polite"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- (3) result: the curve viewer (the only screen of python -m line2func.serve) -->
+  <section id="result" class="screen" hidden>
+    <div class="toolbar">
+      <span id="stats"></span>
+      <span class="spacer"></span>
+      <button type="button" id="fit" data-i18n="result.fit" data-i18n-title="result.fitTitle">Fit</button>
+      <label class="inline" id="style-label" data-i18n-title="result.measuredTitle" hidden>
+        <input type="checkbox" id="style-measured"><span data-i18n="result.measured">Measured style</span></label>
+      <label class="inline"><input type="checkbox" id="bg-show" checked data-i18n-aria-label="result.bgShow" aria-label="Show background">
+        <select id="bg-kind" data-i18n-aria-label="result.bg" aria-label="Background">
+          <option value="original" data-i18n="bg.original">Original</option>
+          <option value="lineart" data-i18n="bg.lineart" disabled>Line art</option>
+          <option value="quality" data-i18n="bg.quality" disabled>Missed detail</option>
+        </select></label>
+      <input type="range" id="bg-alpha" min="0" max="100" value="35" data-i18n-aria-label="result.opacity" data-i18n-title="result.opacity" aria-label="Background opacity">
+      <span class="group" role="group" data-i18n-aria-label="result.download" aria-label="Download">
+        <button type="button" data-file="out.svg" data-i18n-title="dl.svgTitle">SVG</button>
+        <button type="button" data-file="curves.json" data-i18n-title="dl.jsonTitle">JSON</button>
+        <button type="button" data-file="desmos.txt" data-i18n-title="dl.desmosTitle">Desmos</button>
+        <button type="button" data-file="equations.tex" data-i18n-title="dl.latexTitle">LaTeX</button>
+        <button type="button" data-file="zip" data-app-only data-i18n-title="dl.zipTitle">ZIP</button>
+      </span>
+      <button type="button" id="copy-all" data-i18n="result.copyAll" data-i18n-title="result.copyAllTitle">Copy all for Desmos</button>
+      <button type="button" id="adjust" data-app-only data-i18n="result.adjust">← Adjust settings</button>
+      <button type="button" id="new-image" data-app-only data-i18n="result.new">New image</button>
+    </div>
+    <div id="banner" role="status" hidden></div>
+    <div class="viewer">
+      <div id="stage">
+        <canvas id="canvas"></canvas>
+        <div id="tip"></div>
+        <div id="message"></div>
+      </div>
+      <aside>
+        <section id="detail"></section>
+        <div id="list"><div id="spacer"></div></div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<div id="drop-overlay" hidden><div data-i18n="drop.release">Release to open the image</div></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="fatal" class="overlay" role="alertdialog" aria-labelledby="fatal-title" hidden>
+  <div class="panel"><h2 id="fatal-title" data-i18n="fatal.title">line2func has stopped</h2>
+    <p data-i18n="error.server_gone">line2func has stopped. You can close this window.</p></div>
+</div>
+</body>
+</html>

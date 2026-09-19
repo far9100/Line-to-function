@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "line2func"
+version = "0.1.0"
+description = "Trace the lines in an image into cubic parametric curves, for Desmos, SVG and LaTeX."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "far9100" }]
+requires-python = ">=3.10"
+keywords = ["vectorization", "line art", "bezier", "desmos", "svg", "tracing"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+dependencies = [
+    "numpy>=1.25",
+    "pillow>=9.0",
+    "scipy>=1.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+# RTX 50-series (Blackwell) needs a CUDA >= 12.8 build of torch, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu130
+train = ["torch>=2.7", "pyyaml>=6"]
+
+[project.urls]
+Repository = "https://github.com/far9100/Line-to-function"
+Issues = "https://github.com/far9100/Line-to-function/issues"
+
+[project.scripts]
+line2func = "line2func.app:main"  # the app: same as python -m line2func
+
+[tool.setuptools.packages.find]
+include = ["line2func*"]
+
+[tool.setuptools.package-data]
+line2func = ["viewer/*", "data/*.npz"]  # the app's page; the learned decision scorer's weights
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
