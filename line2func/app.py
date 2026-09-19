@@ -26,7 +26,8 @@ Routes (errors are ``{"error": {"code", "detail", "field"}}``; the page translat
     GET  /api/events                      server-sent events: hello, job (snapshots), ping, bye
     POST /api/images                      raw image bytes (X-Filename header) -> image info
     GET  /api/images/<id>[/preview]       image info, or its upright preview (JPEG / PNG)
-    POST /api/jobs                        {image_id, kind: "lineart" | "trace", method, scale, form, curves, denoise, ...}
+    POST /api/jobs                        {image_id, kind: "lineart" | "trace", method, scale, form, curves, denoise,
+                                           faint_sensitivity, ...}
                                           -> snapshot
     GET  /api/jobs/<id>                   job snapshot (state, stage, summary, files)
     POST /api/jobs/<id>/cancel            cancel (a running job stops at its next stage)
@@ -84,7 +85,7 @@ LANGS = ("en", "zh-TW")
 IMMUTABLE = "private, max-age=31536000, immutable"  # id-addressed files never change
 MODEL_METHODS = ("informative", "informative-coarse")
 OPTION_KEYS = {"method", "scale", "tolerance", "threshold", "refine", "named", "shape_tolerance", "upscale",
-               "faint", "quality", "form", "denoise", "denoise_on"}
+               "faint", "quality", "form", "denoise", "denoise_on", "faint_sensitivity"}
 DOWNLOAD_NAMES = {
     "curves.json": "{stem}.json",
     "out.svg": "{stem}.svg",
@@ -594,6 +595,7 @@ class App:
                 upscale=_choice(p, "upscale", ("auto", 1, 2), "auto"),
                 faint=_bool(p, "faint", True),
                 denoise=_number(p, "denoise", pipeline.DENOISE, 0.0, 100.0),
+                faint_sensitivity=_number(p, "faint_sensitivity", pipeline.FAINT_SENSITIVITY, 0.0, 100.0),
                 quality=_bool(p, "quality", False),
             )
             if params["quality"]:
@@ -669,6 +671,7 @@ class App:
             rgb, lineart_method=method, fit_tolerance=p["tolerance"], threshold=p["threshold"],
             refine=p["refine"], upscale=p["upscale"], shape_tolerance=p["shape_tolerance"],
             faint_lines=p["faint"], ink=ink, progress=step, curve_count=p["curves"], denoise=p["denoise"],
+            faint_sensitivity=p["faint_sensitivity"],
         )
         n_shapes = sum(c.shape is not None for c in curves)
         curves.meta.update(source=img.name, lineart=method, vectorizer="baseline", refined=p["refine"],

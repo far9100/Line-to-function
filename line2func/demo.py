@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--denoise", type=float, default=pipeline.DENOISE, metavar="0..100",
                    help="how strongly specks and short faint pieces are dropped as noise: 0 keeps them all (most "
                         "detail; on a noisy scan the noise is traced too), 100 is twice as strict (default: 50)")
+    p.add_argument("--faint-sensitivity", type=float, default=pipeline.FAINT_SENSITIVITY, metavar="0..100",
+                   help="how light a line may be and still be traced: higher keeps lighter strands of hair and "
+                        "background (at the top some pencil texture comes in as short dashes), 0 traces only ink "
+                        "above the threshold (default: 50)")
     p.add_argument("--no-residual", action="store_true",
                    help="skip the second pass that traces ink the first pass left uncovered")
     p.add_argument("--no-outline", action="store_true",
@@ -100,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 <= args.denoise <= 100:
         print("error: --denoise must be between 0 and 100", file=sys.stderr)
         return 2
+    if not 0 <= args.faint_sensitivity <= 100:
+        print("error: --faint-sensitivity must be between 0 and 100", file=sys.stderr)
+        return 2
     form = args.form or ("named" if args.named else "parametric")
     # a number of curves by default (the Desmos budget); a given tolerance traces to that instead
     if args.curves is not None:
@@ -144,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         curve_count=curve_count,
         decisions=None if args.decisions == "rules" else args.decisions,
         denoise=args.denoise,
+        faint_sensitivity=args.faint_sensitivity,
     )
     n_shapes = sum(c.shape is not None for c in curves)
     functions = attach(curves, args.function_tolerance) if form == "function" else None
@@ -171,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
         extras.append("faint strokes on")
     if args.denoise != pipeline.DENOISE:
         extras.append(f"noise filter {args.denoise:g}")
+    if args.faint_sensitivity != pipeline.FAINT_SENSITIVITY:
+        extras.append(f"faint-line sensitivity {args.faint_sensitivity:g}")
     n_residual = sum("residual" in c.tags for c in curves)
     if n_residual:
         extras.append(f"{n_residual} curves from the second pass")

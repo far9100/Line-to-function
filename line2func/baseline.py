@@ -89,6 +89,7 @@ class BaselineParams:
     faint_contrast: float = 0.3  # min contrast over the local background, as a fraction of the threshold
     faint_noise_sigmas: float = 4.0  # ... and at least this many times the paper's pixel noise
     faint_min_length: float = 15.0  # faint strokes shorter than this (px) are noise
+    faint_band: float = 2.0  # px (plus half a line width) around strong lines where no faint strokes are looked for
     # specks and faint pieces are judged together with the pieces within this many line widths of them, so a
     # line that broke into dots and dashes stays (it is long as a whole) while lone specks go; 0 = each alone.
     # Only on clean paper, whose pixel noise (paper_noise) is below join_max_noise: on noisy paper, chains of
@@ -194,7 +195,7 @@ def faint_line_mask(
     line widths) of the lightly smoothed ink must reach ``faint_contrast`` x
     the threshold (``reference_threshold`` if set) and ``faint_noise_sigmas`` x the paper's pixel noise
     (:func:`paper_noise`). Broad shading has no ridge, and paper shading cannot
-    lift noise over the limit. A band of about half a line width + 2 px around
+    lift noise over the limit. A band of about half a line width + ``faint_band`` px around
     strong lines is left out (blur halos and JPEG ringing there would add ghost
     curves, and would merge close parallel lines). A faint component is kept
     only if it is at least ``faint_min_length`` px long.
@@ -212,7 +213,8 @@ def faint_line_mask(
     level = max(0.05, params.faint_contrast * reference, params.faint_noise_sigmas * noise)
     # leave out a band around strong lines: blur halos and JPEG ringing live there,
     # and they would add ghost curves alongside real lines
-    band = ndimage.binary_dilation(strong, iterations=int(round(0.5 * line_width)) + 2)
+    reach = int(round(0.5 * line_width)) + int(round(params.faint_band))
+    band = ndimage.binary_dilation(strong, iterations=reach) if reach > 0 else strong
     weak = (ridge >= level) & ~band
     if weak.any():
         # real faint strokes are long; fringe bits, specks and noise chains are short (with join_widths, on clean

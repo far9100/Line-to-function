@@ -51,8 +51,10 @@ The page opens in a new tab of your default browser.
 1. **Drop a line drawing** onto the page, click **Choose a file…**, or paste
    with Ctrl+V.
 2. Choose how the lines are written, as **functions** or as **parametric
-   equations**, and how strongly noise is removed (**Remove noise**, 0-100; 50
-   is the default, lower keeps more detail). Click **Convert**.
+   equations**, how strongly noise is removed (**Remove noise**, 0-100; 50
+   is the default, lower keeps more detail) and how light a line may be
+   (**Faint lines**, 0-100; higher keeps lighter strands of hair and
+   background). Click **Convert**.
 3. The result opens in the same page. Hover or click a curve to see its
    equations. Show the lines alone, over the original, or with the missed
    detail highlighted. Download SVG, JSON, Desmos, LaTeX or a ZIP, or click
@@ -81,6 +83,7 @@ python -m line2func.serve out/                                    # look at the 
 | `--form {parametric,named,function}` | How the equations are written: `x(t), y(t)`, named lines and arcs, or `y = f(x)` / `x = g(y)` |
 | `--curves N` | At most N curves (default 5,000) |
 | `--denoise 0..100` | How strongly specks and short faint pieces are dropped (default 50) |
+| `--faint-sensitivity 0..100` | How light a line may be and still be traced (default 50; higher keeps lighter strands) |
 | `--threshold 0..1` | Ink threshold: lower it if faint lines are missed |
 | `--lineart METHOD` | For photos: `informative`, `canny` or `xdog` |
 | `--quality` | Also judge the result: `quality.png` marks missed detail |
@@ -148,7 +151,7 @@ python -m line2func
 會在預設瀏覽器開一個新分頁。
 
 1. **把線稿拖進頁面**，或按〔選擇檔案…〕，或按 Ctrl+V 貼上。
-2. 選擇線段寫成**函數**或**參數方程式**，以及去雜訊的強度（〔去雜訊〕，0–100；預設 50，調低保留更多細節），再按〔確認 ▶〕。
+2. 選擇線段寫成**函數**或**參數方程式**、去雜訊的強度（〔去雜訊〕，0–100；預設 50，調低保留更多細節），以及多淡的線也算線條（〔淡線〕，0–100；調高會保留更淡的頭髮與背景線），再按〔確認 ▶〕。
 3. 結果會在同一頁開啟。滑過或點擊曲線可以看它的算式；可以只顯示線段、疊在原圖上，或標出遺漏的線段；也可以下載 SVG、JSON、Desmos、LaTeX 或 ZIP，或按〔全部複製到 Desmos〕。
 4. 〔清除圖片〕會重新開始。在終端機按 Ctrl+C，或按頁面上的〔結束〕，就會結束程式。
 
@@ -173,6 +176,7 @@ python -m line2func.serve out/                                    # 在瀏覽器
 | `--form {parametric,named,function}` | 算式的寫法：`x(t)`、`y(t)`，具名的直線與圓弧，或 `y = f(x)`／`x = g(y)` |
 | `--curves N` | 最多 N 條曲線（預設 5,000） |
 | `--denoise 0..100` | 小雜點和短的淡線片段丟掉的強度（預設 50） |
+| `--faint-sensitivity 0..100` | 多淡的線也算線條（預設 50；調高保留更淡的線） |
 | `--threshold 0..1` | 墨跡門檻：淡的線被漏掉時調低 |
 | `--lineart 方法` | 照片用：`informative`、`canny` 或 `xdog` |
 | `--quality` | 另外評估結果：`quality.png` 會標出遺漏的細節 |

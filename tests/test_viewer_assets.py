@@ -52,6 +52,7 @@ def test_the_viewer_and_the_exporter_share_the_desmos_limit():
 def test_the_page_and_the_pipeline_share_the_default_noise_filter_strength():
     source = (serve.VIEWER_DIR / "app.js").read_text(encoding="utf-8")
     assert float(re.search(r"const DENOISE = (\d+);", source).group(1)) == pipeline.DENOISE
+    assert float(re.search(r"const FAINT = (\d+);", source).group(1)) == pipeline.FAINT_SENSITIVITY
 
 
 def test_the_package_ships_every_asset():

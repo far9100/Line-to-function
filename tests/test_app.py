@@ -184,13 +184,16 @@ def test_functions_from_a_number_of_curves_with_the_quality_check(client):
     lines = desmos.decode().splitlines()
     assert len(lines) == summary["equations"] == doc["meta"]["functions"]["count"]
     assert lines == [f for c in doc["curves"] for f in c["functions"]]
-    for bad in ({"form": "implicit"}, {"curves": 2.5}, {"curves": 0}, {"denoise": 101}, {"denoise": "50"}):
+    for bad in ({"form": "implicit"}, {"curves": 2.5}, {"curves": 0}, {"denoise": 101}, {"denoise": "50"},
+                {"faint_sensitivity": -5}):
         status, err = client.post_json("/api/jobs", {"image_id": img["image_id"], "kind": "trace", **bad})
-        assert status == 400 and err["error"]["field"] in ("form", "curves", "denoise"), bad
+        assert status == 400 and err["error"]["field"] in ("form", "curves", "denoise", "faint_sensitivity"), bad
     # the noise filters' strength reaches the tracer
-    snap = client.run(image_id=img["image_id"], kind="trace", method="none", scale=1.0, denoise=0)
+    snap = client.run(image_id=img["image_id"], kind="trace", method="none", scale=1.0, denoise=0,
+                      faint_sensitivity=80)
     _, _, body = client.call("GET", f"/api/jobs/{snap['job_id']}/data/curves.json")
-    assert json.loads(body)["meta"]["denoise"] == 0
+    meta = json.loads(body)["meta"]
+    assert meta["denoise"] == 0 and meta["faint_sensitivity"] == 80
 
 
 def test_empty_result_with_quality_check_is_strict_json(client):
@@ -335,7 +338,7 @@ def test_a_busy_port_falls_back_to_a_free_one(home):
 
 
 def test_settings_are_saved(client, home):
-    options = {"form": "function", "denoise": 30, "denoise_on": False}
+    options = {"form": "function", "denoise": 30, "denoise_on": False, "faint_sensitivity": 70}
     status, body = client.post_json("/api/settings", {"lang": "zh-TW", "options": {**options, "junk": 1}})
     assert status == 200 and body["settings"] == {"lang": "zh-TW", "options": options}
     assert json.loads((home / "app-settings.json").read_text(encoding="utf-8"))["lang"] == "zh-TW"
@@ -379,3 +382,4 @@ def test_main_opens_the_page_and_returns(home, monkeypatch, capsys, argv, pref, 
 def test_python_m_line2func_help():
     out = subprocess.run([sys.executable, "-m", "line2func", "--help"], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and "--browser" in out.stdout and "--keep-running" in out.stdout
+

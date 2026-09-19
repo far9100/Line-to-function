@@ -72,6 +72,12 @@ COUNT_PIECE_LENGTH = 10.0  # px of line per curve at COUNT_TOLERANCE (7-10.5 on 
 SOLID_RATIO = 2.5  # line widths: ink at least this thick over some length is a solid area (outline=True)
 JOIN_WIDTHS = 2.0  # line widths: in line art, specks and faint pieces this close are judged together
 DENOISE = 50.0  # default strength of the noise filters, 0..100 (see trace)
+FAINT_SENSITIVITY = 50.0  # default sensitivity to faint lines, 0..100 (see faint_params)
+# BaselineParams fields that the faint-line sensitivity sets: as tuned (at 50) and at their loosest (at 100)
+FAINT_TUNED = {"faint_contrast": 0.3, "faint_band": 2.0, "very_faint_length": 15.0, "very_faint_width": 2.5,
+               "very_faint_junction_gap": 17.0}
+FAINT_LOOSE = {"faint_contrast": 0.12, "faint_band": 1.0, "very_faint_length": 6.0, "very_faint_width": 3.0,
+               "very_faint_junction_gap": 5.0}
 FILL_SPACING = 1.5  # px: distance between the rings inside filled areas (fill=True)
 FILL_TOLERANCE = 0.5  # px: fitting tolerance of those rings
 STAGES = ("lineart", "upscale", "vectorize", "refine", "measure", "outline", "residual", "fill", "count",
@@ -115,6 +121,25 @@ def trace_threshold(ink: np.ndarray, scale: float = 1.0) -> float:
     return AUTO_THRESHOLD_MAX
 
 
+def faint_params(sensitivity: float) -> dict:
+    """The faint-line detection settings (``BaselineParams`` fields) for a sensitivity of 0..100.
+
+    :data:`FAINT_SENSITIVITY` (50) gives the tuned values (:data:`FAINT_TUNED`). Above it they move
+    linearly towards :data:`FAINT_LOOSE` at 100: lower contrast, a narrower band around strong lines, and
+    very faint lines may be shorter, wider and branch more - lighter strands of hair and background come
+    in, and at the top so does some pencil texture, as short dashes. Below it faint strokes need more
+    contrast (up to twice as much); 0 turns faint and very faint lines off.
+    """
+    if not 0.0 <= sensitivity <= 100.0:
+        raise ValueError("faint sensitivity must be between 0 and 100")
+    if sensitivity <= 0.0:
+        return {"faint_lines": False, "very_faint_lines": False}
+    if sensitivity >= FAINT_SENSITIVITY:
+        a = (sensitivity - FAINT_SENSITIVITY) / (100.0 - FAINT_SENSITIVITY)
+        return {k: (1.0 - a) * v + a * FAINT_LOOSE[k] for k, v in FAINT_TUNED.items()}
+    return dict(FAINT_TUNED, faint_contrast=FAINT_TUNED["faint_contrast"] * (2.0 - sensitivity / FAINT_SENSITIVITY))
+
+
 def choose_upscale(ink: np.ndarray, upscale, threshold: float | None = None) -> int:
     if upscale == "auto":
         width = baseline.estimate_line_width(ink, threshold)
@@ -144,6 +169,7 @@ def trace(
     curve_count: int | None = None,
     decisions: str | None = "learned",
     denoise: float = DENOISE,
+    faint_sensitivity: float = FAINT_SENSITIVITY,
 ) -> tuple[CurveSet, np.ndarray]:
     """Trace an RGB image; returns ``(curves in original pixels, ink map at original size)``.
 
@@ -164,12 +190,18 @@ def trace(
     dropped as noise: :data:`DENOISE` (50) is as tuned, 0 keeps them all (most
     detail, but on a noisy scan the noise is traced too), 100 doubles the limits
     and no longer joins broken lines' pieces (``BaselineParams.denoise``).
+    ``faint_sensitivity`` (0..100) is how light a line may be and still be
+    traced (:func:`faint_params`): :data:`FAINT_SENSITIVITY` (50) is as tuned,
+    higher keeps lighter strands, 0 traces only ink above the threshold.
     """
     if curve_count is not None and int(curve_count) < 1:
         raise ValueError("curve_count must be at least 1")
     if not 0.0 <= denoise <= 100.0:
         raise ValueError("denoise must be between 0 and 100")
+    if not 0.0 <= faint_sensitivity <= 100.0:
+        raise ValueError("faint_sensitivity must be between 0 and 100")
     strength = denoise / DENOISE  # a multiple of the tuned limits, 0..2
+    faint = faint_params(faint_sensitivity) if faint_lines else faint_params(0.0)
     step = progress or (lambda stage: None)
     if ink is None:
         step("lineart")
@@ -212,11 +244,10 @@ def trace(
         tol = tolerance * factor  # keep the tolerance in original pixels
         step("vectorize")
         if vectorize is None:
-            params = baseline.BaselineParams(fit_tolerance=tol, threshold=thr, faint_lines=faint_lines,
-                                             very_faint_lines=faint_lines and lineart_method == "none",
-                                             reference_threshold=reference, decisions=decisions,
-                                             solid_ratio=SOLID_RATIO if outline else None, join_widths=join,
-                                             denoise=strength)
+            first = dict(faint, very_faint_lines=faint.get("very_faint_lines", True) and lineart_method == "none")
+            params = baseline.BaselineParams(fit_tolerance=tol, threshold=thr, reference_threshold=reference,
+                                             decisions=decisions, solid_ratio=SOLID_RATIO if outline else None,
+                                             join_widths=join, denoise=strength, **first)
             curves = baseline.vectorize(work_ink, params)
         else:
             curves = vectorize(work_ink, fit_tolerance=tol)
@@ -238,9 +269,8 @@ def trace(
 
             step("residual")
             extra = residual_pass(curves, work_ink, threshold=thr,
-                                  params=baseline.BaselineParams(fit_tolerance=tol, faint_lines=faint_lines,
-                                                                 reference_threshold=reference, join_widths=join,
-                                                                 denoise=strength))
+                                  params=baseline.BaselineParams(fit_tolerance=tol, reference_threshold=reference,
+                                                                 join_widths=join, denoise=strength, **faint))
             if len(extra):
                 if refine:
                     attributes.refine(extra, work_ink)
@@ -287,7 +317,8 @@ def trace(
     step("shapes")
     shapes.recognize(curves, shape_tolerance)
     curves.meta.update(upscale=factor, faint_lines=faint_lines, refined=refine, residual=residual, outline=outline,
-                       fill=fill, optimized=optimize, denoise=denoise)
+                       fill=fill, optimized=optimize, denoise=denoise,
+                       faint_sensitivity=faint_sensitivity)
     if thr is not None:
         curves.meta["ink_threshold"] = round(float(thr), 3)  # traced at (meta "threshold" is a given one)
     return curves, ink

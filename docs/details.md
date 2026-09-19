@@ -75,7 +75,9 @@ The page opens in a new tab of your default browser. Then:
    **functions** `y = f(x)`, `x = g(y)` (section 5) or as **parametric
    equations** `x(t), y(t)`, and how strongly noise is removed (**Remove
    noise**, strength 0-100, 50 by default: lower keeps more detail, higher cleans
-   noisy scans; section 8), and click **Convert**. It is traced like `demo`
+   noisy scans; section 8) and how light a line may be (**Faint lines**, 0-100,
+   50 by default: higher keeps lighter strands of hair and background), and
+   click **Convert**. It is traced like `demo`
    traces it: up to 5,000 curves, with the quality check (images larger than
    2048 px are shrunk first). A progress panel shows each step, and **Cancel**
    stops at the next step.
@@ -332,6 +334,7 @@ python -m line2func.demo IMAGE [options]
 | `--upscale {auto,1,2,3,4}` | `auto` | Trace at N× resolution, then map the curves back. `auto` uses 2× when lines are thinner than ~1.75 px. The tolerance stays in original pixels |
 | `--no-faint` | faint on | Do not add faint strokes below the threshold, nor very faint lines (the step is conservative: it adds nothing on noisy or shaded paper) |
 | `--denoise 0..100` | `50` | How strongly specks and short faint pieces are dropped as noise: 0 keeps them all (most detail; on a noisy scan the noise is traced too), 100 is twice as strict (section 8) |
+| `--faint-sensitivity 0..100` | `50` | How light a line may be and still be traced: higher keeps lighter strands of hair and background (at the top some pencil texture, as short dashes), 0 traces only ink above the threshold (section 8) |
 | `--quality` | off | Judge the result against the image: `quality.json`, `quality.png` and a summary (section 8) |
 | `--no-residual` | second pass on | Skip the second pass that traces the ink the first pass left uncovered (section 8) |
 | `--no-outline` | outlines on | Keep solid areas (heavy eyelashes) and thick or wedge-shaped strokes (brush strokes) as centerlines instead of filled outlines |
@@ -477,6 +480,35 @@ On clean line art a lower strength keeps more detail and invents nothing (the
 curve length off the ink stays at 0.10-0.13%). On a noisy scan, 0 traces the
 noise too (55% more curves); from 25 up the result hardly changes, and a higher
 strength only gives up a little of the lines (recall 0.991 at 50, 0.988 at 100).
+
+#### How light a line may be: `--faint-sensitivity`
+
+Light strands of hair and background are often lighter than the ink threshold.
+The tracer still finds them by their contrast over the paper around them
+(faint strokes) and, fainter still, by their shape (very faint lines: long,
+thin, hardly branching). Hair crosses itself a lot and runs next to darker
+strands, so many light strands failed those tests; lowering the ink threshold
+instead merges neighbouring strands into blobs (on the drawing below the line
+width grew from 1.7 to 2.4 px at a threshold of 0.08, and the eyes became
+zigzag outlines).
+
+`--faint-sensitivity` (in the web page: **Faint lines**) loosens those tests
+together: 50 is as tuned, 100 needs less than half the contrast (0.12 instead
+of 0.3 of the threshold), looks closer to dark lines, and lets very faint lines
+be shorter (6 line widths instead of 15), a little wider and branch more (one
+junction per 5 line widths instead of 17). Below 50 faint strokes need more
+contrast; 0 traces only ink above the threshold. Tolerance 1.0:
+
+| Drawing | Missed ink at 50 | at 100 | Curve length on ink (with faint) at 100 | Line width 50 / 100 |
+|---|---|---|---|---|
+| huaban-6611354694 | 2.61% | 1.01% | 0.986 | 1.70 / 1.77 px |
+| huaban-6611349997 | 1.79% | 0.56% | 0.991 | 1.54 / 1.58 px |
+| af26b7b7 | 2.99% | 1.64% | 0.993 | 1.71 / 1.75 px |
+
+At the top, pencil texture comes in as short dashes, and on noisy scans the
+noise is traced too (as with `--denoise 0`): on 25 synthetic noisy scans the
+share of curve length on true lines fell from 0.929 at 50 to 0.902 at 75 and
+0.826 at 100 (0.165 on the worst scan). Clean synthetic scans are unchanged.
 
 #### Heavy eyelashes and other solid areas
 
@@ -843,6 +875,7 @@ This is version 1.0. The baseline engine is the one to use; the neural engine is
 - [x] Solid areas such as heavy eyelashes, with rings for Desmos; up to 5,000 curves by default; light and very faint lines
 - [x] Function mode: every curve as pieces of `y = f(x)` / `x = g(y)` (`--form function`)
 - [x] One-screen web page with three display modes; lines broken into dots and dashes kept; a noise filter slider (`--denoise`)
+- [x] Faint-line sensitivity (`--faint-sensitivity`)
 - [ ] Blind test on real drawings (tooling ready; needs human raters)
 - [ ] Optional: retrain the neural engine on these line styles and fine-tune it on real drawings
 
@@ -908,7 +941,7 @@ python -m line2func          # 或直接打：line2func（執行過 pip install 
 會在預設瀏覽器開一個新分頁。接著：
 
 1. **把線稿拖進頁面**。也可以按〔選擇檔案…〕，或按 Ctrl+V 貼上。支援 PNG、JPEG、WebP、BMP、TIFF、GIF，最大 64 MB。手機拍的照片會自動轉正。
-2. 圖片會出現在原處。選擇線段的寫法：**函數** `y = f(x)`、`x = g(y)`（見第 5 節）或**參數方程式** `x(t)`、`y(t)`，以及去雜訊的強度（〔去雜訊〕，0–100，預設 50：調低保留更多細節，有雜訊的掃描圖可以調高；見第 8 節），再按〔確認 ▶〕。描線方式和 `demo` 相同：最多 5,000 條曲線，並做品質檢查（超過 2048 px 的圖會先縮小）。處理時會顯示目前的步驟，按〔取消〕會在下一個步驟停下。
+2. 圖片會出現在原處。選擇線段的寫法：**函數** `y = f(x)`、`x = g(y)`（見第 5 節）或**參數方程式** `x(t)`、`y(t)`，以及去雜訊的強度（〔去雜訊〕，0–100，預設 50：調低保留更多細節，有雜訊的掃描圖可以調高；見第 8 節）與〔淡線〕靈敏度（0–100，預設 50：調高保留更淡的頭髮和背景線），再按〔確認 ▶〕。描線方式和 `demo` 相同：最多 5,000 條曲線，並做品質檢查（超過 2048 px 的圖會先縮小）。處理時會顯示目前的步驟，按〔取消〕會在下一個步驟停下。
 3. 結果會在同一頁的檢視器中開啟（見第 4 節）。可以下載 SVG、JSON、Desmos、LaTeX，或把全部打包成 ZIP，也可以〔全部複製到 Desmos〕。
 4. 上方的〔清除圖片〕會清掉目前的圖，接著就能拖入下一張；隨時直接拖入新圖片也可以。
 
@@ -1112,6 +1145,7 @@ python -m line2func.demo IMAGE [options]
 | `--upscale {auto,1,2,3,4}` | `auto` | 以 N 倍解析度描線，再把曲線換算回原尺寸。`auto` 在線條細於約 1.75 px 時放大 2 倍；容許誤差仍以原圖像素計 |
 | `--no-faint` | 淡線開啟 | 不加入門檻以下的淡線，也不加入極淡的線（這個步驟很保守：在有雜訊或陰影的紙上不會加入任何東西） |
 | `--denoise 0..100` | `50` | 小雜點和短的淡線片段當成雜訊丟掉的強度：0 全部保留（細節最多；有雜訊的掃描圖連雜訊也會描出來），100 是兩倍嚴格（見第 8 節） |
+| `--faint-sensitivity 0..100` | `50` | 多淡的線也算線條：調高會保留更淡的頭髮和背景線（最高時鉛筆紋理也會變成短線），0 只描門檻以上的墨跡（見第 8 節） |
 | `--quality` | 關閉 | 拿結果和原圖比對：輸出 `quality.json`、`quality.png` 與摘要（見第 8 節） |
 | `--no-residual` | 第二遍開啟 | 跳過第二遍描線（第二遍只描第一遍沒蓋到的墨跡，見第 8 節） |
 | `--no-outline` | 外框開啟 | 實心區域（粗重的睫毛）以及粗筆畫、楔形筆畫（筆刷）維持中心線，不改成填滿的外框 |
@@ -1187,6 +1221,20 @@ python -m line2func.demo IMAGE [options]
 | 100 | 83.12% | 8.68% | 0.934（0.752） |
 
 乾淨的線稿上，強度越低保留越多細節，也不會多畫錯的線（不在墨跡上的曲線長度維持在 0.10–0.13%）。有雜訊的掃描圖設成 0 會連雜訊一起描（曲線多 55%）；25 以上結果幾乎不變，強度越高只會少掉一點點線條（召回率 50 時 0.991，100 時 0.988）。
+
+#### 多淡的線也算線條：`--faint-sensitivity`
+
+頭髮和背景的淺色線條常常比墨跡門檻還淡。描線器仍然會用它們和周圍紙面的對比找出來（淡線），更淡的則看形狀（極淡的線：長、細、很少分岔）。頭髮常常互相交叉，又緊貼著較深的髮絲，所以許多淺色髮絲過不了這些檢查；若改成調低墨跡門檻，相鄰的髮絲會黏成一團（下面這張圖在門檻 0.08 時線寬從 1.7 變成 2.4 px，眼睛也變成鋸齒狀的外框）。
+
+`--faint-sensitivity`（網頁版是〔淡線〕）一起放寬這些檢查：50 是調校好的預設，100 只需要不到一半的對比（門檻的 0.12 而不是 0.3）、更靠近深色線也會找，極淡的線可以更短（6 個線寬而不是 15）、稍寬、分岔更多（每 5 個線寬一個交叉點，而不是 17）。低於 50 時淡線需要更高的對比；0 只描門檻以上的墨跡。容許誤差 1.0：
+
+| 圖 | 50 時漏掉的墨跡 | 100 時 | 100 時曲線落在墨跡上的比例（含淡墨） | 線寬 50／100 |
+|---|---|---|---|---|
+| huaban-6611354694 | 2.61% | 1.01% | 0.986 | 1.70／1.77 px |
+| huaban-6611349997 | 1.79% | 0.56% | 0.991 | 1.54／1.58 px |
+| af26b7b7 | 2.99% | 1.64% | 0.993 | 1.71／1.75 px |
+
+調到最高時，鉛筆紋理會變成短線被描出來；有雜訊的掃描圖連雜訊也會描（和 `--denoise 0` 一樣）：在 25 張有雜訊的合成掃描圖上，曲線落在真實線條上的比例從 50 時的 0.929 降到 75 時的 0.902、100 時的 0.826（最差一張 0.165）。乾淨的合成掃描圖不受影響。
 
 #### 粗重的睫毛與其他實心區域
 
@@ -1483,5 +1531,6 @@ python -m pytest            # 約 370 個測試；沒有 PyTorch 時略過模型
 - [x] 粗重睫毛等實心區域，並加上 Desmos 用的圈線；預設最多 5,000 條曲線；淺色與極淡的線
 - [x] 函數模式：每條曲線切成 `y = f(x)`／`x = g(y)` 的顯函數（`--form function`）
 - [x] 單一畫面的網頁版，三種顯示方式；斷成點和虛線的線會保留；去雜訊強度拖動條（`--denoise`）
+- [x] 淡線靈敏度（`--faint-sensitivity`）
 - [ ] 真實線稿的盲測（工具已完成，需要人工評分者）
 - [ ] 選用：以這些線條風格重新訓練神經網路引擎，並在真實線稿上微調
