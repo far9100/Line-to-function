@@ -86,9 +86,9 @@ class BaselineParams:
     smooth_sigma: float = 1.0  # smoothing of the pixel chain before fitting, px
     # measure the distorted zone around each junction on the junction itself (the disk inscribed in the
     # ink there) instead of using half the drawing's typical line width everywhere, which matters when
-    # one drawing holds both thin and thick lines. It gives about 2-5% fewer curves at the same
-    # accuracy, for a hair less raster fidelity (docs/progress.md); off is the behaviour up to 1.0
-    local_trim: bool = False
+    # one drawing holds both thin and thick lines. About 0.4-5% fewer curves at the same accuracy,
+    # for a hair less raster fidelity (docs/progress.md); False is the behaviour up to 1.0
+    local_trim: bool = True
     # faint strokes below the threshold (local-contrast ridge test, see faint_line_mask)
     faint_lines: bool = True
     faint_contrast: float = 0.3  # min contrast over the local background, as a fraction of the threshold
