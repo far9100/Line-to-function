@@ -204,3 +204,23 @@ def test_denoise_scales_the_speck_and_faint_piece_limits():
     assert _near_row(off, 56.0) > 0.8 and _near_row(tuned, 56.0) < 0.2  # off: even lone dashes stay
     assert tuned.to_dict() == vectorize(ink).to_dict()
     assert len(strict) <= len(tuned) <= len(off)
+
+
+def test_the_local_trim_measures_each_junction_on_itself():
+    """Off, every junction is trimmed by half the drawing's *typical* line width. On, each one is
+    measured on the disk inscribed in the ink at that junction, so a thick crossing - where
+    thinning bends the skeleton over a longer stretch - is trimmed further than a thin one.
+
+    The default is off: it changes the tracing, and the golden digests pin that.
+    """
+    gt = CurveSet(200, 200, [Curve(g.line([20, 100], [180, 100]), stroke=0),
+                             Curve(g.line([100, 20], [100, 180]), stroke=1)])
+    img = render_lineart(gt, 200, 200, line_width=14.0)
+    ink = 1.0 - img / 255.0
+    off = vectorize(ink, BaselineParams(local_trim=False))
+    on = vectorize(ink, BaselineParams(local_trim=True))
+    assert vectorize(ink).to_dict() == off.to_dict()  # off is the default
+    # both trace the two lines; the trimmed one needs no more curves to do it
+    assert len(on) <= len(off)
+    for curves in (off, on):
+        assert f_score(curves, gt, threshold=2.0)["recall"] > 0.95

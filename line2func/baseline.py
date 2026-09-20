@@ -84,6 +84,11 @@ class BaselineParams:
     solid_ratio: float | None = None
     solid_length: float = 2.0
     smooth_sigma: float = 1.0  # smoothing of the pixel chain before fitting, px
+    # measure the distorted zone around each junction on the junction itself (the disk inscribed in the
+    # ink there) instead of using half the drawing's typical line width everywhere, which matters when
+    # one drawing holds both thin and thick lines. It gives about 2-5% fewer curves at the same
+    # accuracy, for a hair less raster fidelity (docs/progress.md); off is the behaviour up to 1.0
+    local_trim: bool = False
     # faint strokes below the threshold (local-contrast ridge test, see faint_line_mask)
     faint_lines: bool = True
     faint_contrast: float = 0.3  # min contrast over the local background, as a fraction of the threshold
@@ -840,16 +845,41 @@ def _link_junctions(
         recorder.junctions(cands, decisions, ctx)
 
 
-def _assemble(g: _Graph, inc, links: dict, trim: float, info: list | None = None) -> list[tuple[np.ndarray, bool]]:
+def _assemble(g: _Graph, inc, links: dict, trim: float, info: list | None = None,
+              line_dist: np.ndarray | None = None) -> list[tuple[np.ndarray, bool]]:
     """Walk linked edges into strokes; returns ``(points, closed)`` pairs.
 
     With ``info`` (a list), each stroke's seams are appended to it: where two
     edges were joined, as ``(arc start, arc end, "junction" | "gap")`` along the
     stroke's points (the stretch between the two edges' last and first points).
+
+    ``trim`` is how far from a junction the skeleton is dropped. With
+    ``line_dist`` (the distance transform of the lines) each junction is
+    measured on its own instead, which matters when one drawing holds both thin
+    and thick lines.
     """
     is_junction = [len(x) >= 3 for x in inc]
     used = [not e.alive for e in g.edges]
     strokes: list[tuple[np.ndarray, bool]] = []
+    reach_at: dict[int, float] = {}
+
+    def distorted(v: int) -> float:
+        """How far from node ``v`` thinning distorts the skeleton.
+
+        The disk inscribed in the ink at the node (``line_dist``) measures that
+        zone where one width for the whole drawing cannot: a junction of thick
+        lines is distorted over a longer stretch than one of thin lines, and a
+        crossing is distorted further than a line's own half width.
+        """
+        if v not in reach_at:
+            local = trim
+            if line_dist is not None:
+                h, w = line_dist.shape
+                x = int(np.clip(round(g.pos[v][0] - 0.5), 0, w - 1))
+                y = int(np.clip(round(g.pos[v][1] - 0.5), 0, h - 1))
+                local = float(line_dist[y, x]) + 1.0
+            reach_at[v] = local + 2.0 * g.spread[v]
+        return reach_at[v]
 
     def walk(eid: int, entry: int):
         seq = []
@@ -890,13 +920,13 @@ def _assemble(g: _Graph, inc, links: dict, trim: float, info: list | None = None
             # junction are extended straight to it.
             if is_junction[n_in]:
                 c = g.pos[n_in]
-                far = np.nonzero(np.linalg.norm(p - c, axis=1) > trim + 2.0 * g.spread[n_in])[0]
+                far = np.nonzero(np.linalg.norm(p - c, axis=1) > distorted(n_in))[0]
                 p = p[far[0] :] if len(far) else c[None]
                 if k == 0 and not closed and len(far):
                     p = np.vstack([foot(p, c), p])
             if is_junction[n_out]:
                 c = g.pos[n_out]
-                far = np.nonzero(np.linalg.norm(p - c, axis=1) > trim + 2.0 * g.spread[n_out])[0]
+                far = np.nonzero(np.linalg.norm(p - c, axis=1) > distorted(n_out))[0]
                 p = p[: far[-1] + 1] if len(far) else p[:1]
                 if k == last and not closed and len(far):
                     p = np.vstack([p, foot(p[::-1], c)])
@@ -939,6 +969,7 @@ def _assemble(g: _Graph, inc, links: dict, trim: float, info: list | None = None
 def _strokes_from_skeleton(
     skel: np.ndarray, radius: float, params: BaselineParams, close_gaps: bool,
     scorer=None, ctx: DecisionContext | None = None, recorder=None, info: list | None = None,
+    line_dist: np.ndarray | None = None,
 ):
     scorer = scorer or RULES
     g = _trace_graph(skel)
@@ -965,7 +996,7 @@ def _strokes_from_skeleton(
         _link_gaps(g, inc, links, visible + 2.0 * radius, params.gap_angle, reach, scorer=scorer, ctx=ctx,
                    recorder=recorder)
     _link_junctions(g, inc, links, params.continue_angle, reach, scorer=scorer, ctx=ctx, recorder=recorder)
-    return _assemble(g, inc, links, trim=radius + 1.0, info=info)
+    return _assemble(g, inc, links, trim=radius + 1.0, info=info, line_dist=line_dist)
 
 
 # ---------------------------------------------------------------------------
@@ -1198,9 +1229,11 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
     result.meta["line_width"] = round(line_w, 2)
 
     support = ndimage.binary_dilation(mask, structure=_EIGHT).astype(np.float32)
+    # how thick the lines are at every pixel: the trim around each junction and the scorer's
+    # features both read it (the same array as dist unless filled areas were cut out)
+    line_dist = ndimage.distance_transform_edt(line_mask) if fill_region.any() else dist
     ctx = None
     if scorer.needs_features or recorder is not None:
-        line_dist = ndimage.distance_transform_edt(line_mask) if fill_region.any() else dist
         ctx = DecisionContext(ink, mask, line_dist, thr, line_w, radius)
     scorer.begin(ctx)
     stroke_id = 0
@@ -1221,7 +1254,7 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
     min_len = max(2.0, line_w)
     infos: list = []
     raw = _strokes_from_skeleton(skel, radius, params, close_gaps=True, scorer=scorer, ctx=ctx, recorder=recorder,
-                                 info=infos)
+                                 info=infos, line_dist=line_dist if params.local_trim else None)
     keep = [float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1))) >= min_len for p, _ in raw]
     strokes = [s for s, ok in zip(raw, keep) if ok]
     seams = [s for s, ok in zip(infos, keep) if ok]
