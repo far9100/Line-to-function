@@ -11,10 +11,17 @@
 
 Scene evaluation reports the metrics of docs/details.md's Evaluation section per
 subset (clean, hard, hard2, thin): F_GT@2, crossing continuity, gap closure,
-fragments per stroke, curve count ratio and CPU seconds per megapixel, plus the
-decision metrics. ``--decisions`` also checks a scorer's gates (G1-G7). Single-curve
-evaluation compares the model with the baseline engine on the same degraded
-patches.
+fragments per stroke, curve count ratio, length ratio and CPU seconds per
+megapixel, plus the decision metrics and an F sweep over tolerances (in
+thousandths of the long edge, so it is comparable across resolutions).
+``--decisions`` also checks a scorer's gates (G1-G7). Single-curve evaluation
+compares the model with the baseline engine on the same degraded patches.
+
+The length ratio is the only metric here that sees a line drawn twice: every
+other one measures distance to the nearest curve, and a doubled stroke lies on
+the ink. Read it against the ground truth's own habits, though - the synthetic
+ground truth keeps erased gaps whole, so a faithful tracing scores a little
+under 1.
 """
 
 from __future__ import annotations
@@ -28,7 +35,15 @@ import numpy as np
 
 from line2func import baseline, lineart
 from line2func.curves import CurveSet
-from line2func.metrics import chamfer, decision_counts, decision_scores, f_score, structure_scores
+from line2func.metrics import (
+    chamfer,
+    decision_counts,
+    decision_scores,
+    f_score,
+    f_sweep,
+    structure_scores,
+    total_length,
+)
 from line2func.synth import load_scene_dir
 
 EVAL_SEED = 2_000_003  # single-curve evaluation patches (disjoint from training streams)
@@ -59,8 +74,10 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
         cont = [0.0, 0]
         clos = [0.0, 0]
         n_pred = n_gt = 0
+        len_pred = len_gt = 0.0
         seconds = megapixels = 0.0
         pooled: dict[str, float] = {}
+        swept: dict[str, float] = {}
         for png, gt in scenes:
             ink = lineart.extract(png, "none")
             t = time.perf_counter()
@@ -70,6 +87,10 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
                 pooled[key] = pooled.get(key, 0.0) + value
             megapixels += gt.width * gt.height / 1e6
             f.append(f_score(pred, gt)["f"])
+            len_pred += total_length(pred)
+            len_gt += total_length(gt)
+            for key, value in f_sweep(pred, gt).items():
+                swept[key] = swept.get(key, 0.0) + value
             s = structure_scores(pred, gt)
             if s["crossing_checks"]:
                 cont[0] += s["crossing_continuity"] * s["crossing_checks"]
@@ -88,11 +109,13 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
             "gap_closure": clos[0] / clos[1] if clos[1] else float("nan"),
             "fragments_per_stroke": float(np.mean(frag)) if frag else float("nan"),
             "curve_ratio": n_pred / max(1, n_gt),
+            "length_ratio": len_pred / len_gt if len_gt > 0 else float("nan"),
             "seconds_per_mp": seconds / max(megapixels, 1e-9),
             "crossing_checks": cont[1],
             "gap_checks": clos[1],
             **decision_scores(pooled),
             "decision_counts": pooled,
+            "f_sweep": {k: v / len(scenes) for k, v in swept.items()} if scenes else {},
         }
     return results
 
@@ -294,7 +317,8 @@ def _print_gate_decisions(checks: list[dict]) -> None:
 
 def _print_scenes(results: dict) -> None:
     cols = [("f_gt2", "F_GT@2"), ("crossing_continuity", "cross cont."), ("gap_closure", "gap closure"),
-            ("fragments_per_stroke", "frag/stroke"), ("curve_ratio", "curve ratio"), ("seconds_per_mp", "s/MP")]
+            ("fragments_per_stroke", "frag/stroke"), ("curve_ratio", "curve ratio"),
+            ("length_ratio", "length ratio"), ("seconds_per_mp", "s/MP")]
     print(f"{'subset':<8}{'scenes':>7}" + "".join(f"{h:>13}" for _, h in cols))
     for name, r in results.items():
         print(f"{name:<8}{r['scenes']:>7}" + "".join(f"{r[k]:>13.3f}" for k, _ in cols))

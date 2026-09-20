@@ -1,7 +1,11 @@
 """Accuracy metrics between traced curves and ground truth (docs/details.md, Evaluation).
 
 * :func:`f_score` - F_GT@2: how much curve length matches within 2 px;
-  :func:`chamfer` - mean distance both ways.
+  :func:`chamfer` - mean distance both ways; :func:`f_sweep` - the same F1 over a
+  range of tolerances, in :func:`distance_base` units so it is comparable across
+  resolutions.
+* :func:`stroke_length_scores` - total length drawn against the ground truth's:
+  what the distance metrics above cannot see (retracing, doubled strokes).
 * :func:`structure_scores` - crossing continuity, gap closure, fragments per
   stroke and curve count ratio: whether the *strokes* are right, not just the
   pixels.
@@ -38,23 +42,56 @@ def sample_points(curves, spacing: float = 0.5) -> np.ndarray:
     return np.vstack(out) if out else np.zeros((0, 2))
 
 
-def f_score(pred, gt, threshold: float = 2.0, spacing: float = 0.5) -> dict[str, float]:
-    """F_GT@threshold: precision, recall and F1 of curve length within ``threshold`` px.
+def f_score(pred, gt, threshold: float = 2.0, spacing: float = 0.5, base: float = 1.0) -> dict[str, float]:
+    """F_GT@threshold: precision, recall and F1 of curve length within ``threshold * base``.
 
-    Precision is the fraction of predicted length within ``threshold`` of the
-    ground truth; recall is the fraction of ground-truth length within
-    ``threshold`` of the prediction.
+    Precision is the fraction of predicted length within the tolerance of the
+    ground truth; recall is the fraction of ground-truth length within the
+    tolerance of the prediction. ``base`` is the unit the tolerance is counted
+    in: 1 (the default) means pixels, :func:`distance_base` makes it relative
+    to the drawing's size.
     """
+    tol = threshold * base
     p = sample_points(pred, spacing)
     g = sample_points(gt, spacing)
     if len(p) == 0 or len(g) == 0:
         both_empty = len(p) == 0 and len(g) == 0
         v = 1.0 if both_empty else 0.0
         return {"precision": v, "recall": v, "f": v}
-    precision = float(np.mean(cKDTree(g).query(p, distance_upper_bound=threshold)[0] <= threshold))
-    recall = float(np.mean(cKDTree(p).query(g, distance_upper_bound=threshold)[0] <= threshold))
+    precision = float(np.mean(cKDTree(g).query(p, distance_upper_bound=tol)[0] <= tol))
+    recall = float(np.mean(cKDTree(p).query(g, distance_upper_bound=tol)[0] <= tol))
     f = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
     return {"precision": precision, "recall": recall, "f": f}
+
+
+def distance_base(curves: CurveSet) -> float:
+    """A thousandth of the drawing's long edge: the distance unit of the Rough Sketch Cleanup
+    Benchmark, so tolerances mean the same thing at any resolution."""
+    return max(curves.width, curves.height) * 0.001
+
+
+def f_sweep(pred, gt, steps=range(0, 40, 2), spacing: float = 0.5) -> dict[str, float]:
+    """F1 at every tolerance in ``steps``, in :func:`distance_base` units, as ``{"f_0": ..., "f_2": ...}``.
+
+    One curve tells more than a single tolerance does: where the curve rises
+    says whether a tracing is off by a little everywhere or by a lot in a few
+    places. All the tolerances share one distance computation.
+    """
+    base = distance_base(gt)
+    p = sample_points(pred, spacing)
+    g = sample_points(gt, spacing)
+    if len(p) == 0 or len(g) == 0:
+        v = 1.0 if len(p) == 0 and len(g) == 0 else 0.0
+        return {f"f_{d}": v for d in steps}
+    d_p = cKDTree(g).query(p)[0]
+    d_g = cKDTree(p).query(g)[0]
+    out = {}
+    for d in steps:
+        tol = d * base
+        precision = float(np.mean(d_p <= tol))
+        recall = float(np.mean(d_g <= tol))
+        out[f"f_{d}"] = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    return out
 
 
 def chamfer(pred, gt, spacing: float = 0.25) -> float:
@@ -64,6 +101,26 @@ def chamfer(pred, gt, spacing: float = 0.25) -> float:
     if len(p) == 0 or len(g) == 0:
         return float("inf")
     return 0.5 * float(cKDTree(g).query(p)[0].mean() + cKDTree(p).query(g)[0].mean())
+
+
+def total_length(curves) -> float:
+    """Total length of all curves, px."""
+    return float(sum(np.sum(np.linalg.norm(np.diff(flatten(ctrl, 0.05), axis=0), axis=1)) for ctrl in _ctrls(curves)))
+
+
+def stroke_length_scores(pred, gt) -> dict[str, float]:
+    """How much line the prediction draws against how much the ground truth has.
+
+    Every other metric here measures distance point by point, and retracing,
+    doubled strokes and curves that double back are all invisible to that: they
+    lie on the ink, so they cost nothing. They show up only in the total length.
+    ``length_ratio`` is 1 when the prediction draws exactly as much line as the
+    ground truth, above 1 when it draws the same ink twice.
+    """
+    p, g = total_length(pred), total_length(gt)
+    if g <= 0.0:
+        return {"length_ratio": float("nan"), "length_abs_diff": float("nan")}
+    return {"length_ratio": p / g, "length_abs_diff": abs(p - g) / g}
 
 
 # ---------------------------------------------------------------------------

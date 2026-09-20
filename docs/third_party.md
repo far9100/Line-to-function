@@ -45,6 +45,15 @@ browser loads them from the jsDelivr CDN at run time, pinned to Pyodide
 ## Algorithms (no code used)
 
 - Curve fitting: Schneider, "An Algorithm for Automatically Fitting Digitized Curves", *Graphics Gems*, 1990.
+- `line2func/boundary.py`: the skeleton-against-outline test (`D_skeleton`) and cutting the outline at
+  its sharp turns are from Zhang, Yan, Chen, Zhang & Wang, "Vectorizing Line Drawings of Arbitrary
+  Thickness via Boundary-based Topology Reconstruction", *Computer Graphics Forum* 41(6), 2022.
+  No code is published for it; this is written from the paper's description. The contour walk is
+  Moore-neighbour following, and the sharp turns are found by chord offset rather than by the paper's
+  spline fit. line2func keeps its own skeleton and line widths, which that method discards.
+- The total-length metric (`metrics.stroke_length_scores`) follows the stroke-length error reported in
+  *Deep Sketch Vectorization* (SIGGRAPH 2024); the resolution-relative distance unit and the F sweep
+  (`metrics.distance_base`, `metrics.f_sweep`) follow the Rough Sketch Cleanup Benchmark's conventions.
 - Model design inspired by *Deep Vectorization of Technical Drawings* (ECCV 2020, arXiv:2003.05471) and DETR (Carion et al., ECCV 2020).
 - XDoG: Winnemöller, Kyprianidis & Olsen, 2012.
 
