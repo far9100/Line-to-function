@@ -45,6 +45,10 @@ class FakeWorker {
       this.reply({ type: "answer", id: m.id, heap: b.heap, zip: new Uint8Array([80, 75]),
                    answer: JSON.stringify({ summary: { curves: 2 }, params: { method: "none", scale: 1 } }),
                    files: { "curves.json": new TextEncoder().encode('{"curves": []}'), "desmos.txt": new Uint8Array([120]) } });
+    } else if (m.type === "svg") {
+      const svg = `<svg data-style="${m.color}|${m.seed}|${m.width}"/>`;
+      this.reply({ type: "answer", id: m.id, heap: 1, answer: JSON.stringify({ ok: true }),
+                   svg: new TextEncoder().encode(svg) });
     } // "hang": never answers
   }
 }
@@ -111,6 +115,29 @@ const out = {};
   await engine.trace({ image_id: image.image_id });
   await settle();
   out.crash = { last: snaps.at(-1), workers: FakeWorker.created.length, unknown: await engine.trace({ image_id: "nope" }).catch((e) => e.code) };
+}
+
+// styledSVG: the SVG written again in the page's line style, cached per style and dropped with the result
+{
+  FakeWorker.created = [];
+  FakeWorker.behaviour.trace = "answer";
+  FakeWorker.behaviour.heap = 100;
+  const engine = createEngine(config, { Worker: FakeWorker });
+  const image = await engine.open(new Blob([new Uint8Array([1])]), "e.png");
+  const job = await engine.trace({ image_id: image.image_id });
+  await settle();
+  const worker = FakeWorker.created[FakeWorker.created.length - 1];
+  const style = { color: "bw", seed: 0, width: "uniform" };
+  const first = await engine.styledSVG(job.job_id, style);
+  const again = await engine.styledSVG(job.job_id, style); // the same style must not ask the worker twice
+  const other = await engine.styledSVG(job.job_id, { color: "random", seed: 7, width: "measured" });
+  out.styled = {
+    isBlob: first.startsWith("blob:"), cached: first === again, differs: first !== other,
+    asked: worker.received.filter((t) => t === "svg").length,
+    body: await (await fetch(first)).text(),
+    otherBody: await (await fetch(other)).text(),
+    unknownJob: await engine.styledSVG("nope", style),
+  };
 }
 
 // old engine files: the engine fails with "bad_token" (the page is out of date)

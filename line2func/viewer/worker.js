@@ -3,12 +3,13 @@
 //   page -> worker  {type: "init", pyodide, package, packages}   Pyodide's folder URL, line2func's zip, packages
 //                   {type: "open", id, key, name, data}          read an image file (data: its bytes)
 //                   {type: "trace", id, key, name, data, params} trace it (params: the job's JSON)
+//                   {type: "svg", id, curves, color, seed, width}  write out.svg again in another line style
 //   worker -> page  {type: "status", step} while starting; {type: "ready", protocol, version, heap} or
 //                   {type: "failed", detail}; {type: "stage", id, stage} during a trace;
-//                   {type: "answer", id, answer, preview | files + zip, heap}, or {type: "crashed", id, detail}
+//                   {type: "answer", id, answer, preview | files + zip | svg, heap}, or {type: "crashed", id, detail}
 // It keeps no state of its own: every request brings the image, so a worker that is stopped (Cancel), that
 // crashed or that is replaced (its memory only grows) loses nothing.
-const PROTOCOL = 1; // = engine.js PROTOCOL
+const PROTOCOL = 2; // = engine.js PROTOCOL
 let py = null, web = null;
 
 self.onmessage = ({ data: m }) => {
@@ -17,7 +18,7 @@ self.onmessage = ({ data: m }) => {
   else if (m.type === "trace") {
     const progress = (stage) => self.postMessage({ type: "stage", id: m.id, stage }); // called from Python
     call(m.id, () => web.trace(m.data, m.name, m.params, progress, m.key));
-  }
+  } else if (m.type === "svg") call(m.id, () => web.export_svg(m.curves, m.color, m.seed, m.width));
 };
 
 async function init({ pyodide, package: pkg, packages }) {
@@ -52,7 +53,8 @@ function call(id, run) {
   }
   try {
     const out = answer.toJs({ dict_converter: Object.fromEntries }); // bytes -> Uint8Array copies
-    const buffers = new Set([out.preview, out.zip, ...Object.values(out.files || {})].filter(Boolean).map((a) => a.buffer));
+    const buffers = new Set([out.preview, out.zip, out.svg, ...Object.values(out.files || {})]
+      .filter(Boolean).map((a) => a.buffer));
     self.postMessage({ type: "answer", id, ...out, heap: heap() }, [...buffers]);
   } catch (err) {
     self.postMessage({ type: "crashed", id, detail: describe(err) });

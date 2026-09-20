@@ -65,3 +65,12 @@ def test_the_engine_traces_in_webassembly(tmp_path):
     assert summary["strokes"] == pytest.approx(native["strokes"], abs=2)
     assert summary["quality"]["kept"] == pytest.approx(native["quality"]["kept"], abs=0.01)
     assert summary["quality"]["stray"] is False
+
+    # the page's line style, written again in WebAssembly from the result's own curves.json (web.export_svg)
+    styled = r["styled"]
+    assert styled["bwUniform"]["answer"] == {"ok": True}
+    assert styled["bwUniform"]["widths"] == 1 and styled["bwUniform"]["colors"] == 1  # one weight, one color
+    assert styled["randomMeasured"]["answer"] == {"ok": True}
+    assert styled["randomMeasured"]["colors"] > 1 and styled["randomMeasured"]["widths"] >= 1
+    assert styled["bwUniform"]["sha"] != styled["randomMeasured"]["sha"]
+    assert styled["bad"]["answer"]["error"]["field"] == "color"  # an unknown mode is an error answer, not a crash

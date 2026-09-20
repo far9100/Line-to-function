@@ -152,3 +152,22 @@ def test_uniform_width_gives_every_stroke_the_same_thickness():
 
     with pytest.raises(ValueError):
         to_svg(cs, width_mode="thick")
+
+
+def test_the_engine_and_the_worker_agree_on_the_protocol():
+    """They are served together; a mismatch must be a caught "page is out of date", never a silent hang."""
+    def protocol(name: str) -> int:
+        source = (serve.VIEWER_DIR / name).read_text(encoding="utf-8")
+        return int(re.search(r"PROTOCOL = (\d+)", source).group(1))
+
+    assert protocol("engine.js") == protocol("worker.js")
+
+
+def test_the_worker_handles_every_message_the_engine_sends():
+    engine = (serve.VIEWER_DIR / "engine.js").read_text(encoding="utf-8")
+    worker = (serve.VIEWER_DIR / "worker.js").read_text(encoding="utf-8")
+    # every {type: "..."} the engine builds, less "module" (the Worker's own option)
+    sent = set(re.findall(r'type:\s*"(\w+)"', engine)) - {"module"}
+    handled = set(re.findall(r'm\.type === "(\w+)"', worker))
+    assert sent == {"init", "open", "trace", "svg"}  # if this changes, the pair below is what matters
+    assert sent <= handled, sent - handled

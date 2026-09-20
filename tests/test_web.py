@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import subprocess
 import sys
 import time
@@ -141,3 +142,29 @@ def test_the_engine_needs_no_server_code():
             "if m in sys.modules))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert out.returncode == 0 and out.stdout.strip() == "[]", out.stderr
+
+
+def test_export_svg_restyles_a_result_without_tracing_again():
+    """The online page's downloads: the same SVG the local server's ?color=&width= sends."""
+    result = web.trace(_drawing(), "d.png", json.dumps({"curves": 60}), key="svg")
+    assert "error" not in json.loads(result["answer"]), result["answer"]
+    curves_json = result["files"]["curves.json"]
+
+    plain = web.export_svg(curves_json)
+    assert json.loads(plain["answer"]) == {"ok": True}
+    assert plain["svg"] == result["files"]["out.svg"]  # the default style is what the trace already wrote
+
+    even = web.export_svg(curves_json, "bw", 0, "uniform")["svg"].decode()
+    assert len(set(re.findall(r'stroke-width="([^"]+)"', even))) == 1
+    assert set(re.findall(r'stroke="([^"]+)"', even)) == {"#000"}
+
+    # the same curves, so only the style differs; a different seed gives different colors
+    for seed, other in ((7, 8), (0, 1)):
+        a = web.export_svg(curves_json, "random", seed, "measured")["svg"]
+        b = web.export_svg(curves_json, "random", other, "measured")["svg"]
+        assert a != b and web.export_svg(curves_json, "random", seed, "measured")["svg"] == a
+
+    for args, field in ((("nope",), "color"), (("bw", 0, "thick"), "width"), (("random", "x"), "seed")):
+        answer = json.loads(web.export_svg(curves_json, *args)["answer"])
+        assert answer["error"]["field"] == field, args
+        assert web.export_svg(curves_json, *args)["svg"] is None

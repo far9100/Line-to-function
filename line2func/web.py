@@ -2,11 +2,12 @@
 
 The online page is the local web page (``line2func/viewer``) served as static
 files (:mod:`line2func.website`). It runs Python in the browser with Pyodide,
-in a Web Worker (``viewer/worker.js``), which calls :func:`open_image` and
-:func:`trace`. They do what the local server does for ``POST /api/images`` and
-``POST /api/jobs`` (:mod:`line2func.jobs`), within :data:`LIMITS`: a browser
-tab has less memory than the local server, and the browser's WebAssembly is
-slower. The image never leaves the browser.
+in a Web Worker (``viewer/worker.js``), which calls :func:`open_image`,
+:func:`trace` and :func:`export_svg`. They do what the local server does for
+``POST /api/images``, ``POST /api/jobs`` and ``out.svg?color=&width=``
+(:mod:`line2func.jobs`), within :data:`LIMITS`: a browser tab has less memory
+than the local server, and the browser's WebAssembly is slower. The image never
+leaves the browser.
 
 Both answer with JSON text, the same JSON the server sends, plus the files as
 bytes. The worker keeps no state of its own: every call brings the image's
@@ -85,6 +86,21 @@ def trace(data, name: str, params: str, progress: Callable[[str], None] | None =
         return {"answer": _answer(_error(exc)), "files": {}, "zip": None}
     finally:
         gc.collect()
+
+
+def export_svg(curves, color_mode: str = "measured", seed=0, width_mode: str = "measured") -> dict:
+    """Write ``out.svg`` again in a chosen line style, as the servers do for ``?color=&width=``.
+
+    ``curves`` is the result's own ``curves.json`` (a JavaScript ``Uint8Array``
+    or bytes), so nothing is traced again. Returns ``{"answer": JSON text,
+    "svg": bytes or None}``; the answer is ``{"ok": true}`` or ``{"error": {...}}``.
+    """
+    try:
+        raw = curves.to_bytes() if hasattr(curves, "to_bytes") else bytes(curves)
+        svg = jobs.restyled_svg(raw, color_mode, seed, width_mode)
+    except Exception as exc:  # noqa: BLE001 - every failure becomes an error answer
+        return {"answer": _answer(_error(exc)), "svg": None}
+    return {"answer": _answer({"ok": True}), "svg": svg}
 
 
 def _image(data, name: str, key: str) -> jobs.StoredImage:

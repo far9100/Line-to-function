@@ -6,7 +6,7 @@
 // One request runs at a time. Python cannot be interrupted, so Cancel stops the worker and starts a new one;
 // so does a crash, and a worker whose memory has grown large (WebAssembly memory never shrinks). Every request
 // carries the image's bytes, so a new worker loses nothing.
-export const PROTOCOL = 1; // = worker.js PROTOCOL
+export const PROTOCOL = 2; // = worker.js PROTOCOL
 const RECYCLE_BYTES = 1 << 30; // after a trace, a worker with more memory than this is replaced
 const KEEP_RESULTS = 2; // results whose files stay available
 const TYPES = { "curves.json": "application/json", "out.svg": "image/svg+xml", "desmos.txt": "text/plain;charset=utf-8",
@@ -22,6 +22,7 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
   const queue = []; // requests waiting for it
   const images = new Map(); // key -> {data, name, preview}: the image opened last
   const results = new Map(); // job id -> {file name: blob URL}
+  const styled = new Map(); // job id -> {"color|seed|width": blob URL}: out.svg written again in that style
   const jobs = new Map(); // job id -> job
   let seq = 0;
 
@@ -199,11 +200,32 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
     return results.get(jobId)?.[name] || "";
   }
 
+  // out.svg written again with the line style the page is showing, as the local server's
+  // ?color=&seed=&width= does. The curves come from the result's own curves.json, so nothing is traced
+  // again. Resolves with a blob: URL (kept until the result is forgotten), or "" if it cannot be made.
+  async function styledSVG(jobId, { color = "measured", seed = 0, width = "measured" } = {}) {
+    const key = `${color}|${seed >>> 0}|${width}`;
+    const have = styled.get(jobId)?.[key];
+    if (have) return have;
+    const source = results.get(jobId)?.["curves.json"];
+    if (!source) return "";
+    const curves = new Uint8Array(await (await fetch(source)).arrayBuffer());
+    const m = await request({ type: "svg", curves, color, seed: seed >>> 0, width });
+    const answer = JSON.parse(m.answer);
+    if (answer.error) throw error(answer.error.code, answer.error);
+    const url = URL.createObjectURL(new Blob([m.svg], { type: TYPES["out.svg"] }));
+    if (!styled.has(jobId)) styled.set(jobId, {});
+    styled.get(jobId)[key] = url;
+    return url;
+  }
+
   function forget(jobId) {
     for (const url of Object.values(results.get(jobId) || {})) URL.revokeObjectURL(url);
+    for (const url of Object.values(styled.get(jobId) || {})) URL.revokeObjectURL(url);
     results.delete(jobId);
+    styled.delete(jobId);
     jobs.delete(jobId);
   }
 
-  return { start, status, open, trace, cancel, previewURL, fileURL };
+  return { start, status, open, trace, cancel, previewURL, fileURL, styledSVG };
 }
