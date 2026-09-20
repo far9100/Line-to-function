@@ -413,7 +413,11 @@ class ImprovedRules(Scorer):
 
 
 def make_scorer(variant: str, gt: CurveSet | None = None) -> Scorer:
-    """``r0`` (rules), ``r2``, ``o1-<kind>``, ``o1-all`` or ``o2-all`` (the oracles need ``gt``)."""
+    """``r0`` (rules), ``r2``, ``o1-<kind>``, ``o1-all`` or ``o2-all`` (the oracles need ``gt``).
+
+    Any other name is passed to :func:`line2func.decisions.load_scorer`, so
+    ``learned`` or a path to weights works too.
+    """
     from line2func.decisions import RULES
 
     if variant == "r0":
@@ -430,7 +434,10 @@ def make_scorer(variant: str, gt: CurveSet | None = None) -> Scorer:
             # wider candidates only for the decision under test, so the others keep the rules' candidates
             limits = WIDE_LIMITS if kind == "all" else _WIDE_ONLY[kind]
         return OracleScorer(gt, kinds, limits)
-    raise ValueError(f"unknown variant {variant!r}")
+    # anything else names a learned scorer ("learned", or a path to weights)
+    from line2func.decisions import load_scorer
+
+    return load_scorer(variant)
 
 
 _WIDE_ONLY = {
@@ -476,7 +483,18 @@ def _scenes(valset: Path, limit: int | None):
 
 
 def stats(valset: Path, limit: int | None = None, variant: str = "r0") -> dict:
-    """Per subset and decision kind: candidates, label shares, and how often the rule agrees with the label."""
+    """Per subset and decision kind: candidates, label shares, and how often each decider is right.
+
+    Two deciders are tallied on the same candidates: the rule, whose verdict the
+    recorder keeps for every candidate, and whichever scorer ``variant`` names,
+    whose choice the recorder also keeps. Only *labelled* candidates count, which
+    is what makes this the clean measure of decision headroom - unlike the oracle
+    runs, where unlabelled candidates fall back to the rules and the result is a
+    mixture of the two rather than a ceiling.
+
+    So ``python -m line2func.labels stats --valset data/val_v2 --variant learned``
+    answers "how much better could any scorer get at deciding" directly.
+    """
     report = {}
     for name, scenes in _scenes(valset, limit):
         tally: dict[str, dict[str, float]] = {}
@@ -487,36 +505,43 @@ def stats(valset: Path, limit: int | None = None, variant: str = "r0") -> dict:
             baseline.vectorize(ink, params, scorer=make_scorer(variant, gt), recorder=rec)
             labels = label_recording(rec, GTIndex(gt))
             for kind, y in labels.items():
-                _, rule, _ = rec.table(kind)
-                t = tally.setdefault(kind, {"n": 0, "pos": 0, "neg": 0, "amb": 0, "rule_tp": 0, "rule_fp": 0,
-                                            "rule_fn": 0, "rule_tn": 0})
-                rule_yes = rule[:, 2] > 0.5
+                _, rule, chosen = rec.table(kind)
+                t = tally.setdefault(kind, {"n": 0, "pos": 0, "neg": 0, "amb": 0} |
+                                     {f"{who}_{cell}": 0 for who in ("rule", "scorer")
+                                      for cell in ("tp", "fp", "fn", "tn")})
                 t["n"] += len(y)
                 t["pos"] += int((y == POS).sum())
                 t["neg"] += int((y == NEG).sum())
                 t["amb"] += int((y == AMB).sum())
-                t["rule_tp"] += int((rule_yes & (y == POS)).sum())
-                t["rule_fp"] += int((rule_yes & (y == NEG)).sum())
-                t["rule_fn"] += int((~rule_yes & (y == POS)).sum())
-                t["rule_tn"] += int((~rule_yes & (y == NEG)).sum())
+                for who, yes in (("rule", rule[:, 2] > 0.5), ("scorer", chosen)):
+                    t[f"{who}_tp"] += int((yes & (y == POS)).sum())
+                    t[f"{who}_fp"] += int((yes & (y == NEG)).sum())
+                    t[f"{who}_fn"] += int((~yes & (y == POS)).sum())
+                    t[f"{who}_tn"] += int((~yes & (y == NEG)).sum())
         for t in tally.values():
             lab = t["pos"] + t["neg"]
             t["labelled"] = lab / t["n"] if t["n"] else float("nan")
-            t["rule_accuracy"] = (t["rule_tp"] + t["rule_tn"]) / lab if lab else float("nan")
-            t["rule_recall"] = t["rule_tp"] / t["pos"] if t["pos"] else float("nan")
-            t["rule_precision"] = (t["rule_tp"] / (t["rule_tp"] + t["rule_fp"])
-                                   if t["rule_tp"] + t["rule_fp"] else float("nan"))
+            for who in ("rule", "scorer"):
+                tp, fp = t[f"{who}_tp"], t[f"{who}_fp"]
+                t[f"{who}_accuracy"] = (tp + t[f"{who}_tn"]) / lab if lab else float("nan")
+                t[f"{who}_recall"] = tp / t["pos"] if t["pos"] else float("nan")
+                t[f"{who}_precision"] = tp / (tp + fp) if tp + fp else float("nan")
+            # what any scorer could still gain on these candidates
+            t["headroom"] = 1.0 - t["scorer_accuracy"] if lab else float("nan")
         report[name] = tally
     return report
 
 
 def _print_stats(report: dict) -> None:
     print(f"{'subset':<7}{'kind':<14}{'cands':>8}{'labelled':>9}{'pos':>7}{'neg':>7}"
-          f"{'rule acc':>9}{'rule P':>8}{'rule R':>8}")
+          f"{'rule acc':>9}{'this acc':>9}{'headroom':>9}{'this P':>8}{'this R':>8}")
     for name, tally in report.items():
         for kind, t in tally.items():
             print(f"{name:<7}{kind:<14}{t['n']:>8}{t['labelled']:>9.1%}{t['pos']:>7}{t['neg']:>7}"
-                  f"{t['rule_accuracy']:>9.3f}{t['rule_precision']:>8.3f}{t['rule_recall']:>8.3f}")
+                  f"{t['rule_accuracy']:>9.3f}{t['scorer_accuracy']:>9.3f}{t['headroom']:>9.3f}"
+                  f"{t['scorer_precision']:>8.3f}{t['scorer_recall']:>8.3f}")
+    print("  'this' is the scorer --variant names (r0 = the rules, so the two accuracy columns match).")
+    print("  Labelled candidates only, so 'headroom' is what any scorer could still gain at deciding.")
 
 
 VARIANTS = ("r0", "r2", "o1-junction", "o1-gap", "o1-crossing", "o1-corner", "o1-all", "o2-all")
@@ -681,7 +706,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("stats", help="label coverage and rule error rates")
     s.add_argument("--valset", type=Path, required=True)
     s.add_argument("--limit", type=int, default=None)
-    s.add_argument("--variant", default="r0", help="whose decisions shape the graph while recording")
+    s.add_argument("--variant", default="r0", help="who decides while recording, and whose accuracy is reported: r0 (the rules), r2, an oracle, learned, or a weights path")
     o = sub.add_parser("oracle", help="evaluate the rules, improved rules and oracles")
     o.add_argument("--valset", type=Path, required=True)
     o.add_argument("--variants", default=",".join(VARIANTS))

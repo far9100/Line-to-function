@@ -95,3 +95,44 @@ def test_corner_labels():
     at_corner = [lab for p, lab in rows if np.linalg.norm(p - [20, 100]) < 4]
     assert at_corner == [POS]
     assert all(lab in (NEG, AMB) for p, lab in rows if np.linalg.norm(p - [20, 100]) >= 8)
+
+
+# ---------------------------------------------------------------------------
+# Decision headroom: two deciders, one candidate set, labelled candidates only
+# ---------------------------------------------------------------------------
+
+
+def test_a_learned_scorer_can_be_named_as_a_variant():
+    """So `labels stats --variant learned` can report its accuracy, not only the rules'."""
+    from line2func.decision_model import LearnedScorer
+
+    assert make_scorer("r0") is not None
+    assert isinstance(make_scorer("learned"), LearnedScorer)
+    with pytest.raises(ValueError):
+        make_scorer("o1-nonsense", CurveSet(8, 8))
+
+
+def test_stats_reports_both_deciders_and_the_headroom_between_them(tmp_path):
+    """Headroom is measured on labelled candidates only. That is what makes it a ceiling, unlike
+    the oracle runs, where unlabelled candidates fall back to the rules and the number is a
+    mixture of the two."""
+    from line2func.labels import stats
+    from line2func.synth import write_scenes
+
+    write_scenes(tmp_path / "s", "hard", 2, 128, seed=11)
+    report = stats(tmp_path / "s", variant="r0")[(tmp_path / "s").name]
+    assert report, "no candidates recorded"
+    measured = 0
+    for kind, t in report.items():
+        # the shares add up, and only labelled candidates enter the accuracies
+        assert t["pos"] + t["neg"] + t["amb"] == t["n"], kind
+        if not t["n"]:
+            continue  # a kind this scene had no candidates of
+        assert t["labelled"] == pytest.approx((t["pos"] + t["neg"]) / t["n"]), kind
+        if not t["pos"] + t["neg"]:
+            continue  # nothing labelled: the accuracies are nan and say nothing
+        measured += 1
+        # with the rules deciding, the rule and the scorer are the same decider
+        assert t["rule_accuracy"] == pytest.approx(t["scorer_accuracy"]), kind
+        assert t["headroom"] == pytest.approx(1.0 - t["scorer_accuracy"]), kind
+    assert measured, "no kind had a labelled candidate"
