@@ -250,10 +250,11 @@ def trace(
         step("vectorize")
         if vectorize is None:
             first = dict(faint, very_faint_lines=faint.get("very_faint_lines", True) and lineart_method == "none")
-            params = baseline.BaselineParams(fit_tolerance=tol, threshold=thr, reference_threshold=reference,
-                                             decisions=decisions, solid_ratio=SOLID_RATIO if outline else None,
-                                             join_widths=join, denoise=strength, **first,
-                                             **(baseline_options or {}))
+            options = dict(fit_tolerance=tol, threshold=thr, reference_threshold=reference,
+                           decisions=decisions, solid_ratio=SOLID_RATIO if outline else None,
+                           join_widths=join, denoise=strength, **first)
+            options.update(baseline_options or {})  # an experiment's overrides win over the defaults
+            params = baseline.BaselineParams(**options)
             curves = baseline.vectorize(work_ink, params)
         else:
             curves = vectorize(work_ink, fit_tolerance=tol)
