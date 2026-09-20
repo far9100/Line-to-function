@@ -57,6 +57,8 @@ from line2func.synth import load_scene_dir
 
 EVAL_SEED = 2_000_003  # single-curve evaluation patches (disjoint from training streams)
 REAL_SEED = 2_000_011  # the bootstrap's resampling, so a comparison is reproducible
+# repeated timings of one subset that disagree by more than this do not decide G7 (--repeat)
+TIMING_SPREAD = 0.03
 
 
 def _subsets(valset: Path) -> dict[str, Path]:
@@ -68,8 +70,15 @@ def _subsets(valset: Path) -> dict[str, Path]:
     return subs
 
 
-def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pass_gt: bool = False) -> dict[str, dict]:
+def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pass_gt: bool = False,
+                repeat: int = 1) -> dict[str, dict]:
     """Evaluation metrics per subset of a scene set; ``vectorize(ink) -> CurveSet`` (default: baseline).
+
+    With ``repeat`` above 1 every scene is traced that many times and the
+    subset's time is the median of the runs, with ``seconds_spread`` saying how
+    far apart they were. One timing of a 100-scene subset is not a measurement:
+    a gate whose margin is under a percent can be turned over by whatever else
+    the machine is doing, which has happened here.
 
     Besides the structure metrics, every subset gets the decision metrics of
     :func:`line2func.metrics.decision_scores` (pooled over its scenes), which
@@ -85,14 +94,16 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
         clos = [0.0, 0]
         n_pred = n_gt = 0
         len_pred = len_gt = 0.0
-        seconds = megapixels = 0.0
+        megapixels = 0.0
+        runs = np.zeros(max(1, repeat))  # each pass over the subset timed on its own
         pooled: dict[str, float] = {}
         swept: dict[str, float] = {}
         for png, gt in scenes:
             ink = lineart.extract(png, "none")
-            t = time.perf_counter()
-            pred = vectorize(ink, gt) if pass_gt else vectorize(ink)
-            seconds += time.perf_counter() - t
+            for k in range(len(runs)):
+                t = time.perf_counter()
+                pred = vectorize(ink, gt) if pass_gt else vectorize(ink)
+                runs[k] += time.perf_counter() - t
             for key, value in decision_counts(pred, gt).items():
                 pooled[key] = pooled.get(key, 0.0) + value
             megapixels += gt.width * gt.height / 1e6
@@ -120,7 +131,10 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
             "fragments_per_stroke": float(np.mean(frag)) if frag else float("nan"),
             "curve_ratio": n_pred / max(1, n_gt),
             "length_ratio": len_pred / len_gt if len_gt > 0 else float("nan"),
-            "seconds_per_mp": seconds / max(megapixels, 1e-9),
+            "seconds_per_mp": float(np.median(runs)) / max(megapixels, 1e-9),
+            "seconds_spread": (float(np.ptp(runs) / max(np.median(runs), 1e-9)) if len(runs) > 1
+                               else float("nan")),
+            "repeat": len(runs),
             "crossing_checks": cont[1],
             "gap_checks": clos[1],
             **decision_scores(pooled),
@@ -400,12 +414,21 @@ def gate_decisions(ref: dict, cand: dict, gaps: bool = True, corners: bool = Tru
     G1-G7 of the decision-scorer plan; G8 (real drawings) is checked by hand.
     ``gaps`` / ``corners``: whether the candidate changes gap linking / corner
     detection (their conditions are skipped otherwise).
+
+    G7's margin is under a percent, so when the runs behind a timing disagree by
+    more than :data:`TIMING_SPREAD` it is reported as unmeasured (``ok`` is
+    ``None``) rather than as a pass or a fail. A gate that noise can turn over
+    is one that gets ignored.
     """
     checks = []
 
     def check(label: str, value: float, need: float, at_least: bool = True) -> None:
         ok = bool(np.isfinite(value) and (value >= need if at_least else value <= need))
         checks.append({"check": label, "model": value, "need": need, "ok": ok, "at_least": at_least})
+
+    def unmeasured(label: str, value: float, need: float, spread: float) -> None:
+        checks.append({"check": label, "model": value, "need": need, "ok": None, "at_least": False,
+                       "spread": round(spread, 4)})
 
     common = [k for k in cand if k in ref]
     for sub in ("hard", "hard2"):
@@ -426,7 +449,12 @@ def gate_decisions(ref: dict, cand: dict, gaps: bool = True, corners: bool = Tru
                 check(f"G4 {sub}: {label} <= rules", c[key], r[key], at_least=False)
         check(f"G5 {sub}: F_GT@2 >= rules - 0.002", c["f_gt2"], r["f_gt2"] - 0.002)
         check(f"G5 {sub}: curve ratio <= rules + 0.02", c["curve_ratio"], r["curve_ratio"] + 0.02, at_least=False)
-        check(f"G7 {sub}: s/MP <= 1.15 x rules", c["seconds_per_mp"], 1.15 * r["seconds_per_mp"], at_least=False)
+        spread = max(r.get("seconds_spread", float("nan")), c.get("seconds_spread", float("nan")))
+        label = f"G7 {sub}: s/MP <= 1.15 x rules"
+        if np.isfinite(spread) and spread > TIMING_SPREAD:
+            unmeasured(label, c["seconds_per_mp"], 1.15 * r["seconds_per_mp"], spread)
+        else:
+            check(label, c["seconds_per_mp"], 1.15 * r["seconds_per_mp"], at_least=False)
     if "clean" in common:
         r, c = ref["clean"], cand["clean"]
         for key in ("crossing_continuity", "bcubed_f", "crossing_both_ok", "t_bar_ok"):
@@ -455,6 +483,11 @@ def _print_gate_decisions(checks: list[dict]) -> None:
     print("decision scorer gates:")
     for c in checks:
         sign = ">=" if c["at_least"] else "<="
+        if c["ok"] is None:
+            print(f"  [ -- ] {c['check']}: {c['model']:.3f} (need {sign} {c['need']:.3f}) "
+                  f"- not measured: the runs behind it disagree by {c['spread']:.1%}, over the "
+                  f"{TIMING_SPREAD:.0%} allowed; re-run with nothing else on the machine")
+            continue
         print(f"  [{'PASS' if c['ok'] else 'FAIL'}] {c['check']}: {c['model']:.3f} (need {sign} {c['need']:.3f})")
 
 
@@ -497,6 +530,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="with --valset: compare this decision scorer (learned or a weights path) with the rules")
     p.add_argument("--upscale", choices=("1", "auto"), default="1",
                    help="with --decisions: trace thin lines at 2x like pipeline.trace (auto) or not (1)")
+    p.add_argument("--repeat", type=int, default=1, metavar="N",
+                   help="with --decisions: time each scene N times and report the median, refusing to "
+                        f"decide G7 when the runs disagree by more than a factor of {TIMING_SPREAD}")
     p.add_argument("--realset", type=Path,
                    help="folder of real drawings: trace each at a fixed tolerance and judge it against its ink")
     p.add_argument("--tolerance", type=float, default=1.0, help="with --realset: fit tolerance, px")
@@ -545,11 +581,13 @@ def main(argv: list[str] | None = None) -> int:
 
         scorer = load_scorer(args.decisions)
         print("rules:")
-        ref = eval_scenes(args.valset, args.limit, vectorize=lambda ink: traced(ink, None, args.upscale))
+        ref = eval_scenes(args.valset, args.limit, repeat=args.repeat,
+                          vectorize=lambda ink: traced(ink, None, args.upscale))
         _print_scenes(ref)
         _print_decisions(ref)
         print(f"decisions by {args.decisions}:")
-        cand = eval_scenes(args.valset, args.limit, vectorize=lambda ink: traced(ink, scorer, args.upscale))
+        cand = eval_scenes(args.valset, args.limit, repeat=args.repeat,
+                           vectorize=lambda ink: traced(ink, scorer, args.upscale))
         _print_scenes(cand)
         _print_decisions(cand)
         checks = gate_decisions(ref, cand)
