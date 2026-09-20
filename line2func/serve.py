@@ -148,9 +148,22 @@ def make_handler(data_dir: Path):
                 path = data_dir / name
                 if name in DATA_FILES and path.is_file():
                     extra = {}
-                    if "download" in parse_qs(url.query, keep_blank_values=True):
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    if "download" in query:
                         extra["Content-Disposition"] = f'attachment; filename="{name}"'
-                    self.send_body(path.read_bytes(), DATA_FILES[name], headers=extra)
+                    body = path.read_bytes()
+                    curves = data_dir / "curves.json"
+                    if name == "out.svg" and ("color" in query or "width" in query) and curves.is_file():
+                        # the page styles the lines itself; re-export so a download matches what it shows
+                        from line2func.jobs import ApiError, restyled_svg
+
+                        try:
+                            body = restyled_svg(curves.read_bytes(), query.get("color", ["measured"])[0],
+                                                query.get("seed", ["0"])[0], query.get("width", ["measured"])[0])
+                        except ApiError:
+                            self.send_status(HTTPStatus.BAD_REQUEST)
+                            return
+                    self.send_body(body, DATA_FILES[name], headers=extra)
                     return
             self.send_status(HTTPStatus.NOT_FOUND)
 

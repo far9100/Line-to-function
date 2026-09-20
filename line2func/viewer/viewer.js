@@ -8,6 +8,33 @@ export const PALETTE = ["#e6194b", "#0082c8", "#3cb44b", "#f58230", "#911eb4", "
 export const DESMOS_LIMIT = 5000; // = line2func.export.DESMOS_CURVE_LIMIT (tests check it)
 const ROW = 68, CELL = 32;
 
+// ---------- line colors (must match line2func/export.py; see tests/test_viewer_assets.py) ----------
+export const LINE_COLOR_MODES = ["bw", "palette", "random"]; // the page's choices; "measured" is the SVG's own
+export const RANDOM_BUCKETS = 64; // = line2func.export.RANDOM_BUCKETS: hues repeat every 64 strokes
+export const LINE_WIDTH_MODES = ["measured", "uniform"]; // = line2func.export.LINE_WIDTH_MODES
+export const WIDTH_STEP = 0.1; // measured widths are drawn rounded to this, to keep the number of paths small
+const MIN_SCREEN_WIDTH = 0.75; // a thin stroke stays at least this many screen pixels wide, whatever the zoom
+export const BW_COLOR = "#000";
+
+// A hue in 0..359 from seed and bucket; the 32-bit steps mirror line2func.export._hue.
+function hue(seed, bucket) {
+  let x = (seed + Math.imul(bucket, 0x9e3779b1)) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  x = Math.imul(x, 0x7feb352d) >>> 0;
+  x = (x ^ (x >>> 15)) >>> 0;
+  x = Math.imul(x, 0x846ca68b) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  return x % 360;
+}
+
+/** The color for stroke number `stroke` in line color `mode` (= line2func.export.stroke_color). */
+export function strokeColor(mode, stroke, seed = 0) {
+  if (mode === "bw" || mode === "measured") return BW_COLOR;
+  const n = mode === "palette" ? PALETTE.length : RANDOM_BUCKETS;
+  const bucket = ((stroke % n) + n) % n; // stroke numbers are never negative, but keep the index in range
+  return mode === "palette" ? PALETTE[bucket] : `hsl(${hue(seed, bucket)} 70% 45%)`;
+}
+
 // ---------- math (must match line2func/export.py byte for byte; see tests/test_viewer_assets.py) ----------
 export function power(p0, p1, p2, p3) { // [a, b, c, d] of a t^3 + b t^2 + c t + d
   return [-p0 + 3 * p1 - 3 * p2 + p3, 3 * p0 - 6 * p1 + 3 * p2, -3 * p0 + 3 * p1, p0];
@@ -57,6 +84,7 @@ const shapeName = (type) => t("shape." + type, {}, type);
 // (on the quality check's map of missed detail). el.originalOnly shows the original image alone.
 export function createViewer(el) {
   const { stage, canvas, tip, message, list, spacer, detail, stats } = el;
+  const onLineColor = el.onLineColor || (() => {}); // the app persists the choice and retitles the downloads
   const ctx = canvas.getContext("2d");
   let W = 0, H = 0, curves = [], groups = [], grid = new Map();
   let status = "empty", failMsg = "", quality = null; // status: empty, loading, failed, preview (an image alone), ready
@@ -68,6 +96,10 @@ export function createViewer(el) {
   // toolbar can appear after the first fit); insetBottom: stage pixels at the bottom that are covered
   let followFit = false, insetBottom = 0;
   let mode = "original", originalOnly = false; // the chosen display; a mode whose image is missing shows "lines"
+  let lineColor = "palette", colorSeed = 0; // the chosen line color (LINE_COLOR_MODES) and the random mode's seed
+  let lineWidthMode = "measured"; // LINE_WIDTH_MODES: each stroke's own width, or one width for all
+  let widthGroups = null; // paths grouped by (color bucket, rounded stroke width), built when first drawn
+  let docWidth = 2; // the result's own line width (meta.line_width), the one "uniform" uses
   const bg = { images: {}, alpha: { original: 0.35, missed: 0.9 } }; // images: original, quality
   const pointers = new Map();
   let drag = null, pinch = null;
@@ -77,6 +109,7 @@ export function createViewer(el) {
   function reset() {
     W = 0; H = 0; curves = []; groups = []; grid = new Map();
     hover = -1; selected = -1; quality = null; fitted = false; functionCount = null; followFit = false; insetBottom = 0;
+    widthGroups = null;
     pointers.clear(); drag = null; pinch = null;
     canvas.classList.remove("dragging", "over");
     tip.style.display = "none";
@@ -87,6 +120,7 @@ export function createViewer(el) {
 
   function prepare(doc) {
     W = doc.image.width; H = doc.image.height;
+    docWidth = Number(doc.meta?.line_width) || 2; // = the SVG <g> stroke-width, used where a stroke has none
     curves = doc.curves.map((c, i) => {
       const p = c.ctrl.flat();
       const xs = [p[0], p[2], p[4], p[6]], ys = [p[1], p[3], p[5], p[7]];
@@ -100,9 +134,10 @@ export function createViewer(el) {
                width: c.width ?? null, color: c.color ?? null, shape: c.shape ?? null, functions: c.functions ?? null };
     });
     functionCount = curves.some((c) => c.functions) ? curves.reduce((n, c) => n + (c.functions ? c.functions.length : 0), 0) : null;
-    groups = PALETTE.map(() => new Path2D());
+    // one path per random-color bucket; PALETTE.length divides RANDOM_BUCKETS, so bucket % 8 is the palette hue
+    groups = Array.from({ length: RANDOM_BUCKETS }, () => new Path2D());
     for (const c of curves) {
-      const p = c.p, path = groups[((c.stroke % PALETTE.length) + PALETTE.length) % PALETTE.length];
+      const p = c.p, path = groups[((c.stroke % RANDOM_BUCKETS) + RANDOM_BUCKETS) % RANDOM_BUCKETS];
       path.moveTo(p[0], p[1]); path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
       const x0 = Math.floor(c.box[0] / CELL), x1 = Math.floor(c.box[2] / CELL);
       const y0 = Math.floor(c.box[1] / CELL), y1 = Math.floor(c.box[3] / CELL);
@@ -114,6 +149,39 @@ export function createViewer(el) {
       }
     }
     spacer.style.height = curves.length * ROW + "px";
+  }
+
+  // Paths for the measured-width mode, grouped by (color bucket, rounded width) because one stroke() call
+  // draws a single color at a single width. A stroke's pieces all take the stroke's median width, which is
+  // what line2func.export.to_svg writes, so the canvas and a downloaded SVG agree.
+  function widthBuckets() {
+    if (widthGroups) return widthGroups;
+    const fallback = docWidth;
+    const perStroke = new Map(); // stroke -> its pieces' widths
+    for (const c of curves) {
+      if (c.width == null) continue;
+      let w = perStroke.get(c.stroke);
+      if (!w) perStroke.set(c.stroke, (w = []));
+      w.push(c.width);
+    }
+    const median = new Map();
+    for (const [stroke, w] of perStroke) {
+      w.sort((a, b) => a - b);
+      median.set(stroke, w.length % 2 ? w[(w.length - 1) / 2] : 0.5 * (w[w.length / 2 - 1] + w[w.length / 2]));
+    }
+    const map = new Map();
+    for (const c of curves) {
+      const bucket = ((c.stroke % RANDOM_BUCKETS) + RANDOM_BUCKETS) % RANDOM_BUCKETS;
+      const width = Math.max(WIDTH_STEP, Math.round((median.get(c.stroke) ?? fallback) / WIDTH_STEP) * WIDTH_STEP);
+      const key = bucket + "|" + width.toFixed(2);
+      let g = map.get(key);
+      if (!g) map.set(key, (g = { bucket, width, path: new Path2D() }));
+      const p = c.p;
+      g.path.moveTo(p[0], p[1]);
+      g.path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
+    }
+    widthGroups = [...map.values()];
+    return widthGroups;
   }
 
   // what is drawn: the chosen mode when its image is there, else the curves alone
@@ -231,12 +299,24 @@ export function createViewer(el) {
     }
     if (alone) return; // the original image by itself: no curves
     ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = 1.5 / view.s;
+    // the missed-detail map is a diagnostic: one quiet gray at one width, so its red, orange and blue stand out
+    const even = lineWidthMode === "uniform" || shown === "missed";
     if (shown === "missed") {
-      // over the missed-detail map all curves are one quiet gray, so its red, orange and blue stand out
       ctx.strokeStyle = "rgba(70, 70, 70, 0.55)";
       groups.forEach((path) => ctx.stroke(path));
+    } else if (even && lineColor === "bw") {
+      ctx.strokeStyle = BW_COLOR; // one color at one width for every stroke: set them once
+      groups.forEach((path) => ctx.stroke(path));
+    } else if (even) {
+      groups.forEach((path, g) => { ctx.strokeStyle = strokeColor(lineColor, g, colorSeed); ctx.stroke(path); });
     } else {
-      groups.forEach((path, g) => { ctx.strokeStyle = PALETTE[g]; ctx.stroke(path); });
+      // each stroke at its measured width, as the SVG writes it, but never thinner than a visible hairline
+      const floor = MIN_SCREEN_WIDTH / view.s;
+      for (const g of widthBuckets()) {
+        ctx.strokeStyle = strokeColor(lineColor, g.bucket, colorSeed);
+        ctx.lineWidth = Math.max(g.width, floor);
+        ctx.stroke(g.path);
+      }
     }
     if (hover >= 0 && hover !== selected) highlight(hover, css("--hover"), 3.5);
     if (selected >= 0 && curves[selected]) {
@@ -256,7 +336,7 @@ export function createViewer(el) {
 
   // ---------- panels ----------
   function eqHTML(c) { return `x(t) = ${pretty(c.cx)}<br>y(t) = ${pretty(c.cy)}`; }
-  function swatch(c) { return PALETTE[((c.stroke % PALETTE.length) + PALETTE.length) % PALETTE.length]; }
+  function swatch(c) { return strokeColor(lineColor, c.stroke, colorSeed); }
   function showDetail() {
     const c = curves[selected];
     if (!c) {
@@ -393,6 +473,19 @@ export function createViewer(el) {
   list.addEventListener("mouseleave", () => setHover(-1));
   el.fit.addEventListener("click", fit);
   el.viewMode.addEventListener("change", (e) => { mode = e.target.value; updateControls(); });
+  if (el.lineColor) {
+    el.lineColor.addEventListener("change", (e) => { setLineColor(e.target.value); onLineColor(lineColorState()); });
+  }
+  if (el.lineWidth) {
+    el.lineWidth.addEventListener("change", (e) => { setLineWidth(e.target.value); onLineColor(lineColorState()); });
+  }
+  if (el.colorReroll) {
+    el.colorReroll.addEventListener("click", () => {
+      // a fresh seed only means anything for the random mode; switch to it so the click is never a no-op
+      setLineColor("random", (Math.random() * 0x100000000) >>> 0);
+      onLineColor(lineColorState());
+    });
+  }
   el.originalOnly.addEventListener("change", (e) => {
     originalOnly = e.target.checked;
     if (imageOnly()) { setHover(-1); showTip(-1); }
@@ -459,5 +552,28 @@ export function createViewer(el) {
     return { status, curves: curves.length, gridCells: grid.size, selected, hover, width: W, height: H,
              backgrounds: Object.keys(bg.images), mode: shownMode(), imageOnly: imageOnly(), view: { ...view } };
   }
-  return { load, preview, setLoading, fail, unload, rerender, setDesmosWarning, fit, handleKey, debug };
+  // The chosen line color. `seed` only matters for "random"; it is kept so a re-roll can be reproduced.
+  function lineColorState() { return { mode: lineColor, seed: colorSeed, width: lineWidthMode }; }
+
+  /** Choose the line color. Redraws the canvas and the list's swatches. */
+  function setLineColor(next, seed) {
+    if (!LINE_COLOR_MODES.includes(next)) return;
+    lineColor = next;
+    if (seed !== undefined) colorSeed = seed >>> 0;
+    if (el.lineColor) el.lineColor.value = lineColor;
+    if (el.colorReroll) el.colorReroll.disabled = lineColor !== "random";
+    dirty = true;
+    renderList(); showDetail();
+  }
+
+  /** Choose how thick the lines are drawn (LINE_WIDTH_MODES). */
+  function setLineWidth(next) {
+    if (!LINE_WIDTH_MODES.includes(next)) return;
+    lineWidthMode = next;
+    if (el.lineWidth) el.lineWidth.value = lineWidthMode;
+    dirty = true;
+  }
+
+  return { load, preview, setLoading, fail, unload, rerender, setDesmosWarning, fit, handleKey, debug,
+           setLineColor, lineColorState, setLineWidth };
 }

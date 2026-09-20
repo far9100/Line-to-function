@@ -15,7 +15,9 @@ import pytest
 
 from line2func import app as app_mod
 from line2func import pipeline, serve
-from line2func.export import DESMOS_CURVE_LIMIT, desmos_line
+from line2func.curves import Curve, CurveSet
+from line2func.export import (DESMOS_CURVE_LIMIT, LINE_COLOR_MODES, LINE_WIDTH_MODES, PALETTE,
+                              RANDOM_BUCKETS, desmos_line, stroke_color, to_svg)
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -108,3 +110,45 @@ def test_viewer_equations_match_the_exporter():
                          encoding="utf-8", timeout=60)
     assert out.returncode == 0, out.stderr
     assert out.stdout.splitlines() == [desmos_line(c, height) for c in ctrls]
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
+def test_viewer_line_colors_match_the_exporter():
+    """The page and the SVG must pick the same color, or a downloaded SVG would not match the screen."""
+    cases = [(mode, seed, stroke)
+             for mode in ("bw", "palette", "random")
+             for seed in (0, 1, 12345, 0xFFFFFFFF)
+             for stroke in (0, 1, 7, 8, 63, 64, 65, 999, 123456)]
+    script = (f"import {{ strokeColor }} from {json.dumps((serve.VIEWER_DIR / 'viewer.js').as_uri())};\n"
+              f"for (const [m, seed, s] of {json.dumps(cases)}) console.log(strokeColor(m, s, seed));\n")
+    out = subprocess.run([NODE, "--input-type=module", "-"], input=script, capture_output=True, text=True,
+                         encoding="utf-8", timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == [stroke_color(mode, stroke, seed) for mode, seed, stroke in cases]
+
+
+def test_the_page_and_the_exporter_agree_on_the_color_modes():
+    source = (serve.VIEWER_DIR / "viewer.js").read_text(encoding="utf-8")
+    modes = json.loads(re.search(r"LINE_COLOR_MODES = (\[[^\]]*\])", source).group(1).replace("'", '"'))
+    assert modes == [m for m in LINE_COLOR_MODES if m != "measured"]  # the page never draws the ink colors
+    buckets = int(re.search(r"RANDOM_BUCKETS = (\d+)", source).group(1))
+    assert buckets == RANDOM_BUCKETS
+    assert buckets % len(PALETTE) == 0  # so a bucket's index picks the same palette hue as its stroke number
+    widths = json.loads(re.search(r"LINE_WIDTH_MODES = (\[[^\]]*\])", source).group(1).replace("'", '"'))
+    assert widths == list(LINE_WIDTH_MODES)
+
+
+def test_uniform_width_gives_every_stroke_the_same_thickness():
+    """The point of the uniform mode: one thickness everywhere, and it is the result's own line width."""
+    rng = np.random.default_rng(3)
+    curves = [Curve(ctrl=rng.uniform(0, 200, (4, 2)), stroke=i // 2, width=0.2 + 0.1 * i) for i in range(12)]
+    cs = CurveSet(curves=curves, width=200, height=200, meta={"line_width": 1.75})
+
+    uniform = to_svg(cs, width_mode="uniform")
+    assert set(re.findall(r'stroke-width="([^"]+)"', uniform)) == {"1.75"}
+
+    measured = to_svg(cs, width_mode="measured")
+    assert len(set(re.findall(r'stroke-width="([^"]+)"', measured))) > 1
+
+    with pytest.raises(ValueError):
+        to_svg(cs, width_mode="thick")

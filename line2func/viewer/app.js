@@ -23,9 +23,18 @@ const viewer = createViewer({
   stage: $("#stage"), canvas: $("#canvas"), tip: $("#tip"), message: $("#message"), list: $("#list"),
   spacer: $("#spacer"), detail: $("#detail"), stats: $("#stats"), fit: $("#fit"),
   originalOnly: $("#original-only"), viewMode: $("#view-mode"), bgAlpha: $("#bg-alpha"),
+  lineColor: $("#line-color"), colorReroll: $("#color-reroll"), lineWidth: $("#line-width"),
+  onLineColor: (choice) => {
+    S.lineColor = choice.mode; S.colorSeed = choice.seed; S.lineWidth = choice.width;
+    saveOptions();
+  },
 });
 
 const FORMS = ["function", "parametric"]; // how the lines are written (line2func.export)
+const LINE_COLORS = ["bw", "palette", "random"]; // = line2func.viewer.viewer LINE_COLOR_MODES
+const LINE_COLOR = "palette"; // the colors the viewer has always drawn; "measured" is the SVG's own
+const LINE_WIDTHS = ["measured", "uniform"]; // = line2func.export.LINE_WIDTH_MODES
+const LINE_WIDTH = "measured"; // what the SVG has always written: each stroke as thick as its ink
 const DENOISE = 50; // = line2func.pipeline.DENOISE, the noise filters' default strength (tests check it)
 const FAINT = 50; // = line2func.pipeline.FAINT_SENSITIVITY, the faint-line sensitivity's default (tests check it)
 // the stages in the order they run (the online engine's start, pipeline.trace, app.run_job) -> the step shown,
@@ -41,6 +50,8 @@ const S = {
   mode: "boot", info: null, gone: false, engine: null,
   view: "empty", // empty (the drop zone), preview (an image to convert) or result
   image: null, form: "function", denoise: DENOISE, denoiseOn: true, faint: FAINT, jobs: new Map(),
+  lineColor: LINE_COLOR, colorSeed: 0, // the chosen line color; colorSeed only matters for "random"
+  lineWidth: LINE_WIDTH, // the chosen line thickness (LINE_WIDTHS)
   trace: null, result: null, ticket: 0, copyArmed: false,
 };
 const converts = () => S.mode === "app" || S.mode === "web"; // the page can open and convert images
@@ -211,6 +222,13 @@ function useOptions(saved) {
   if (typeof saved.faint_sensitivity === "number" && saved.faint_sensitivity >= 0 && saved.faint_sensitivity <= 100) {
     S.faint = saved.faint_sensitivity;
   }
+  if (LINE_COLORS.includes(saved.line_color)) S.lineColor = saved.line_color;
+  if (LINE_WIDTHS.includes(saved.line_width)) S.lineWidth = saved.line_width;
+  if (Number.isInteger(saved.color_seed) && saved.color_seed >= 0 && saved.color_seed <= 0xffffffff) {
+    S.colorSeed = saved.color_seed;
+  }
+  viewer.setLineColor(S.lineColor, S.colorSeed);
+  viewer.setLineWidth(S.lineWidth);
 }
 
 function testHooks() {
@@ -256,7 +274,8 @@ function setupApp() {
 }
 
 function saveOptions() {
-  const options = { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn, faint_sensitivity: S.faint };
+  const options = { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn, faint_sensitivity: S.faint,
+                    line_color: S.lineColor, color_seed: S.colorSeed, line_width: S.lineWidth };
   if (S.mode === "app") api("POST", "api/settings", { options }).catch(() => {});
   else try { localStorage.setItem("line2func.options", JSON.stringify(options)); } catch { /* storage may be blocked */ }
 }
@@ -571,6 +590,16 @@ const DOWNLOAD_NAMES = { "curves.json": "{stem}.json", "out.svg": "{stem}.svg", 
 function setupResult() {
   for (const button of document.querySelectorAll("[data-file]")) button.addEventListener("click", () => download(button.dataset.file));
   $("#copy-all").addEventListener("click", copyAll);
+  viewer.setLineColor(S.lineColor, S.colorSeed); // the selects start on whatever the viewer is drawing
+  viewer.setLineWidth(S.lineWidth);
+}
+
+// The SVG the local server sends is re-colored to match the page. The online engine's files are blob: URLs
+// made when the trace finished, so there is nothing to add to them (see download()).
+function colored(url, file) {
+  if (file !== "out.svg" || S.mode === "web") return url;
+  return `${url}?color=${encodeURIComponent(S.lineColor)}&seed=${S.colorSeed >>> 0}`
+       + `&width=${encodeURIComponent(S.lineWidth)}`;
 }
 
 // A result's files by name ("zip": all of them): from the local server, or blob: URLs of the online engine.
@@ -621,7 +650,7 @@ async function download(file) {
   const result = S.result;
   if (!result) return;
   const name = DOWNLOAD_NAMES[file].replace("{stem}", stemOf(result.name));
-  const url = result.url(file);
+  const url = colored(result.url(file), file);
   if (S.mode === "app" && window.showSaveFilePicker) {
     let handle = null;
     try {
@@ -644,7 +673,8 @@ async function download(file) {
     }
   }
   const a = document.createElement("a");
-  a.href = S.mode === "web" ? url : url + "?download"; // a blob: URL takes no query
+  // a blob: URL takes no query; a server URL may already carry the line color
+  a.href = S.mode === "web" ? url : url + (url.includes("?") ? "&" : "?") + "download";
   a.download = name;
   document.body.append(a);
   a.click();

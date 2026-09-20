@@ -28,6 +28,48 @@ from line2func.geometry import flip_y, to_power
 from line2func.render import render_overlay, save_png
 
 DESMOS_CURVE_LIMIT = 5000  # the most curves line2func makes for Desmos by default (demo); more gets a warning
+
+# ---------- line colors (must match line2func/viewer/viewer.js; tests/test_viewer_assets.py checks it) ----------
+
+LINE_COLOR_MODES = ("measured", "bw", "palette", "random")
+LINE_COLOR_DEFAULT = "measured"  # each stroke in the ink color measured from the drawing
+# the viewer's eight hues, cycled by stroke number
+PALETTE = ("#e6194b", "#0082c8", "#3cb44b", "#f58230", "#911eb4", "#00a0a0", "#f032e6", "#808000")
+RANDOM_BUCKETS = 64  # random hues repeat every 64 strokes: a multiple of len(PALETTE), and few enough to draw fast
+BW_COLOR = "#000"
+
+# how thick the lines are drawn: each stroke's own measured width, or one width for all of them
+LINE_WIDTH_MODES = ("measured", "uniform")
+LINE_WIDTH_DEFAULT = "measured"
+
+
+def stroke_color(mode: str, stroke: int, seed: int = 0) -> str:
+    """The color for stroke number ``stroke`` in line color ``mode``.
+
+    ``"measured"`` has no color of its own (the caller keeps the ink color);
+    this returns :data:`BW_COLOR` for it. ``"random"`` hashes ``seed`` and the
+    stroke's bucket into a hue, so the same seed always gives the same colors.
+    """
+    if mode not in LINE_COLOR_MODES:
+        raise ValueError(f"unknown line color mode {mode!r}; choose from {', '.join(LINE_COLOR_MODES)}")
+    if mode in ("measured", "bw"):
+        return BW_COLOR
+    if mode == "palette":
+        return PALETTE[stroke % len(PALETTE)]
+    return f"hsl({_hue(seed, stroke % RANDOM_BUCKETS)} 70% 45%)"
+
+
+def _hue(seed: int, bucket: int) -> int:
+    """A hue in 0..359 from ``seed`` and ``bucket`` (32-bit integer hash, mirrored in viewer.js)."""
+    x = (seed + bucket * 0x9E3779B1) & 0xFFFFFFFF
+    x ^= x >> 16
+    x = (x * 0x7FEB352D) & 0xFFFFFFFF
+    x ^= x >> 15
+    x = (x * 0x846CA68B) & 0xFFFFFFFF
+    x ^= x >> 16
+    return x % 360
+
+
 DECIMALS = 2
 FORMS = ("parametric", "named", "function")  # how desmos.txt and equations.tex write each curve
 
@@ -139,15 +181,33 @@ def _svg_num(v: float) -> str:
     return "0" if text in ("-0", "") else text
 
 
-def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000", measured: bool = True) -> str:
+def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000", measured: bool = True,
+           color_mode: str = LINE_COLOR_DEFAULT, seed: int = 0, width_mode: str = LINE_WIDTH_DEFAULT) -> str:
     """SVG in image coordinates; one ``<path>`` per stroke, joined pieces share a ``C`` run.
 
     With ``measured=True`` each stroke is drawn with its measured width and
     color (``Curve.width`` / ``Curve.color``, median over the stroke) where known;
     otherwise every stroke uses ``line_width`` and ``color``.
+
+    ``color_mode`` (:data:`LINE_COLOR_MODES`) overrides the color only: ``"measured"``
+    keeps the ink colors above, while ``"bw"``, ``"palette"`` and ``"random"`` color
+    every stroke with :func:`stroke_color` and leave the measured widths alone. The
+    page picks the same colors, so a downloaded SVG matches what it shows.
+
+    ``width_mode`` (:data:`LINE_WIDTH_MODES`) does the same for the thickness:
+    ``"measured"`` keeps each stroke's own width, ``"uniform"`` gives every stroke
+    the one ``line_width``, so the drawing has a single even line weight.
     """
     if line_width is None:
         line_width = float(curves.meta.get("line_width") or 2.0)
+    if color_mode not in LINE_COLOR_MODES:
+        raise ValueError(f"unknown line color mode {color_mode!r}; choose from {', '.join(LINE_COLOR_MODES)}")
+    if width_mode not in LINE_WIDTH_MODES:
+        raise ValueError(f"unknown line width mode {width_mode!r}; choose from {', '.join(LINE_WIDTH_MODES)}")
+    even = width_mode == "uniform"
+    chosen = color_mode != "measured"
+    if chosen:
+        color = BW_COLOR if color_mode == "bw" else color
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{curves.width}" height="{curves.height}" '
@@ -168,17 +228,20 @@ def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000
             prev_end = p[3]
         tags = sorted({t for c in pieces for t in c.tags})
         attrs = f' class="{" ".join(tags)}"' if tags else ""
+        picked = stroke_color(color_mode, stroke, seed) if chosen else None
         if measured:
             widths = [c.width for c in pieces if c.width is not None]
             colors = [c.color for c in pieces if c.color is not None]
-            if widths:
+            if widths and not even:  # "uniform": the <g> above already carries the one width
                 attrs += f' stroke-width="{_svg_num(float(np.median(widths)))}"'
-            if colors:
+            if colors and not chosen:  # a chosen color mode replaces the ink color, not the width
                 attrs += f" stroke={quoteattr(max(set(colors), key=colors.count))}"
+        if picked is not None:
+            attrs += f" stroke={quoteattr(picked)}"
         if "outline" in tags or "fill_outline" in tags:
             # a closed outline of a thick or filled shape: fill it with its ink color
-            fill_colors = [c.color for c in pieces if c.color] if measured else []
-            fill = max(set(fill_colors), key=fill_colors.count) if fill_colors else color
+            fill_colors = [c.color for c in pieces if c.color] if measured and not chosen else []
+            fill = max(set(fill_colors), key=fill_colors.count) if fill_colors else (picked or color)
             attrs += f" fill={quoteattr(fill)} fill-rule=\"evenodd\""
             d.append("Z")
         parts.append(f'<path id="stroke-{stroke}"{attrs} d="{"".join(d)}"/>')

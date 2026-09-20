@@ -228,6 +228,8 @@ python -m line2func.serve out/ --no-browser    # just print the URL
 | Copy an equation | select a curve, then **Copy for Desmos** (parametric), **Copy named** (for lines/arcs) or **Copy functions** (results made with `--form function`) |
 | Display | **Lines only**, **Lines + original**, or **Lines + missed detail** (after a quality check: the curves in gray, missed lines red, missed faint ink orange, curves without ink blue), with the background's opacity slider |
 | The original alone | **Original**: shows only the original image |
+| Line color | **Black & white**, **Colors** (eight hues by stroke, the default) or **Random colors**, with **Re-roll** for a fresh set of random hues. A downloaded SVG uses the same colors and thickness; the other files and the ZIP are unchanged. Over **Lines + missed detail** the curves stay gray so its marks still stand out |
+| Line width | **Measured width** (the default: every stroke as thick as the ink it was traced from) or **Uniform width** (one thickness, the result's own `line_width`, for every line). The canvas draws the measured widths too, so it shows what the SVG will contain; a thin stroke is never drawn narrower than 0.75 screen pixels, so it stays visible when zoomed out |
 | Download | **SVG**, **JSON**, **Desmos**, **LaTeX** buttons (and **ZIP** with `python -m line2func`) |
 | All equations at once | **Copy all for Desmos**, then paste into the first expression box |
 | Language | **中文 / EN** switch in the top right |

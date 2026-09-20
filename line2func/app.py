@@ -37,7 +37,8 @@ Routes (errors are ``{"error": {"code", "detail", "field"}}``; the page translat
     GET  /api/jobs/<id>                   job snapshot (state, stage, summary, files)
     POST /api/jobs/<id>/cancel            cancel (a running job stops at its next stage)
     GET  /api/jobs/<id>/data/<file>       curves.json, out.svg, desmos.txt, equations.tex, lineart.png,
-                                          quality.json, quality.png  (?download: as an attachment)
+                                          quality.json, quality.png  (?download: as an attachment;
+                                          out.svg also takes ?color=&seed=&width=, the line style the page shows)
     GET  /api/jobs/<id>/zip               all of them
     POST /api/settings                    {lang, options}, kept in $LINE2FUNC_HOME/app-settings.json
     POST /api/shutdown                    end the program
@@ -86,7 +87,8 @@ LANGS = ("en", "zh-TW")
 IMMUTABLE = "private, max-age=31536000, immutable"  # id-addressed files never change
 MODEL_METHODS = ("informative", "informative-coarse")
 OPTION_KEYS = {"method", "scale", "tolerance", "threshold", "refine", "named", "shape_tolerance", "upscale",
-               "faint", "quality", "form", "denoise", "denoise_on", "faint_sensitivity"}
+               "faint", "quality", "form", "denoise", "denoise_on", "faint_sensitivity",
+               "line_color", "color_seed", "line_width"}
 DOWNLOAD_NAMES = {
     "curves.json": "{stem}.json",
     "out.svg": "{stem}.svg",
@@ -588,10 +590,16 @@ class Handler(BaseHandler):
             name = m.group(3)
             if name not in job.files:
                 raise ApiError(HTTPStatus.NOT_FOUND, "not_found")
+            body = job.files[name]
             headers = {"Cache-Control": IMMUTABLE}
+            if name == "out.svg" and ("color" in query or "width" in query):
+                # the page styles the lines itself; re-export so a download matches what it shows
+                body = jobs.restyled_svg(job.files["curves.json"], query.get("color", ["measured"])[0],
+                                         query.get("seed", ["0"])[0], query.get("width", ["measured"])[0])
+                headers["Cache-Control"] = "no-store"  # the style depends on the query, not only on the job id
             if "download" in query:
                 headers["Content-Disposition"] = _disposition(DOWNLOAD_NAMES[name].format(stem=stem))
-            self.send_body(job.files[name], DATA_FILES[name], headers=headers)
+            self.send_body(body, DATA_FILES[name], headers=headers)
             return
         raise ApiError(HTTPStatus.NOT_FOUND, "not_found")
 
