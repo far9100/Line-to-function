@@ -145,12 +145,25 @@ def write_shard(path: Path, rows: dict, scenes: list, names: dict, features_vers
 
 
 def load(folder: str | Path) -> tuple[dict[str, dict[str, np.ndarray]], list[dict]]:
-    """All shards of a data folder: ``({kind: {x, y, group, ids, rule}}, scene list)``."""
+    """All shards of a data folder: ``({kind: {x, y, group, ids, rule}}, scene list)``.
+
+    Every shard must hold the feature version this line2func computes. Shards of
+    two generations in one folder would otherwise be concatenated into a table
+    whose columns mean different things in different rows, and only a shape
+    mismatch would give it away - which is luck, not a check.
+    """
+    from line2func.decision_features import FEATURES_VERSION
+
     rows: dict[str, dict[str, list]] = {}
     scenes = []
     for path in sorted(Path(folder).glob("shard_*.npz")):
         with np.load(path, allow_pickle=False) as data:
-            scenes += json.loads(str(data["meta"]))["scenes"]
+            meta = json.loads(str(data["meta"]))
+            version = meta.get("features_version")
+            if version != FEATURES_VERSION:
+                raise ValueError(f"{path} holds features version {version}, this line2func computes "
+                                 f"{FEATURES_VERSION}; regenerate the folder (python -m line2func.decisions_data)")
+            scenes += meta["scenes"]
             for name in data.files:
                 if "__" not in name or name.endswith("__names"):
                     continue

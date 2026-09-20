@@ -37,7 +37,7 @@ from scipy.spatial import cKDTree
 
 from line2func import baseline, lineart
 from line2func.curves import CurveSet
-from line2func.decision_features import CROSSING, Recorder, _window, corner_peaks, crossing_features
+from line2func.decision_features import CROSSING, Recorder, _r_in, _window, corner_peaks, crossing_features
 from line2func.decisions import RULE_LIMITS, WIDE_LIMITS, Limits, Scorer
 from line2func.metrics import _arc, _stroke_polylines, _stroke_widths, gt_corners
 
@@ -181,10 +181,6 @@ def _through(a: ArmLabel, b: ArmLabel, w: float, slack: float) -> bool:
         return False
     chord = float(np.linalg.norm(b.near_pt - a.near_pt))
     return abs(ds) <= 1.3 * chord + 2.0 * w + slack
-
-
-def _r_in(r: float, spread: float) -> float:
-    return (r + 1.0) + 2.0 * spread + 1.0
 
 
 # ---------------------------------------------------------------------------

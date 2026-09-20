@@ -255,3 +255,41 @@ def test_a_measure_missing_from_an_older_report_is_skipped_not_fatal():
         del row["length_vs_skeleton"]
     delta = compare_real(before, after)["delta"]
     assert "curves" in delta and "length_vs_skeleton" not in delta
+
+
+# ---------------------------------------------------------------------------
+# The three paths that trace and then judge must judge alike
+# ---------------------------------------------------------------------------
+
+
+def test_every_path_judges_at_the_same_threshold(tmp_path, monkeypatch):
+    """`demo --quality`, the web app's jobs.run_trace and eval --realset each trace and then call
+    quality.assess. They pass the threshold differently - demo and jobs hand theirs straight
+    through, eval resolves it first - and all three have to land on Otsu's when none is given, or
+    the same drawing scores differently depending on which one measured it.
+
+    Pinned instead of extracting a shared helper: what the three share is two calls inside
+    genuinely different surroundings, and a helper taking the union of their parameters would not
+    stop a fourth from diverging.
+    """
+    from line2func import jobs, lineart, quality
+
+    seen = []
+    real_assess = quality.assess
+
+    def spy(curves, ink, threshold=None, **kw):
+        seen.append(quality.tracer_threshold(ink, threshold))
+        return real_assess(curves, ink, threshold, **kw)
+
+    monkeypatch.setattr(quality, "assess", spy)
+    folder = _folder(tmp_path, n=1)
+    eval_real(folder, tolerance=2.0)
+
+    rgb = np.repeat(np.asarray(lineart.load_rgb(folder / "d0.png"))[:, :, 0, None], 3, axis=2)
+    p = {"method": "none", "scale": 1.0,
+         **jobs.trace_options({"curves": 500, "quality": True}, rgb.shape[1::-1], 1.0, 4_000_000)}
+    jobs.run_trace(rgb, "d0.png", p, lambda stage: None, started=0.0)
+
+    assert len(seen) == 2, seen
+    assert seen[0] == pytest.approx(seen[1]), f"eval judged at {seen[0]}, the app at {seen[1]}"
+    assert seen[0] == pytest.approx(quality.auto_threshold(lineart.extract(folder / "d0.png", "none")))

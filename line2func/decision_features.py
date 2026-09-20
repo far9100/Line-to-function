@@ -161,8 +161,15 @@ def _directions(pts: np.ndarray, origin: np.ndarray, reaches, d: np.ndarray | No
     return out
 
 
-def _r_in(ctx: DecisionContext, spread: float) -> float:
-    return (ctx.radius + 1.0) + 2.0 * spread + 1.0
+def _r_in(radius: float, spread: float) -> float:
+    """Where an arm window starts: past the zone where thinning distorts the skeleton.
+
+    :mod:`line2func.labels` uses this too, so that the ground-truth labels are
+    read off exactly the stretch of arm the features are measured on. It takes a
+    radius rather than a context so both can call it; if the two ever drifted
+    apart, the labels would shift with nothing failing.
+    """
+    return (radius + 1.0) + 2.0 * spread + 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +180,7 @@ def _r_in(ctx: DecisionContext, spread: float) -> float:
 def junction_features(c: JunctionCand, ctx: DecisionContext) -> tuple[np.ndarray, np.ndarray]:
     """``(pair rows (P, F), end rows (k, F_end))`` for one node, in the order of ``c.pairs`` / ``c.keys``."""
     w = ctx.line_w
-    r_in = _r_in(ctx, c.spread)
+    r_in = _r_in(ctx.radius, c.spread)
     arms = [_Arm(a, c.center, r_in, ctx, c.reach) for a in c.arms]
     k = len(arms)
     bends = np.asarray(c.bends, dtype=np.float64)
@@ -337,7 +344,7 @@ def crossing_features(cands: list[CrossingCand], ctx: DecisionContext) -> np.nda
     rows = []
     for cand in cands:
         cu, cv = cand.mid[0], cand.mid[-1]
-        r_in = _r_in(ctx, 0.0)
+        r_in = _r_in(ctx.radius, 0.0)
         au = [_Arm(pts, cu, r_in, ctx, reach) for _, pts in cand.arms_u]
         av = [_Arm(pts, cv, r_in, ctx, reach) for _, pts in cand.arms_v]
         if len(au) != 2 or len(av) != 2:
