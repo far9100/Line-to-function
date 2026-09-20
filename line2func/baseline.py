@@ -85,9 +85,10 @@ class BaselineParams:
     solid_length: float = 2.0
     smooth_sigma: float = 1.0  # smoothing of the pixel chain before fitting, px
     # measure the distorted zone around each junction on the junction itself (the disk inscribed in the
-    # ink there) instead of using half the drawing's typical line width everywhere. It sounds right, and
-    # on real drawings at a fixed tolerance it is not: about 0.6% fewer curves, not in the same direction
-    # on every drawing, and d_M reliably a little worse (docs/progress.md). Off until that changes
+    # ink there) rather than using half the drawing's typical line width everywhere. Over 66 real
+    # drawings it trades about 0.1% of fidelity (d_M, PSNR, SSIM and lines kept all a little worse) for
+    # about 0.6% fewer curves - worth turning on if a drawing is pressing against the 5,000-curve
+    # Desmos budget, not worth it otherwise, which is why it is off (the numbers are in docs/progress.md)
     local_trim: bool = False
     # faint strokes below the threshold (local-contrast ridge test, see faint_line_mask)
     faint_lines: bool = True
