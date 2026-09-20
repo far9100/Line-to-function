@@ -37,7 +37,10 @@ from pathlib import Path
 import numpy as np
 
 SEED_BASE = 3_000_000
-PRESET_ORDER = ("hard", "hard2", "thin", "clean")  # fixed: a preset's seed is SEED_BASE + its position
+# Fixed: a preset's seed is SEED_BASE + its position, so new presets are only ever appended - inserting
+# one would re-seed every preset after it and silently change data that has already been generated.
+PRESET_ORDER = ("hard", "hard2", "thin", "clean",
+                "abl_jpeg", "abl_blur", "abl_noise", "abl_ink", "abl_shading", "abl_width")
 
 
 class _RulesWide:

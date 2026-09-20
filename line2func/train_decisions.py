@@ -135,6 +135,25 @@ def train_kind(x, y, group, rule, device: str, epochs: int = 30, seed: int = 0, 
     return {"arrays": out, "report": report}
 
 
+def keep_presets(rows: dict, scenes: list, presets: list[str]) -> tuple[dict, list]:
+    """The rows and scenes of ``presets`` only, by the scene id in each row's group.
+
+    ``decisions_data`` packs the scene into the group's high bits and records which preset each scene
+    came from, so one data folder holding several presets can be split afterwards. That is what makes
+    a leave-one-out ablation cost one generation run rather than one per arm.
+    """
+    want = set(presets)
+    unknown = want - {s["preset"] for s in scenes}
+    if unknown:
+        raise ValueError(f"no scenes of preset(s) {sorted(unknown)} in this data folder")
+    uids = np.array(sorted({s["uid"] for s in scenes if s["preset"] in want}), dtype=np.int64)
+    kept = {}
+    for kind, cols in rows.items():
+        keep = np.isin(cols["group"] >> 20, uids)
+        kept[kind] = {k: v[keep] for k, v in cols.items()}
+    return kept, [s for s in scenes if s["preset"] in want]
+
+
 def export(path: Path, kinds: dict, names: dict, features_version: int, meta: dict) -> None:
     arrays = {"format": np.array(FORMAT), "version": np.array(VERSION), "features_version": np.array(features_version),
               "kinds": np.array(sorted(kinds)), "train_meta": np.array(json.dumps(meta))}
@@ -156,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--device", default=None)
     p.add_argument("--kinds", default=",".join(KINDS))
     p.add_argument("--epochs", type=int, default=30)
+    p.add_argument("--presets", default=None, metavar="A,B",
+                   help="train on the scenes of these presets only, so one data folder holding several "
+                        "can be ablated without generating each one separately")
     args = p.parse_args(argv)
 
     import torch
@@ -164,12 +186,16 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.perf_counter()
     rows, scenes = load(args.data)
     print(f"loaded {len(scenes)} tracings from {args.data} in {time.perf_counter() - t0:.0f} s")
+    if args.presets:
+        rows, scenes = keep_presets(rows, scenes, args.presets.split(","))
+        print(f"  {len(scenes)} tracings left after keeping presets {args.presets}")
     results = {}
     for kind in args.kinds.split(","):
         r = rows[kind]
         print(f"{kind}: {len(r['y'])} candidates, {int((r['y'] >= 0).sum())} labelled", flush=True)
         results[kind] = train_kind(r["x"], r["y"], r["group"], r["rule"], device, args.epochs)
-    meta = {"data": str(args.data), "tracings": len(scenes), "reports": {k: v["report"] for k, v in results.items()},
+    meta = {"data": str(args.data), "presets": args.presets, "tracings": len(scenes),
+            "reports": {k: v["report"] for k, v in results.items()},
             "seconds": round(time.perf_counter() - t0, 1)}
     export(args.out / "decisions.npz", results, NAMES, FEATURES_VERSION, meta)
     (args.out / "report.json").write_text(json.dumps(meta, indent=1), encoding="utf-8", newline="\n")

@@ -109,6 +109,21 @@ PRESETS["hard2"] = replace(
     pressure=0.4,
     thin_lines=0.25,
 )
+# Leave-one-out ablations of hard2, for asking which way of roughening the synthetic pages is what
+# makes a scorer trained on them work on real drawings (B3, docs/progress.md). Each removes exactly
+# one kind of degradation and changes nothing else, so training on it and measuring the result on real
+# drawings says what that one kind was worth. They are only training material: no val set uses them.
+ABLATIONS = {
+    "abl_jpeg": dict(jpeg=0.0),  # lossy compression, which nearly every anime line art has been through
+    "abl_blur": dict(blur=(0.0, 0.0)),  # soft edges from scanning and resizing
+    "abl_noise": dict(noise=(0.0, 0.0), specks_per_mp=(0.0, 0.0)),  # grain and dirt
+    "abl_ink": dict(ink=(1.0, 1.0), pressure=0.0),  # lines that vary in darkness
+    "abl_shading": dict(paper_shading=0.0),  # a page lit unevenly
+    "abl_width": dict(taper=0.0, thin_lines=0.0),  # lines that vary in width along and between strokes
+}
+for _name, _without in ABLATIONS.items():
+    PRESETS[_name] = replace(PRESETS["hard2"], **_without)
+
 # thin, pressure-varying pen lines, like the first real test drawing
 PRESETS["thin"] = Degradation(
     width=(0.7, 1.6),
