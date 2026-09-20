@@ -170,6 +170,7 @@ def trace(
     decisions: str | None = "learned",
     denoise: float = DENOISE,
     faint_sensitivity: float = FAINT_SENSITIVITY,
+    baseline_options: dict | None = None,
 ) -> tuple[CurveSet, np.ndarray]:
     """Trace an RGB image; returns ``(curves in original pixels, ink map at original size)``.
 
@@ -193,6 +194,10 @@ def trace(
     ``faint_sensitivity`` (0..100) is how light a line may be and still be
     traced (:func:`faint_params`): :data:`FAINT_SENSITIVITY` (50) is as tuned,
     higher keeps lighter strands, 0 traces only ink above the threshold.
+    ``baseline_options`` overrides :class:`line2func.baseline.BaselineParams`
+    fields in the first pass, for measuring one tracer setting against another
+    (``python -m line2func.eval --realset ... --set name=value``); the defaults
+    are what ships, so leave it alone outside an experiment.
     """
     if curve_count is not None and int(curve_count) < 1:
         raise ValueError("curve_count must be at least 1")
@@ -247,7 +252,8 @@ def trace(
             first = dict(faint, very_faint_lines=faint.get("very_faint_lines", True) and lineart_method == "none")
             params = baseline.BaselineParams(fit_tolerance=tol, threshold=thr, reference_threshold=reference,
                                              decisions=decisions, solid_ratio=SOLID_RATIO if outline else None,
-                                             join_widths=join, denoise=strength, **first)
+                                             join_widths=join, denoise=strength, **first,
+                                             **(baseline_options or {}))
             curves = baseline.vectorize(work_ink, params)
         else:
             curves = vectorize(work_ink, fit_tolerance=tol)

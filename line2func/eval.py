@@ -8,6 +8,9 @@
                                    # whole drawings: both engines, the enabling conditions,
                                    # and a blind-test kit for real drawings in data/full_v1
     python -m line2func.eval --valset data/val_v1 --decisions learned   # a decision scorer vs the rules
+    python -m line2func.eval --realset data/real_v1 --json runs/real_a.json      # real drawings, no ground truth
+    python -m line2func.eval --realset data/real_v1 --set local_trim=false --json runs/real_b.json
+    python -m line2func.eval --compare runs/real_b.json runs/real_a.json         # paired, with intervals
 
 Scene evaluation reports the metrics of docs/details.md's Evaluation section per
 subset (clean, hard, hard2, thin): F_GT@2, crossing continuity, gap closure,
@@ -16,6 +19,12 @@ megapixel, plus the decision metrics and an F sweep over tolerances (in
 thousandths of the long edge, so it is comparable across resolutions).
 ``--decisions`` also checks a scorer's gates (G1-G7). Single-curve evaluation
 compares the model with the baseline engine on the same degraded patches.
+
+``--realset`` judges real drawings, which have no ground truth, against their
+own ink (:mod:`line2func.quality`), traced at a fixed tolerance with no curve
+budget so that the curve count is free to move. ``--compare`` puts two such
+reports side by side: the same drawings, so each is its own control, reported
+as the median per-drawing difference with a bootstrap interval.
 
 The length ratio is the only metric here that sees a line drawn twice: every
 other one measures distance to the nearest curve, and a doubled stroke lies on
@@ -47,6 +56,7 @@ from line2func.metrics import (
 from line2func.synth import load_scene_dir
 
 EVAL_SEED = 2_000_003  # single-curve evaluation patches (disjoint from training streams)
+REAL_SEED = 2_000_011  # the bootstrap's resampling, so a comparison is reproducible
 
 
 def _subsets(valset: Path) -> dict[str, Path]:
@@ -118,6 +128,139 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
             "f_sweep": {k: v / len(scenes) for k, v in swept.items()} if scenes else {},
         }
     return results
+
+
+# ---------------------------------------------------------------------------
+# Real drawings: no ground truth, so the ink itself is the reference
+# ---------------------------------------------------------------------------
+
+
+def _real_images(folder: str | Path) -> list[Path]:
+    """The drawings in a folder, sorted (the image types :mod:`line2func.blindtest` accepts)."""
+    from line2func.blindtest import IMAGE_TYPES
+
+    folder = Path(folder)
+    images = sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_TYPES) if folder.is_dir() else []
+    if not images:
+        raise FileNotFoundError(f"no drawings ({', '.join(IMAGE_TYPES)}) in {folder}")
+    return images
+
+
+def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = None,
+              decisions: str | None = "learned", options: dict | None = None) -> dict:
+    """Trace real drawings and judge each against its own ink (:mod:`line2func.quality`).
+
+    There is no ground truth here, so nothing is scored against a drawing that
+    is known to be right; the ink is the reference, as ``demo --quality`` does.
+
+    **Traced at a fixed tolerance, with no curve budget.** The budget would
+    otherwise decide the curve count for four of the five test drawings, and the
+    curve count at a fixed tolerance is the headline: a change that draws the
+    same lines with fewer curves is what most geometric work is trying to do.
+
+    ``length_per_ink`` is the total curve length over the length of the ink's
+    own centerline: about 1 when each stretch of ink is drawn once, more when it
+    is drawn twice. It is the no-ground-truth form of
+    :func:`line2func.metrics.stroke_length_scores`, which retracing is invisible to.
+    """
+    from line2func import pipeline, quality
+
+    rows = []
+    for path in _real_images(folder)[:limit]:
+        rgb = lineart.load_rgb(path)
+        t = time.perf_counter()
+        curves, ink = pipeline.trace(rgb, fit_tolerance=tolerance, curve_count=None, upscale="auto",
+                                     decisions=decisions, baseline_options=options)
+        seconds = time.perf_counter() - t
+        # the judge's threshold comes from the ink alone, so it is the same for every setting
+        # compared on this drawing even when the tracer chooses a different one
+        thr = quality.tracer_threshold(ink)
+        report, _ = quality.assess(curves, ink, thr)
+        rows.append({
+            "image": path.name,
+            "megapixels": round(ink.shape[0] * ink.shape[1] / 1e6, 3),
+            "curves": report["structure"]["curves"],
+            "strokes": report["structure"]["strokes"],
+            "kept": report["recall"]["line"]["within_2px"],
+            "kept_with_faint": report["recall"]["with_faint"]["within_2px"],
+            "precision": report["precision"]["within_2px"],
+            "missed_ink": report["missed"]["share_of_ink"],
+            "d_M": report["distance"]["d_M"],
+            "psnr_db": report["raster"]["psnr_db"],
+            "ssim": report["raster"]["ssim"],
+            "length_per_ink": round(total_length(curves) / max(baseline.ink_length(ink, thr), 1.0), 4),
+            "seconds": round(seconds, 2),
+            "threshold": round(thr, 4),
+        })
+    return {"folder": str(folder), "tolerance": tolerance, "decisions": decisions, "options": options or {},
+            "images": rows, "median": _medians(rows)}
+
+
+MEASURES = ("curves", "strokes", "kept", "kept_with_faint", "precision", "missed_ink", "d_M", "psnr_db", "ssim",
+            "length_per_ink", "seconds")
+
+
+def _medians(rows: list[dict]) -> dict[str, float]:
+    return {k: round(float(np.median([r[k] for r in rows])), 4) for k in MEASURES} if rows else {}
+
+
+def bootstrap_ci(values: np.ndarray, confidence: float = 0.95, samples: int = 10_000,
+                 seed: int = REAL_SEED) -> tuple[float, float]:
+    """Percentile bootstrap interval for the median of ``values``.
+
+    Five drawings is far too few for a normal approximation to mean anything,
+    and the per-image spread is large, so the interval is what says whether a
+    change is real. A wide interval that straddles zero is the honest answer,
+    not a failure.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    if len(values) < 2:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(seed)
+    draws = np.median(values[rng.integers(0, len(values), (samples, len(values)))], axis=1)
+    half = 0.5 * (1.0 - confidence)
+    return (round(float(np.quantile(draws, half)), 4), round(float(np.quantile(draws, 1.0 - half)), 4))
+
+
+def compare_real(before: dict, after: dict) -> dict:
+    """Paired per-image differences between two :func:`eval_real` reports.
+
+    The same drawings in both, so each one is its own control: the difference
+    per drawing is what is measured, and the median of those differences with a
+    bootstrap interval is what is reported. Means over five drawings would be
+    led by whichever one happens to be largest.
+    """
+    a = {r["image"]: r for r in before["images"]}
+    b = {r["image"]: r for r in after["images"]}
+    shared = sorted(set(a) & set(b))
+    if not shared:
+        raise ValueError("the two reports have no drawing in common")
+    out = {}
+    for key in MEASURES:
+        d = np.array([b[i][key] - a[i][key] for i in shared], dtype=np.float64)
+        lo, hi = bootstrap_ci(d)
+        out[key] = {"median": round(float(np.median(d)), 4), "ci95": [lo, hi],
+                    "per_image": {i: round(float(b[i][key] - a[i][key]), 4) for i in shared}}
+    return {"images": shared, "before": before.get("options", {}), "after": after.get("options", {}),
+            "delta": out}
+
+
+def _print_real(report: dict) -> None:
+    cols = [("curves", "curves"), ("kept", "kept"), ("missed_ink", "missed"), ("d_M", "d_M"),
+            ("length_per_ink", "len/ink"), ("psnr_db", "PSNR"), ("seconds", "s")]
+    print(f"{'drawing':<28}" + "".join(f"{h:>10}" for _, h in cols))
+    for r in report["images"]:
+        print(f"{r['image'][:28]:<28}" + "".join(f"{r[k]:>10.4g}" for k, _ in cols))
+    if report["median"]:
+        print(f"{'median':<28}" + "".join(f"{report['median'][k]:>10.4g}" for k, _ in cols))
+
+
+def _print_compare(result: dict) -> None:
+    print(f"paired over {len(result['images'])} drawings (median difference, 95% bootstrap interval):")
+    for key, d in result["delta"].items():
+        lo, hi = d["ci95"]
+        sure = "" if lo <= 0.0 <= hi else "  *"  # the interval misses zero
+        print(f"  {key:<16}{d['median']:>12.4g}   [{lo:>10.4g}, {hi:>10.4g}]{sure}")
 
 
 def eval_single_curve(ckpt: str | Path, samples: int = 1000, kind: str = "hard", device: str | None = None) -> dict:
@@ -354,6 +497,13 @@ def main(argv: list[str] | None = None) -> int:
                    help="with --valset: compare this decision scorer (learned or a weights path) with the rules")
     p.add_argument("--upscale", choices=("1", "auto"), default="1",
                    help="with --decisions: trace thin lines at 2x like pipeline.trace (auto) or not (1)")
+    p.add_argument("--realset", type=Path,
+                   help="folder of real drawings: trace each at a fixed tolerance and judge it against its ink")
+    p.add_argument("--tolerance", type=float, default=1.0, help="with --realset: fit tolerance, px")
+    p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", dest="options",
+                   help="with --realset: a BaselineParams field to override (e.g. --set local_trim=false)")
+    p.add_argument("--compare", type=Path, nargs=2, metavar=("BEFORE.json", "AFTER.json"),
+                   help="paired per-drawing differences between two --realset reports, with bootstrap intervals")
     p.add_argument("--json", type=Path, help="also write the results to this JSON file")
     args = p.parse_args(argv)
 
@@ -405,15 +555,51 @@ def main(argv: list[str] | None = None) -> int:
         checks = gate_decisions(ref, cand)
         _print_gate_decisions(checks)
         results = {"rules": ref, "decisions": cand, "gate": checks}
+    elif args.compare is not None:
+        before, after = (json.loads(p_.read_text(encoding="utf-8")) for p_ in args.compare)
+        results = compare_real(before, after)
+        _print_compare(results)
+    elif args.realset is not None:
+        results = eval_real(args.realset, args.tolerance, args.limit,
+                            decisions=args.decisions or "learned", options=_options(p, args.options))
+        _print_real(results)
     elif args.valset is not None:
         results = eval_scenes(args.valset, args.limit)
         _print_scenes(results)
         _print_decisions(results)
     else:
-        p.error("give --valset (baseline scenes) or --ckpt (single-curve model)")
+        p.error("give --valset (baseline scenes), --realset (real drawings), --compare, or --ckpt")
     if args.json:
-        args.json.write_text(json.dumps(results, indent=1), encoding="utf-8", newline="\n")
+        from line2func.jobs import finite
+
+        args.json.write_text(json.dumps(finite(results), indent=1), encoding="utf-8", newline="\n")
     return 0
+
+
+def _options(parser, pairs: list[str]) -> dict:
+    """``["local_trim=false"]`` as ``{"local_trim": False}``, typed like the field it overrides."""
+    import dataclasses
+
+    fields = {f.name: f.type for f in dataclasses.fields(baseline.BaselineParams)}
+    out = {}
+    for pair in pairs:
+        name, _, value = pair.partition("=")
+        if name not in fields:
+            parser.error(f"--set: {name!r} is not a BaselineParams field")
+        kind = str(fields[name])
+        if "bool" in kind:
+            if value.lower() not in ("true", "false"):
+                parser.error(f"--set {name}: expected true or false, got {value!r}")
+            out[name] = value.lower() == "true"
+        elif value.lower() == "none":
+            out[name] = None
+        elif "int" in kind and "float" not in kind:
+            out[name] = int(value)
+        elif "float" in kind:
+            out[name] = float(value)
+        else:
+            out[name] = value
+    return out
 
 
 if __name__ == "__main__":
