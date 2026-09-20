@@ -24,7 +24,10 @@ compares the model with the baseline engine on the same degraded patches.
 own ink (:mod:`line2func.quality`), traced at a fixed tolerance with no curve
 budget so that the curve count is free to move. ``--compare`` puts two such
 reports side by side: the same drawings, so each is its own control, reported
-as the median per-drawing difference with a bootstrap interval.
+as the median per-drawing difference with a bootstrap interval. Its numbers are
+differences between two settings and are only meant to be read that way -
+``length_vs_skeleton`` in particular has a denominator that undercounts dense
+drawings, and only cancels because both settings share it.
 
 The length ratio is the only metric here that sees a line drawn twice: every
 other one measures distance to the nearest curve, and a doubled stroke lies on
@@ -172,10 +175,21 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
     curve count at a fixed tolerance is the headline: a change that draws the
     same lines with fewer curves is what most geometric work is trying to do.
 
-    ``length_per_ink`` is the total curve length over the length of the ink's
-    own centerline: about 1 when each stretch of ink is drawn once, more when it
-    is drawn twice. It is the no-ground-truth form of
-    :func:`line2func.metrics.stroke_length_scores`, which retracing is invisible to.
+    ``length_vs_skeleton`` is the total curve length over the length of the ink's
+    thinned centerline, standing in for
+    :func:`line2func.metrics.stroke_length_scores` where there is no ground truth
+    to divide by. **Read it only as a difference between two settings**, which is
+    what :func:`compare_real` does: its denominator is identical in both arms and
+    cancels there.
+
+    Do not read the absolute value as "1 means every stretch of ink is drawn
+    once", because the two sides count different ink. The denominator is one
+    skeleton of the ink above Otsu's threshold; the tracer works below it
+    (``pipeline.trace_threshold``) and adds faint strokes below that again, so it
+    draws lines the denominator never counted. On the real test drawings the
+    reading runs 1.01 to 1.64, and turning faint strokes off takes the densest
+    from 1.64 to 1.29 - while 99.3% of that curve length is on ink and only 8.6%
+    of it lies within 0.75 px of another stroke. It is not redundancy.
     """
     from line2func import pipeline, quality
 
@@ -202,7 +216,7 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
             "d_M": report["distance"]["d_M"],
             "psnr_db": report["raster"]["psnr_db"],
             "ssim": report["raster"]["ssim"],
-            "length_per_ink": round(total_length(curves) / max(baseline.ink_length(ink, thr), 1.0), 4),
+            "length_vs_skeleton": round(total_length(curves) / max(baseline.ink_length(ink, thr), 1.0), 4),
             "seconds": round(seconds, 2),
             "threshold": round(thr, 4),
         })
@@ -211,7 +225,7 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
 
 
 MEASURES = ("curves", "strokes", "kept", "kept_with_faint", "precision", "missed_ink", "d_M", "psnr_db", "ssim",
-            "length_per_ink", "seconds")
+            "length_vs_skeleton", "seconds")
 
 
 def _medians(rows: list[dict]) -> dict[str, float]:
@@ -241,8 +255,19 @@ def compare_real(before: dict, after: dict) -> dict:
 
     The same drawings in both, so each one is its own control: the difference
     per drawing is what is measured, and the median of those differences with a
-    bootstrap interval is what is reported. Means over five drawings would be
-    led by whichever one happens to be largest.
+    bootstrap interval is what is reported. Means over a handful of drawings
+    would be led by whichever one happens to be largest.
+
+    Each measure also gets what the comparison could *resolve*, because an
+    interval containing zero is not a finding. ``halfwidth`` is half the
+    interval, so it is the size of a difference this many drawings can tell from
+    nothing, and ``n_for`` is how many drawings a difference the size of the
+    observed median would need before its interval cleared zero.
+
+    The spread being estimated is not measurement noise - tracing is
+    deterministic, and one setting compared with itself gives exactly zero
+    everywhere. It is how much the *effect* varies from drawing to drawing, which
+    is what actually limits what a handful of drawings can show.
     """
     a = {r["image"]: r for r in before["images"]}
     b = {r["image"]: r for r in after["images"]}
@@ -250,18 +275,38 @@ def compare_real(before: dict, after: dict) -> dict:
     if not shared:
         raise ValueError("the two reports have no drawing in common")
     out = {}
-    for key in MEASURES:
+    # a report saved by an older version may not have every measure; compare what both have
+    for key in [k for k in MEASURES if all(k in a[i] and k in b[i] for i in shared)]:
         d = np.array([b[i][key] - a[i][key] for i in shared], dtype=np.float64)
         lo, hi = bootstrap_ci(d)
-        out[key] = {"median": round(float(np.median(d)), 4), "ci95": [lo, hi],
+        median, sd = float(np.median(d)), float(np.std(d, ddof=1)) if len(d) > 1 else float("nan")
+        out[key] = {"median": round(median, 4), "ci95": [lo, hi],
+                    "sd": round(sd, 4) if np.isfinite(sd) else None,
+                    "halfwidth": round(0.5 * (hi - lo), 4) if np.isfinite(hi - lo) else None,
+                    "n_for": _n_for(median, sd),
                     "per_image": {i: round(float(b[i][key] - a[i][key]), 4) for i in shared}}
     return {"images": shared, "before": before.get("options", {}), "after": after.get("options", {}),
             "delta": out}
 
 
+def _n_for(effect: float, sd: float) -> int | None:
+    """Drawings needed before a difference of ``effect`` would clear zero, or None if it cannot say.
+
+    The usual two-sided 95% / 80% power count, ``(2.8 sd / effect)^2``. It is a
+    normal approximation, so it is a scale rather than a promise; with a
+    deterministic tracer ``sd`` is effect variation between drawings, and an
+    effect the same on every drawing needs only a couple.
+    """
+    if not np.isfinite(effect) or not np.isfinite(sd) or abs(effect) < 1e-12:
+        return None
+    if sd < 1e-12:
+        return 2  # the same difference on every drawing
+    return int(np.ceil((2.8 * sd / abs(effect)) ** 2))
+
+
 def _print_real(report: dict) -> None:
     cols = [("curves", "curves"), ("kept", "kept"), ("missed_ink", "missed"), ("d_M", "d_M"),
-            ("length_per_ink", "len/ink"), ("psnr_db", "PSNR"), ("seconds", "s")]
+            ("length_vs_skeleton", "len/skel"), ("psnr_db", "PSNR"), ("seconds", "s")]
     print(f"{'drawing':<28}" + "".join(f"{h:>10}" for _, h in cols))
     for r in report["images"]:
         print(f"{r['image'][:28]:<28}" + "".join(f"{r[k]:>10.4g}" for k, _ in cols))
@@ -270,11 +315,19 @@ def _print_real(report: dict) -> None:
 
 
 def _print_compare(result: dict) -> None:
-    print(f"paired over {len(result['images'])} drawings (median difference, 95% bootstrap interval):")
+    n = len(result["images"])
+    print(f"paired over {n} drawings (median difference, 95% bootstrap interval):")
+    print(f"  {'measure':<18}{'median':>11}   {'95% interval':>21}     {'resolves':>9}{'n needed':>10}")
     for key, d in result["delta"].items():
         lo, hi = d["ci95"]
-        sure = "" if lo <= 0.0 <= hi else "  *"  # the interval misses zero
-        print(f"  {key:<16}{d['median']:>12.4g}   [{lo:>10.4g}, {hi:>10.4g}]{sure}")
+        found = not (lo <= 0.0 <= hi)  # the interval misses zero
+        need = "-" if d["n_for"] is None else d["n_for"]
+        print(f"  {key:<18}{d['median']:>11.4g}   [{lo:>9.4g}, {hi:>9.4g}]{'  *' if found else '   '}"
+              f"  {d['halfwidth'] if d['halfwidth'] is not None else '-':>9}{need:>10}")
+    print(f"  * the interval misses zero: a difference was found. A row without one is NOT evidence of no\n"
+          f"    effect - "
+          f"'resolves' is the smallest difference these {n} drawings could tell from nothing, and 'n needed'\n"
+          f"    is how many drawings a difference the size of that row's median would take.")
 
 
 def eval_single_curve(ckpt: str | Path, samples: int = 1000, kind: str = "hard", device: str | None = None) -> dict:

@@ -126,12 +126,33 @@ def test_the_command_writes_a_report_that_compares_with_itself_to_zero(tmp_path)
     assert all(same[k]["median"] == 0.0 for k in MEASURES)
 
 
-def test_a_traced_drawing_draws_about_as_much_line_as_there_is_ink(tmp_path):
-    """length_per_ink is the no-ground-truth form of the length ratio: ~1 when each stretch of
-    ink is drawn once, well above 1 when it is drawn twice."""
+def test_on_sparse_lines_the_curve_length_is_about_the_skeleton_length(tmp_path):
     report = eval_real(_folder(tmp_path, n=2), tolerance=2.0)
     for row in report["images"]:
-        assert 0.8 < row["length_per_ink"] < 1.3, row
+        assert 0.8 < row["length_vs_skeleton"] < 1.3, row
+
+
+def test_lighter_lines_push_it_above_one_because_the_two_sides_count_different_ink(tmp_path):
+    """The denominator is one skeleton of the ink above Otsu's threshold; the tracer works below
+    it and adds faint strokes below that again. So it draws lines the denominator never counted,
+    and the ratio rises without anything being drawn twice.
+
+    Pinned so the reading is not mistaken for redundancy a second time: on the real drawings it
+    runs 1.01 to 1.64, and the densest falls to 1.29 with faint strokes turned off.
+    """
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    size = 128
+    rows = [20, 40, 60], [80, 95, 110]
+    dark, light = (render_lineart(
+        CurveSet(size, size, [Curve(g.line([12, y], [size - 12, y]), stroke=i) for i, y in enumerate(ys)]),
+        size, size, line_width=2.0).astype(np.float64) for ys in rows)
+    # the second set drawn lightly: the tracer still traces it, Otsu's threshold does not see it
+    save_png(folder / "mixed.png",
+             np.minimum(dark, 255.0 - (255.0 - light) * 0.30).astype(np.uint8))
+    row = eval_real(folder, tolerance=2.0)["images"][0]
+    assert row["length_vs_skeleton"] > 1.5, row  # six lines drawn, about three in the denominator
+    assert row["kept"] > 0.95 and row["precision"] > 0.95, row  # and none of it invented
 
 
 # ---------------------------------------------------------------------------
@@ -188,3 +209,49 @@ def test_repeating_a_timing_reports_how_far_the_runs_disagreed(tmp_path):
     assert once["repeat"] == 1 and np.isnan(once["seconds_spread"])
     assert twice["repeat"] == 3 and twice["seconds_spread"] >= 0.0
     assert once["f_gt2"] == twice["f_gt2"]  # repeating changes the clock, not the result
+
+
+# ---------------------------------------------------------------------------
+# What the comparison could resolve
+# ---------------------------------------------------------------------------
+
+
+def test_an_interval_containing_zero_comes_with_what_it_could_have_resolved():
+    """'No difference found' has to be distinguishable from 'too few drawings to see one'."""
+    before = _report({"curves": [100, 200, 300, 400, 500]})
+    after = _report({"curves": [95, 215, 290, 430, 480]})  # scattered, median small
+    d = compare_real(before, after)["delta"]["curves"]
+    lo, hi = d["ci95"]
+    assert lo <= 0.0 <= hi  # nothing found
+    assert d["halfwidth"] == pytest.approx(0.5 * (hi - lo))
+    assert d["sd"] > 0 and d["n_for"] > 5  # ... and it says how many drawings it would take
+
+
+def test_the_same_difference_on_every_drawing_needs_only_a_couple():
+    before = _report({"curves": [100, 200, 300, 400, 500]})
+    after = _report({"curves": [90, 190, 290, 390, 490]})
+    d = compare_real(before, after)["delta"]["curves"]
+    assert d["sd"] == 0.0 and d["n_for"] == 2
+
+
+def test_no_difference_at_all_cannot_name_a_sample_size():
+    r = _report({"curves": [100, 200, 300]})
+    d = compare_real(r, r)["delta"]["curves"]
+    assert d["median"] == 0.0 and d["n_for"] is None and d["halfwidth"] == 0.0
+
+
+def test_the_needed_count_grows_with_scatter_and_shrinks_with_the_effect():
+    from line2func.eval import _n_for
+
+    assert _n_for(10.0, 10.0) > _n_for(10.0, 2.0)
+    assert _n_for(1.0, 5.0) > _n_for(10.0, 5.0)
+    assert _n_for(0.0, 1.0) is None and _n_for(float("nan"), 1.0) is None
+
+
+def test_a_measure_missing_from_an_older_report_is_skipped_not_fatal():
+    before = _report({"curves": [1.0, 2.0]})
+    after = _report({"curves": [1.0, 2.0]})
+    for row in before["images"]:
+        del row["length_vs_skeleton"]
+    delta = compare_real(before, after)["delta"]
+    assert "curves" in delta and "length_vs_skeleton" not in delta
