@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="keep solid areas (heavy eyelashes) and thick or wedge-shaped strokes as centerlines "
                         "instead of filled outlines")
     p.add_argument("--no-fill", action="store_true",
-                   help="leave filled areas hollow in Desmos: no rings inside them (the SVG fills them anyway)")
+                   help="leave filled areas hollow: only their outline, with no rings or hatching inside")
     p.add_argument("--curves", type=int, default=None, metavar="N",
                    help=f"make N curves: trace finely, then merge the pieces whose merge changes the drawing "
                         f"least; a drawing that gives fewer keeps all of them. More curves follow the lines more "

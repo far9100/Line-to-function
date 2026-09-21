@@ -1,28 +1,27 @@
-"""Curves inside filled areas, so that they look filled - and as dark as they are - in Desmos too.
+"""Curves inside filled areas, so that they look filled - and as dark as they are - everywhere.
 
-Filled strokes - the outline of a solid area such as a heavy eyelash
-(``fill_outline``, :func:`line2func.baseline.solid_areas`) or of a thick
-stroke (``outline``, :mod:`line2func.outline`) - are filled by the SVG export
-and the viewer. Desmos draws every pasted expression as a line of the same
-width and fills none of them, so there they show as hollow outlines, and the
-only way to show how dark an area is, is how densely it is drawn.
+A filled area - a solid one such as a heavy eyelash (``fill_outline``,
+:func:`line2func.baseline.solid_areas`) or a thick stroke (``outline``,
+:mod:`line2func.outline`) - arrives at Desmos as its closed boundary and
+nothing else, because Desmos draws every pasted expression as a line of the
+same width and fills none of them. The only way to show how dark an area is,
+there, is how densely it is drawn.
 
-:func:`add_fill` therefore fills every area at its own measured tone
-(``Curve.tone``), one of two ways:
+:func:`add_fill` therefore draws every area at its own measured tone
+(``Curve.tone``), spacing the curves by one formula for every area
+(:func:`spacing_for`). *What* is drawn at that spacing is chosen by the area's
+shape, not by its tone: **rings** (contour lines of the distance to its edge)
+where the area is deeper than one spacing, and **45 degree hatching** where it
+is not. A ring at depth *k* x spacing only exists where the area is deeper than
+that, so on a shadow along a jaw or a finger, a few pixels deep, rings alone
+leave most areas with nothing in them at all - on lineArt (9) of the JPEG set,
+23 of 59 areas (12% of the shaded pixels) got no ring. A hatch line crosses an
+area however thin it is.
 
-* An area as dark as the drawing's own dark ink gets **rings**, one every
-  ``spacing`` px from its edge (the contour lines of the distance to the edge).
-  A Desmos line is :data:`LINE_PX` screen pixels wide, so with the whole drawing
-  on screen the rings merge into a solid area; zoomed in far, they show as rings.
-* A lighter area - a shadow, a wash of pencil tone - gets **hatching**: parallel
-  45 degree lines whose spacing is set so that the ink they cover matches the
-  area's tone. Hatching rather than rings, because a ring at depth *k* x spacing
-  only exists where the area is deeper than that: on lineArt (9) of the JPEG set,
-  spacing the rings by tone left 23 of 59 areas (12% of the shaded pixels) with
-  no ring at all, since a shadow along a jaw or a finger is only a few pixels
-  deep. A hatch line crosses an area however thin it is.
-
-The SVG export leaves all of these out, since it fills the areas itself.
+Nothing anywhere fills these areas: the SVG export and the page draw the same
+curves Desmos gets, so all three show the same drawing (:mod:`line2func.export`).
+The one exception is the quality rendering, which fills an area at its tone in
+order to measure it (:func:`line2func.render.fill_share`).
 """
 
 from __future__ import annotations

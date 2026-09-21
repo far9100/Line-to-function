@@ -38,7 +38,6 @@ from pathlib import Path
 import numpy as np
 
 from line2func import baseline, lineart
-from line2func.curves import CurveSet
 from line2func.metrics import (
     f_score,
     f_sweep,

@@ -182,12 +182,12 @@ the tracer bridged a gap.
 eyelashes, are traced by their outline only (tagged `fill_outline`; the outline
 of a thick or strongly tapered stroke is tagged `outline`). Each one carries how
 dark it is, as `tone` (0 paper, 1 black). **Nothing is ever filled.** An area is
-drawn with curves tagged `fill` across it: rings 1.5 px apart when it is as dark
-as the drawing's own dark ink, and 45 degree hatching spaced by its tone when it
-is lighter, such as a shadow. Desmos cannot fill a pasted expression, so this is
-the only way tone reaches it - and the page and the SVG draw the same curves, so
-all three outputs show the same drawing. Its outline is stroked in the color
-measured inside it, and closed, so the curves inside land in a shape.
+drawn with curves tagged `fill` across it, spaced by one formula for every area
+(section 4): rings where it is deeper than one spacing, 45 degree hatching where
+it is not. Desmos cannot fill a pasted expression, so this is the only way tone
+reaches it - and the page and the SVG draw the same curves, so all three outputs
+show the same drawing. Its outline is stroked in the color measured inside it,
+and closed, so the curves inside land in a shape.
 
 Its boundary is traced with Moore-neighbour contours
 (:func:`line2func.boundary.contours`), not by thinning the edge and walking it as
@@ -601,18 +601,33 @@ at 0.7 x the darkest ink nearby instead of 0.8, the areas on `lineArt (11)` of
 the JPEG set go from 1.1% of the page to 3.5% as stroke clusters start to pass.
 
 **Every filled area is measured for how dark it is**, and is drawn at that tone.
-The SVG fills it with the color sampled *inside* it, and a shadow gets no
-outline drawn around it - its edge is where the tone fades out, not a line
-anyone drew. Desmos cannot fill a pasted expression and draws every line at one
-darkness, so there the tone becomes line density: an area as dark as the
-drawing's own dark ink gets rings 1.5 px apart, as before, and a lighter one
-gets 45 degree hatching spaced `2.5 px / (its share of the dark ink)`, so the
-share of it Desmos inks is the share of black its ink is. Hatching rather than
-wider rings, because a ring at depth *k* x spacing only exists where the area is
-deeper than that: spacing the rings by tone instead left 23 of the 59 areas on
-`lineArt (9)` - 12% of the shaded pixels - with no ring at all, since a shadow
-along a jaw or a finger is only a few pixels deep. A hatch line crosses an area
-however thin it is.
+Nothing fills it: Desmos cannot fill a pasted expression and draws every line at
+one darkness, so the tone becomes line density there, and the SVG and the page
+draw the same curves Desmos gets, so all three show the same drawing. A shadow
+gets no outline drawn around it either - its edge is where the tone fades out,
+not a line anyone drew.
+
+One formula sets the spacing for every area, with no step anywhere in it:
+
+```
+spacing = clip(0.88 x 2.5 px x dark / tone, 1.5 px, 12 px)
+```
+
+A curve inks 2.5 px of every `spacing`, so the share of the area Desmos inks is
+the share of the drawing's dark ink that its own ink is. The 0.88 is measured,
+not chosen: curves tiled at exactly their own width cover 92% of an area rather
+than 100%, because rings curve, and without that overlap the darkest areas come
+out with paper showing through them.
+
+*What* is drawn at that spacing is chosen by the area's shape, not by its tone:
+**rings** (contour lines of the distance to its edge) where the area is deeper
+than one spacing, and **45 degree hatching** where it is not. A ring at depth
+*k* x spacing only exists where the area is deeper than that, so rings alone
+leave a shadow along a jaw or a finger with nothing in it - 23 of the 59 areas
+on `lineArt (9)`, 12% of the shaded pixels, got no ring at all. A hatch line
+crosses an area however thin it is. An area is drawn all the way in, as many
+rings as it is deep, which costs 66 curves on `lineArt (11)` and takes its solid
+areas from 95.1% covered to 99.8%.
 
 An area used to have to be as dark as the drawing's own dark ink (the 90th
 percentile) to count as filled at all. That bar is relative, so on a light
@@ -928,7 +943,7 @@ This is version 1.2.
 - [x] Named equations for lines and arcs, curve refinement, line width and color
 - [x] Web page (`python -m line2func`) in English and Traditional Chinese
 - [x] Second pass over uncovered ink, thick strokes as filled outlines, render-and-compare (`--optimize`)
-- [x] Filled areas such as heavy eyelashes and shadows, each measured for how dark it is and drawn at that tone (rings for a solid one, hatching for a shadow, so Desmos shows the difference); up to 5,000 curves by default; light and very faint lines
+- [x] Filled areas such as heavy eyelashes and shadows, each measured for how dark it is and drawn at that tone (one spacing formula for every area, drawn as rings or as hatching by its depth, so Desmos shows the difference); up to 5,000 curves by default; light and very faint lines
 - [x] Function mode: every curve as pieces of `y = f(x)` / `x = g(y)` (`--form function`)
 - [x] One-screen web page with three display modes; lines broken into dots and dashes kept; a noise filter slider (`--denoise`)
 - [x] Faint-line sensitivity (`--faint-sensitivity`)
@@ -1064,7 +1079,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 
 **信心值**是曲線落在墨跡上的比例。描線器補過缺口的地方，信心值會低於 1。
 
-**填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑），SVG 會用在區域內部量到的顏色把它填滿。Desmos 無法填滿貼上的曲線，所以區域在那裡是用標上 `fill` 的曲線填的：**完全不填色。** 區域是用標上 `fill` 的曲線畫出來的：和圖中暗墨一樣深的用間隔 1.5 px 的圈線，比較淺的（例如陰影）用依濃淡調整間隔的 45 度排線。Desmos 無法填滿貼上的算式，所以這是濃淡唯一能傳達過去的方式 —— 而網頁與 SVG 畫的是同一批曲線，所以三種輸出看到的是同一張圖。區域的外框用在內部量到的顏色描邊，並且封閉，裡面的曲線才會落在一個形狀內。
+**填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑）。**完全不填色。** 區域是用標上 `fill` 的曲線畫出來的，所有區域共用同一條間距算式（見第 4 節）：深度大於一個間距的地方畫圈線，不夠深的地方畫 45 度排線。Desmos 無法填滿貼上的算式，所以這是濃淡唯一能傳達過去的方式 —— 而網頁與 SVG 畫的是同一批曲線，所以三種輸出看到的是同一張圖。區域的外框用在內部量到的顏色描邊，並且封閉，裡面的曲線才會落在一個形狀內。
 
 區域的邊界是用 Moore 鄰域輪廓追蹤取得的（:func:`line2func.boundary.contours`），不是把邊緣細化後當骨架走。邊界必須是封閉的：兩個環相接的地方，骨架走訪會把環切開，而開放的鏈在填色時會被一條直線弦接起來，憑空造出兩者之間的面積。在 `lineArt (5).jpg` 上這憑空多出 129,399 px（真實填色區域是 87,337，幾乎翻倍），在 `lineArt (11).jpg` 上則把梅花狀瞳孔空白的上半部塗掉了。改用輪廓追蹤後每個環都封閉，憑空多出的面積降到 2,050 px。
 
@@ -1328,7 +1343,17 @@ python -m line2func.demo IMAGE [options]
 
 像粗重睫毛這種很粗的黑色筆畫，以前會被細化成一團短短的中心線，在 Desmos 裡也只畫成細線。至少 2.5 個線寬粗、有一定長度，而且中間夠**平坦**的墨跡，會被描成一個填滿的區域。兩條靠得太近、墨跡黏在一起的線不算：它們中間的墨比較淡，所以仍然是線。平坦度正是分辨「一片灰階塗抹」和「一堆擠在一起的線條」的關鍵，而且不能放寬：門檻從附近最黑墨色的 0.8 倍改成 0.7 倍時，JPEG 測試集裡 `lineArt (11)` 的區域面積就從整頁的 1.1% 衝到 3.5%，開始把密集線條也算進去。
 
-**每個填滿的區域都會量測自己有多深**，並照那個濃淡畫出來。SVG 會用在區域**內部**取樣到的顏色填色；陰影不另外描邊——它的邊界是濃淡淡出去的地方，不是誰畫的線。Desmos 沒辦法填滿貼上的算式，而且每條線都一樣深，所以在那裡濃淡是用線的密度表示：和圖中暗墨一樣深的區域照舊每隔 1.5 px 加一圈圈線（`--no-fill` 可保持空心），比較淺的區域則改用 45 度的排線，間隔是 `2.5 px ÷（它占暗墨的比例）`，讓 Desmos 畫到的面積比例正好等於它的墨色比例。用排線而不是把圈線拉疏，是因為第 *k* 圈只存在於「深度大於 k × 間距」的地方：改成依濃淡調整圈線間距時，`lineArt (9)` 的 59 個區域有 23 個完全畫不出任何一圈（占陰影像素的 12%），因為下顎或手指邊上的陰影只有幾個像素深。排線則不管區域多薄都能穿過去。
+**每個填滿的區域都會量測自己有多深**，並照那個濃淡畫出來。**沒有任何地方會填色**：Desmos 沒辦法填滿貼上的算式，而且每條線都一樣深，所以在那裡濃淡是用線的密度表示；而 SVG 與網頁畫的就是 Desmos 拿到的同一批曲線，所以三種輸出看到的是同一張圖。陰影也不另外描邊——它的邊界是濃淡淡出去的地方，不是誰畫的線。
+
+所有區域共用同一條間距算式，中間沒有任何跳階：
+
+```
+間距 = clip(0.88 × 2.5 px × 暗墨 ÷ 濃淡, 1.5 px, 12 px)
+```
+
+一條曲線每隔一個「間距」就畫上 2.5 px 的墨，所以 Desmos 畫到的面積比例，正好等於這塊區域的墨色占全圖暗墨的比例。其中 0.88 是量出來的，不是選的：曲線以自身線寬並排時只覆蓋區域的 92% 而非 100%（因為圈線是彎的），少了這個重疊，最深的區域會透出紙白。
+
+**畫什麼**由區域的形狀決定，而不是由濃淡決定：深度大於一個間距的地方畫**圈線**（到邊緣距離的等高線），不夠深的地方畫 **45 度排線**。第 *k* 圈只存在於「深度大於 k × 間距」的地方，所以光靠圈線，下顎或手指邊上只有幾個像素深的陰影會完全空白——`lineArt (9)` 的 59 個區域就有 23 個（占陰影像素的 12%）畫不出任何一圈。排線則不管區域多薄都能穿過去。區域會一路畫到最裡面，有多深就畫多少圈，在 `lineArt (11)` 上只花 66 條曲線，就讓實心區域的覆蓋率從 95.1% 提高到 99.8%。
 
 以前區域必須和圖中自己的暗墨（第 90 百分位）一樣黑才算得上填滿區域。這個門檻是相對的，所以在沒有純黑的淺鉛筆稿上就會塌掉：`lineArt (9)` 量到的墨色 p90 是 0.576，門檻只剩 0.46，於是每一塊中灰陰影都被升級成實心墨塊——然後整張圖的陰影就都一樣黑了，這正是這次改掉的東西。
 
@@ -1568,7 +1593,7 @@ python -m line2func.website --out _site --serve    # 並在 http://127.0.0.1:800
 - [x] 直線與圓弧的具名算式、曲線精修、線寬與顏色
 - [x] 網頁版（`python -m line2func`），繁體中文與英文介面
 - [x] 第二遍描線、粗筆畫改為填滿的外框、渲染後比對（`--optimize`）
-- [x] 粗重睫毛、陰影等填滿的區域，每一塊都量測自己有多深並照那個濃淡畫出來（實心用圈線、陰影用排線，Desmos 裡也分得出深淺）；預設最多 5,000 條曲線；淺色與極淡的線
+- [x] 粗重睫毛、陰影等填滿的區域，每一塊都量測自己有多深並照那個濃淡畫出來（所有區域共用一條間距算式，依深度畫成圈線或排線，Desmos 裡也分得出深淺）；預設最多 5,000 條曲線；淺色與極淡的線
 - [x] 函數模式：每條曲線切成 `y = f(x)`／`x = g(y)` 的顯函數（`--form function`）
 - [x] 單一畫面的網頁版，三種顯示方式；斷成點和虛線的線會保留；去雜訊強度拖動條（`--denoise`）
 - [x] 淡線靈敏度（`--faint-sensitivity`）

@@ -6,7 +6,9 @@ drawing's lines, or a wedge such as an eyelash that tapers from thick to thin -
 therefore look wrong as one centerline. This module measures where the ink's
 two edges are all along each curve and, for curves that are clearly thick or
 strongly tapered, replaces the centerline by the stroke's closed outline
-(tagged ``outline``). The SVG export and the quality rendering fill outlines.
+(tagged ``outline``). Nothing fills that outline - it is drawn as lines, like
+everything else (:mod:`line2func.fill`) - except the quality rendering, which
+fills it in order to measure it.
 """
 
 from __future__ import annotations
