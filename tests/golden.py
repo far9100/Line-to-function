@@ -164,8 +164,6 @@ def synth_digests() -> dict[str, str]:
         for i in range(5):
             img, ctrl, widths = synth.single_curve_sample(np.random.default_rng([7, i]), 64, kind)
             out[f"single_{kind}_{i}"] = _sha(img.tobytes() + ctrl.tobytes() + widths.tobytes())
-            img, ctrls, widths = synth.multi_curve_sample(np.random.default_rng([8, i]), 64, kind)
-            out[f"multi_{kind}_{i}"] = _sha(img.tobytes() + ctrls.tobytes() + widths.tobytes())
     return out
 
 

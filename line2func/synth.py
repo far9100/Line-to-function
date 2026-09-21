@@ -7,7 +7,7 @@ dataset download or human labeling is needed.
   according to a :class:`Degradation` preset (``"clean"`` or ``"hard"``). The
   ground truth keeps every stroke whole, including the
   parts erased to make gaps, and records the gaps so gap closing can be scored.
-* :func:`single_curve_sample` and :func:`multi_curve_sample` draw patches.
+* :func:`single_curve_sample` draws one cubic in a patch.
 * ``python -m line2func.synth ...`` writes scene sets (the validation set
   ``--version 1``) and preview sheets.
 
@@ -385,82 +385,6 @@ def single_curve_sample(
             coverage = coverage * (1.0 - rasterize([eraser], size, size, line_width=float(widths.max()) + 3.0))
     image = _degrade(coverage, rng, replace(deg, paper_shading=deg.paper_shading * 0.3))
     return image, ctrl, widths
-
-
-def _inside_runs(points: np.ndarray, size: float) -> list[np.ndarray]:
-    """Maximal runs of consecutive ``points`` inside the square ``[0, size]²``."""
-    inside = np.all((points >= 0.0) & (points <= size), axis=1)
-    runs, start = [], None
-    for i, flag in enumerate(inside):
-        if flag and start is None:
-            start = i
-        elif not flag and start is not None:
-            runs.append(points[start:i])
-            start = None
-    if start is not None:
-        runs.append(points[start:])
-    return runs
-
-
-def patch_targets(
-    gt: CurveSet, x0: float, y0: float, size: int, widths: np.ndarray | None = None,
-    tolerance: float = 0.4, min_length: float = 3.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Ground-truth curves inside the patch ``[x0, x0 + size) x [y0, y0 + size)``.
-
-    Each stroke's part inside the patch is refitted into the shortest chain of
-    cubics (Schneider, ``tolerance`` px). The generator's own piece boundaries
-    are invisible in the image, so this canonical form is what a model can
-    actually learn. Returns ``(ctrls (k, 4, 2), widths (k,))`` in patch pixels.
-    """
-    from line2func.fit import fit_polyline
-
-    per_curve_w = None if widths is None else np.asarray(widths).reshape(len(gt), -1).mean(axis=1)
-    index = {id(c): i for i, c in enumerate(gt.curves)}
-    ctrls, ws = [], []
-    offset = np.array([x0, y0], dtype=np.float64)
-    for pieces in gt.strokes().values():
-        pts = []
-        for k, c in enumerate(pieces):
-            n = max(8, int(np.ceil(arc_length(c.ctrl) / 0.5)))
-            p = evaluate(c.ctrl, np.linspace(0.0, 1.0, n + 1)) - offset
-            pts.append(p if k == 0 else p[1:])
-        pts = np.vstack(pts)
-        w = 2.0 if per_curve_w is None else float(np.mean([per_curve_w[index[id(c)]] for c in pieces]))
-        for run in _inside_runs(pts, float(size)):
-            if len(run) < 2 or np.sum(np.linalg.norm(np.diff(run, axis=0), axis=1)) < min_length:
-                continue
-            for ctrl in fit_polyline(run, tolerance):
-                ctrls.append(ctrl)
-                ws.append(w)
-    if not ctrls:
-        return np.zeros((0, 4, 2)), np.zeros(0)
-    return np.array(ctrls), np.array(ws)
-
-
-def multi_curve_sample(
-    rng: np.random.Generator, size: int = 64, kind: str | Degradation = "hard", max_curves: int = 16,
-    context: int = 32,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """A ``size``² crop from the middle of a small scene, with every curve piece inside it.
-
-    Strokes enter and leave the patch, cross each other (shallow crossings
-    included for the hard preset) and may have gaps. Returns
-    ``(image uint8, ctrls (k, 4, 2) px, widths (k,) px)`` with ``k <= max_curves``
-    (the longest pieces are kept if there are more).
-    """
-    deg = preset(kind)
-    canvas = size + 2 * context
-    n_strokes = int(rng.integers(1, 5))
-    pairs = 1 if deg.shallow_crossings[1] > 0 and rng.random() < 0.3 else 0
-    scene = make_scene(rng, canvas, canvas, deg, n_strokes=n_strokes, crossing_pairs=pairs)
-    image = scene.image[context : context + size, context : context + size].copy()
-    ctrls, widths = patch_targets(scene.gt, context, context, size, np.array(scene.gt.meta["widths"]))
-    if len(ctrls) > max_curves:
-        lengths = np.array([arc_length(c) for c in ctrls])
-        keep = np.sort(np.argsort(-lengths)[:max_curves])
-        ctrls, widths = ctrls[keep], widths[keep]
-    return image, ctrls, widths
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from line2func import geometry as g, synth
+from line2func import geometry as g
 from line2func.curves import Curve, CurveSet
 from line2func.metrics import find_crossings, structure_scores
 from line2func.render import rasterize
@@ -12,8 +12,6 @@ from line2func.synth import (
     load_scene_dir,
     main,
     make_scene,
-    multi_curve_sample,
-    patch_targets,
     random_single_curve,
     single_curve_sample,
 )
@@ -113,27 +111,3 @@ def test_cli_scenes_and_valset(tmp_path):
     assert len(scenes) == 2 and scenes[0][1].meta["kind"] == "hard"
     assert main(["preview", "--patches", "--out", str(tmp_path / "p.png")]) == 0
     assert (tmp_path / "p.png").is_file()
-
-
-def test_patch_targets_clip_and_merge():
-    # one stroke made of two pieces joined smoothly, crossing a 40x40 patch at (30, 30)
-    a = g.line([0, 50], [50, 50])
-    b = g.line([50, 50], [100, 50])
-    gt = CurveSet(120, 120, [Curve(a, 0), Curve(b, 0), Curve(g.line([0, 0], [10, 10]), 1)])
-    ctrls, widths = patch_targets(gt, 30, 30, 40)
-    assert len(ctrls) == 1  # the invisible piece joint is merged; stroke 1 is outside
-    ends = sorted([ctrls[0][0, 0], ctrls[0][3, 0]])
-    assert ends[0] == pytest.approx(0.0, abs=0.51) and ends[1] == pytest.approx(40.0, abs=0.51)
-    np.testing.assert_allclose(ctrls[0][:, 1], 20.0, atol=1e-6)
-
-
-def test_multi_curve_sample_targets_lie_on_ink():
-    rng = np.random.default_rng(2)
-    for _ in range(10):
-        img, ctrls, widths = multi_curve_sample(rng, 64, "clean")
-        assert img.shape == (64, 64) and 1 <= len(ctrls) <= 16 and len(widths) == len(ctrls)
-        for c in ctrls:
-            pts = g.evaluate(c, np.linspace(0.05, 0.95, 20))
-            x = np.clip(pts[:, 0].astype(int), 0, 63)
-            y = np.clip(pts[:, 1].astype(int), 0, 63)
-            assert np.mean(img[y, x] < 200) > 0.9  # clean: the curve runs along dark ink
