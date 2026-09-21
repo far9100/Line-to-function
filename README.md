@@ -50,7 +50,7 @@ Photos (the pretrained line-art network) also need PyTorch; install a build
 for your GPU first, e.g.
 `pip install torch --index-url https://download.pytorch.org/whl/cu130` for an
 NVIDIA RTX 50-series card (CPU only: `pip install torch`), then
-`pip install -e ".[train,dev]"`.
+`pip install -e ".[torch,dev]"`.
 
 ### Use it in the browser
 
@@ -90,6 +90,7 @@ python -m line2func.serve out/                                    # look at the 
 | `out.svg` | The drawing as a vector image |
 | `curves.json` | Every curve: control points, stroke, width and color |
 | `overlay.png` | The curves over the original, for a quick check |
+| `source.png` | The original, as the result page shows it behind the curves |
 
 | Option | Meaning |
 |---|---|
@@ -163,7 +164,7 @@ python -m venv .venv
 pip install -e .
 ```
 
-照片（預訓練線稿模型）還需要 PyTorch：先安裝符合你 GPU 的版本，例如 NVIDIA RTX 50 系列用 `pip install torch --index-url https://download.pytorch.org/whl/cu130`（只用 CPU：`pip install torch`），再執行 `pip install -e ".[train,dev]"`。
+照片（預訓練線稿模型）還需要 PyTorch：先安裝符合你 GPU 的版本，例如 NVIDIA RTX 50 系列用 `pip install torch --index-url https://download.pytorch.org/whl/cu130`（只用 CPU：`pip install torch`），再執行 `pip install -e ".[torch,dev]"`。
 
 ### 用瀏覽器
 
@@ -194,6 +195,7 @@ python -m line2func.serve out/                                    # 在瀏覽器
 | `out.svg` | 向量圖 |
 | `curves.json` | 每條曲線的控制點、所屬筆畫、線寬與顏色 |
 | `overlay.png` | 曲線疊在原圖上，方便快速檢查 |
+| `source.png` | 原圖，結果頁面用它當曲線的底圖 |
 
 | 選項 | 意義 |
 |---|---|

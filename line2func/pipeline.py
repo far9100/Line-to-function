@@ -293,7 +293,7 @@ def trace(
         try:
             from line2func.optimize import optimize as render_optimize
         except ImportError as e:
-            raise ImportError("optimize=True needs PyTorch (pip install -e .[train])") from e
+            raise ImportError("optimize=True needs PyTorch (pip install -e .[torch])") from e
 
         step("optimize")
         render_optimize(curves, work_ink)

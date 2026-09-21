@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             import torch  # noqa: F401
         except ImportError:
-            print("error: --optimize needs PyTorch (pip install -e .[train])", file=sys.stderr)
+            print("error: --optimize needs PyTorch (pip install -e .[torch])", file=sys.stderr)
             return 2
 
     t0 = time.perf_counter()

@@ -51,7 +51,7 @@ Install a PyTorch build that matches your GPU **first**, then the extras:
 pip install torch --index-url https://download.pytorch.org/whl/cu130
 # (CPU only: pip install torch)
 
-pip install -e ".[train,dev]"     # adds pytest
+pip install -e ".[torch,dev]"     # adds pytest
 ```
 
 Verified setup: torch 2.14.0+cu130, Python 3.14, RTX 5070 (driver 596.21),
@@ -979,7 +979,7 @@ pip install -e .
 pip install torch --index-url https://download.pytorch.org/whl/cu130
 # （只用 CPU：pip install torch）
 
-pip install -e ".[train,dev]"     # 加上 pytest
+pip install -e ".[torch,dev]"     # 加上 pytest
 ```
 
 已驗證的環境：torch 2.14.0+cu130、Python 3.14、RTX 5070（驅動程式 596.21）、Windows 11。
