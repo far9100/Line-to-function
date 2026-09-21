@@ -72,15 +72,17 @@ def test_measure_leaves_outlines_alone():
     assert [(c.width, c.color) for c in cs] == before
 
 
-def test_svg_fills_outline_strokes():
+def test_svg_closes_outline_strokes_but_never_fills_them():
     loop = _wedge(20, 130, 50, 9.0, 1.0, n=4)
     pieces = [g.line(loop[i], loop[(i + 1) % len(loop)]) for i in range(len(loop))]
     cs = CurveSet(W, H, [Curve(p, stroke=0, tags=("outline",), width=1.0, color="#202020") for p in pieces]
                   + [Curve(g.line([10, 20], [150, 20]), stroke=1)])
-    root = ET.fromstring(to_svg(cs).split("\n", 1)[1])
+    svg = to_svg(cs)
+    root = ET.fromstring(svg.split("\n", 1)[1])
     paths = root.findall(".//{http://www.w3.org/2000/svg}path")
-    assert paths[0].get("fill") == "#202020" and paths[0].get("d").endswith("Z")
-    assert paths[1].get("fill") is None  # plain strokes keep the group's fill="none"
+    assert paths[0].get("d").endswith("Z")  # closed, so the curves inside it land in a shape
+    assert paths[0].get("stroke") == "#202020"
+    assert "fill=" not in svg.replace('fill="none"', "")  # only the group's own fill="none"
 
 
 def test_pipeline_outline_stage():

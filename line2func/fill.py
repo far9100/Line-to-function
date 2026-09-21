@@ -34,11 +34,12 @@ from scipy import ndimage
 
 from line2func import baseline
 from line2func.curves import Curve, CurveSet
-from line2func.render import SOLID_SHARE, filled_area
+from line2func.render import filled_area
 
 FILL_TAG = "fill"
 LINE_PX = 2.5  # px: how wide Desmos draws a line, with the whole drawing on screen
 MAX_SPACING = 12.0  # px: hatching wider apart than this reads as lines, not as tone
+SOLID_SHARE = 0.8  # of the drawing's dark ink (meta["ink_dark"]): this dark an area gets rings, not hatching
 
 
 def _area_tones(curves: CurveSet, labels: np.ndarray) -> list[float | None]:

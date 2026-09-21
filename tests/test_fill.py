@@ -74,9 +74,10 @@ def test_rings_make_a_solid_area_look_filled_in_desmos():
     hollow = rasterize(outline, W, H, line_width=2.5) > 0.5
     assert (with_rings & area).sum() / area.sum() > 0.97
     assert (hollow & area).sum() / area.sum() < 0.9
-    # Desmos gets every ring; the SVG fills the area itself and leaves them out
+    # every output draws the same curves: Desmos one expression each, the SVG one path per stroke
     assert len(to_desmos(cs).splitlines()) == len(cs)
-    assert to_svg(cs).count("<path") == 2
+    assert to_svg(cs).count("<path") == cs.num_strokes
+    assert "fill=" not in to_svg(cs).replace('fill="none"', "")
     attributes.measure(cs, fill_loops([wedge], W, H))
     assert all(c.width is None for c in rings)
 
@@ -115,19 +116,17 @@ def test_a_shadow_is_hatched_by_its_tone_and_a_solid_area_still_gets_rings():
     assert light < half < solid  # darker areas are drawn denser
 
 
-def test_a_shadow_keeps_its_measured_gray_in_every_line_color():
-    """The fill says how dark an area is, so a chosen line color must not replace it."""
+def test_a_shadow_is_drawn_not_filled_in_every_line_color():
+    """A shadow's outline is stroked in the gray measured inside it, and nothing is ever filled."""
     box = _dense(20, 20, 130, 85)
     cs = CurveSet(W, H, _loop(box, "fill_outline", 0), meta={"line_width": 2.0, "ink_dark": 1.0})
     for c in cs.curves:
         c.tone, c.color = 0.25, "#bfbfbf"
     for mode in ("measured", "bw", "palette", "random"):
         svg = to_svg(cs, color_mode=mode)
-        assert 'fill="#bfbfbf"' in svg and 'stroke="none"' in svg
-    for c in cs.curves:  # a solid area follows the chosen color, as it always has
-        c.tone = 1.0
-    assert 'fill="#bfbfbf"' in to_svg(cs, color_mode="measured")
-    assert 'fill="#bfbfbf"' not in to_svg(cs, color_mode="palette")
+        assert "fill=" not in svg.replace('fill="none"', "") and 'stroke="none"' not in svg
+    assert 'stroke="#bfbfbf"' in to_svg(cs, color_mode="measured")
+    assert 'stroke="#bfbfbf"' not in to_svg(cs, color_mode="palette")  # a chosen color still wins
 
 
 def test_no_rings_without_filled_areas():

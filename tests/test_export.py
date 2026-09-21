@@ -87,14 +87,13 @@ def test_svg_is_valid_and_joins_pieces():
     assert root.get("viewBox") == "0 0 100 80"
     paths = root.findall(".//{http://www.w3.org/2000/svg}path")
     assert len(paths) == 2
-    # the filled area is painted first, so the lines drawn over it stay visible
-    assert paths[0].get("class") == "fill_outline"
-    assert paths[1].get("d").count("M") == 1 and paths[1].get("d").count("C") == 2
+    assert paths[0].get("d").count("M") == 1 and paths[0].get("d").count("C") == 2
+    assert paths[1].get("class") == "fill_outline"
     assert 'stroke-width="2.5"' in svg
 
 
-def test_svg_fills_a_shadow_without_outlining_it():
-    """A filled area lighter than the drawing's dark ink is a shadow: filled, not stroked."""
+def test_svg_never_fills_anything():
+    """Every shaded part is lines, so the SVG, the page and Desmos draw the same thing."""
     cs = CurveSet(
         100, 80,
         [
@@ -104,12 +103,16 @@ def test_svg_fills_a_shadow_without_outlining_it():
         ],
         meta={"line_width": 2.5, "ink_dark": 0.8},
     )
-    svg = to_svg(cs)
-    root = ET.fromstring(svg.split("\n", 1)[1])
+    for mode in ("measured", "bw", "palette", "random"):
+        svg = to_svg(cs, color_mode=mode)
+        assert "fill=" not in svg.replace('fill="none"', "")  # only the <g>'s own fill="none"
+        assert 'stroke="none"' not in svg
+    root = ET.fromstring(to_svg(cs).split("\n", 1)[1])
     by_stroke = {p.get("id"): p for p in root.findall(".//{http://www.w3.org/2000/svg}path")}
     shadow, solid = by_stroke["stroke-1"], by_stroke["stroke-2"]
-    assert shadow.get("fill") == "#bfbfbf" and shadow.get("stroke") == "none"
-    assert solid.get("fill") == "#333333" and solid.get("stroke") == "#333333"
+    # closed and stroked in the color measured inside the area, but never filled
+    assert shadow.get("d").endswith("Z") and shadow.get("stroke") == "#bfbfbf"
+    assert solid.get("d").endswith("Z") and solid.get("stroke") == "#333333"
 
 
 def test_write_outputs(tmp_path):

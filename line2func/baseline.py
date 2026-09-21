@@ -45,6 +45,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
+from line2func.boundary import contours
 from line2func.curves import Curve, CurveSet
 from line2func.decisions import (
     GapCand,
@@ -1238,8 +1239,11 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *,
         # area's tone is only readable against the drawing's own dark ink (line2func.fill)
         result.meta["ink_dark"] = round(float(np.percentile(ink[mask], 90)), 3)
         labels, tone, color = area_tones(ink, fill_region, line_w, rgb)
-        outline = fill_region & ~ndimage.binary_erosion(fill_region, structure=_EIGHT)
-        outline_strokes = _strokes_from_skeleton(thin(outline), 0.5, params, close_gaps=False)
+        # Moore-neighbour contours, not the thinned edge walked as a skeleton: a filled area's
+        # boundary has to come back closed. The walk splits a ring wherever rings touch, and an
+        # open chain is then closed by a straight chord when it is filled, which invents the area
+        # between the two - most visibly across the blank middle of a shape (line2func.boundary)
+        outline_strokes = [(loop, True) for loop in contours(fill_region)]
         found = [_stroke_area(pts, labels) for pts, _ in outline_strokes]
         tones = [float(tone[k]) or None for k in found]
         colors = [color[k] for k in found]

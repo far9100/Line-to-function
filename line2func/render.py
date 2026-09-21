@@ -225,20 +225,6 @@ def render_overlay(
 
 
 FILLED_TAGS = ("outline", "fill_outline")
-SOLID_SHARE = 0.8  # of the drawing's dark ink (meta["ink_dark"]): a filled area this dark is solid
-
-
-def is_solid(tone: float | None, dark: float) -> bool:
-    """Whether a filled area of this tone counts as solid ink rather than as a shadow.
-
-    Judged against the drawing's own dark ink, not against black: a light pencil
-    drawing has no black in it, and its lines are still drawn at full darkness
-    everywhere they are drawn. An area with no measured tone counts as solid, so
-    anything traced before tones were measured looks the way it always did.
-    """
-    return tone is None or dark <= 0.0 or tone >= SOLID_SHARE * dark
-
-
 def stroke_loops(curves, tags: tuple[str, ...] = FILLED_TAGS) -> list[np.ndarray]:
     """Closed polygons of the strokes whose curves carry one of ``tags`` (outlines)."""
     items = curves.curves if isinstance(curves, CurveSet) else list(curves)

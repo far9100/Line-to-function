@@ -179,18 +179,22 @@ the tracer bridged a gap.
 **Filled areas.** Areas of flat ink, large ones and heavy strokes such as thick
 eyelashes, are traced by their outline only (tagged `fill_outline`; the outline
 of a thick or strongly tapered stroke is tagged `outline`). Each one carries how
-dark it is, as `tone` (0 paper, 1 black), and the SVG fills it with the color
-measured inside it. Desmos cannot fill pasted curves, so the area is filled
-there with curves tagged `fill`: rings 1.5 px apart when it is as dark as the
-drawing's own dark ink, and 45 degree hatching spaced by its tone when it is
-lighter, such as a shadow. The SVG leaves those out.
+dark it is, as `tone` (0 paper, 1 black). **Nothing is ever filled.** An area is
+drawn with curves tagged `fill` across it: rings 1.5 px apart when it is as dark
+as the drawing's own dark ink, and 45 degree hatching spaced by its tone when it
+is lighter, such as a shadow. Desmos cannot fill a pasted expression, so this is
+the only way tone reaches it - and the page and the SVG draw the same curves, so
+all three outputs show the same drawing. Its outline is stroked in the color
+measured inside it, and closed, so the curves inside land in a shape.
 
-**The page shows what Desmos will show**, not what the SVG will: it draws every
-curve as a line, including the rings and hatching, and fills nothing. Desmos is
-where a filled area looks least like itself, so that is the one worth previewing
-- an area that reads as a solid block on screen but as a ring pattern once
-pasted is a surprise at the wrong moment. A downloaded SVG is filled, so it is
-the one output that does not match the page.
+Its boundary is traced with Moore-neighbour contours
+(:func:`line2func.boundary.contours`), not by thinning the edge and walking it as
+a skeleton. A boundary has to come back closed: the walk splits a ring wherever
+two rings touch, and an open chain is then closed by a straight chord when it is
+filled, inventing the area between the two. On `lineArt (5).jpg` that invented
+129,399 px against a true filled area of 87,337 - it nearly doubled it - and on
+`lineArt (11).jpg` it painted over the blank upper half of a plum-blossom pupil.
+With contours every loop closes, and the invented area falls to 2,050 px.
 
 <details>
 <summary><code>curves.json</code> format</summary>
@@ -372,7 +376,7 @@ python -m line2func.demo IMAGE [options]
 | `--quality` | off | Judge the result against the image: `quality.json`, `quality.png` and a summary (section 8) |
 | `--no-residual` | second pass on | Skip the second pass that traces the ink the first pass left uncovered (section 8) |
 | `--no-outline` | outlines on | Keep solid areas (heavy eyelashes) and thick or wedge-shaped strokes (brush strokes) as centerlines instead of filled outlines |
-| `--no-fill` | fill on | Leave filled areas hollow in Desmos: nothing inside them (the SVG fills them anyway) |
+| `--no-fill` | on | Leave filled areas hollow: only their outline, no rings or hatching inside |
 | `--optimize` | off | Refine every curve by render-and-compare. Needs PyTorch; for a 760×818 drawing about 3 s on an RTX 5070, 13 s on the CPU (section 8) |
 
 ### 8. Tips for good results
@@ -414,8 +418,8 @@ Three steps target detail that a single tracing pass loses:
   dropped.
 - **Outlines** (on by default, `--no-outline` to skip): solid areas, such as a
   heavy eyelash, and strokes much thicker than the drawing's lines or strongly
-  tapered (a brush tip) become closed outlines. The SVG fills them, and curves
-  inside make them look filled in Desmos, at their own tone (below).
+  tapered (a brush tip) become closed outlines, with rings or hatching inside
+  them at their own tone (below). Nothing is filled, in any output.
 - **Render-and-compare** (`--optimize`, needs PyTorch): all curves are drawn
   with a differentiable renderer and moved by gradient descent until the
   drawing matches the image. Strokes stay joined and filled outlines are kept.
@@ -998,9 +1002,9 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 
 **信心值**是曲線落在墨跡上的比例。描線器補過缺口的地方，信心值會低於 1。
 
-**填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑），SVG 會用在區域內部量到的顏色把它填滿。Desmos 無法填滿貼上的曲線，所以區域在那裡是用標上 `fill` 的曲線填的：和圖中暗墨一樣深的區域用間隔 1.5 px 的圈線，比較淺的（例如陰影）則用依濃淡調整間隔的 45 度排線。SVG 不含這些曲線。
+**填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑），SVG 會用在區域內部量到的顏色把它填滿。Desmos 無法填滿貼上的曲線，所以區域在那裡是用標上 `fill` 的曲線填的：**完全不填色。** 區域是用標上 `fill` 的曲線畫出來的：和圖中暗墨一樣深的用間隔 1.5 px 的圈線，比較淺的（例如陰影）用依濃淡調整間隔的 45 度排線。Desmos 無法填滿貼上的算式，所以這是濃淡唯一能傳達過去的方式 —— 而網頁與 SVG 畫的是同一批曲線，所以三種輸出看到的是同一張圖。區域的外框用在內部量到的顏色描邊，並且封閉，裡面的曲線才會落在一個形狀內。
 
-**網頁畫面顯示的是 Desmos 會看到的樣子**，而不是 SVG 的樣子：它把每一條曲線都畫成線，包含圈線與排線，完全不填色。填滿的區域在 Desmos 裡最不像它自己，所以那才是值得預覽的對象 —— 在畫面上看起來是一塊實心、貼進 Desmos 後卻變成一圈圈的線，這種意外出現的時機最糟。下載的 SVG 仍然是填色的，所以它是唯一和網頁畫面不一致的輸出。
+區域的邊界是用 Moore 鄰域輪廓追蹤取得的（:func:`line2func.boundary.contours`），不是把邊緣細化後當骨架走。邊界必須是封閉的：兩個環相接的地方，骨架走訪會把環切開，而開放的鏈在填色時會被一條直線弦接起來，憑空造出兩者之間的面積。在 `lineArt (5).jpg` 上這憑空多出 129,399 px（真實填色區域是 87,337，幾乎翻倍），在 `lineArt (11).jpg` 上則把梅花狀瞳孔空白的上半部塗掉了。改用輪廓追蹤後每個環都封閉，憑空多出的面積降到 2,050 px。
 
 <details>
 <summary><code>curves.json</code> 格式</summary>
@@ -1150,7 +1154,7 @@ python -m line2func.demo IMAGE [options]
 | `--quality` | 關閉 | 拿結果和原圖比對：輸出 `quality.json`、`quality.png` 與摘要（見第 8 節） |
 | `--no-residual` | 第二遍開啟 | 跳過第二遍描線（第二遍只描第一遍沒蓋到的墨跡，見第 8 節） |
 | `--no-outline` | 外框開啟 | 實心區域（粗重的睫毛）以及粗筆畫、楔形筆畫（筆刷）維持中心線，不改成填滿的外框 |
-| `--no-fill` | 填色開啟 | 在 Desmos 裡讓填滿的區域保持空心：裡面不加曲線（SVG 本來就會填滿） |
+| `--no-fill` | 開啟 | 讓填滿的區域保持空心：只留外框，裡面不加圈線或排線 |
 | `--optimize` | 關閉 | 用「渲染後比對」微調每一條曲線。需要 PyTorch；760×818 的圖在 RTX 5070 上約 3 秒，CPU 約 13 秒（見第 8 節） |
 
 ### 8. 取得好結果的訣竅
@@ -1169,7 +1173,7 @@ python -m line2func.demo IMAGE [options]
 有三個步驟專門處理單次描線會遺失的細節：
 
 - **第二遍描線**（預設開啟，`--no-residual` 關閉）：第一遍描完後，把還沒有任何曲線蓋到的墨跡單獨再描一次。太短的、大部分不在墨跡上的、或只是重複描既有曲線的片段都會被丟掉。
-- **外框**（預設開啟，`--no-outline` 關閉）：實心區域（例如粗重的睫毛），以及比圖中一般線條粗很多、或兩端粗細差很多的筆畫（例如筆刷的尖端），會改用封閉的外框表示。SVG 會把它們填滿，裡面的曲線則讓它們在 Desmos 裡也照自己的濃淡顯示（見下文）。
+- **外框**（預設開啟，`--no-outline` 關閉）：實心區域（例如粗重的睫毛），以及比圖中一般線條粗很多、或兩端粗細差很多的筆畫（例如筆刷的尖端），會改用封閉的外框表示，裡面用圈線或排線畫出它自己的濃淡（見下文）。任何一種輸出都不填色。
 - **渲染後比對**（`--optimize`，需要 PyTorch）：用可微分的渲染器把所有曲線畫出來，再用梯度下降移動曲線，直到畫出來的圖和原圖一致。同一筆畫的各段曲線會保持相連，填滿的外框則維持不動。
 
 加入這三個步驟時，它們一起讓兩張真實線稿的線條保留率從 98.3% 和 99.0% 提高到 99.7% 和 99.5%，漏掉的墨跡從 1.8% 降到 0.6%、從 6.3% 降到 5.2%。這三個步驟都救不回來的，是淡到不像線的墨跡（模糊的陰影、虹膜柔和的光環）。
