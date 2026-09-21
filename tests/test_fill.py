@@ -58,6 +58,27 @@ def test_a_heavy_lash_is_a_solid_area_but_close_lines_are_not():
     assert not any("fill_outline" in c.tags for c in plain)
 
 
+def test_a_strand_crossing_a_lash_is_not_swallowed_by_it():
+    """The thick part is grown back by a fixed radius, so without a depth floor every piece of ink
+    within that radius joins the area - a hair strand crossing a heavy eyelash, and the paper
+    between the two. The floor follows the lash down its own taper and stops at the strand."""
+    strand = rasterize([g.line([40, 20], [40, 58])], W, H, line_width=2.0)  # crosses the lash's thick end
+    ink = np.maximum(_drawing(), strand)
+    edge = 46.5  # the lash's own lower edge where the strand crosses it (it tapers 13 px -> 2 px)
+
+    def area(depth):
+        cs = vectorize(ink, BaselineParams(threshold=0.3, solid_ratio=2.5, solid_depth=depth))
+        solid = [c for c in cs if "fill_outline" in c.tags]
+        assert solid, f"no solid area at solid_depth={depth}"
+        return _points(solid, 24), cs
+
+    pts, cs = area(0.5)  # the default
+    assert pts[:, 1].max() < edge  # the area stays inside the lash
+    assert any(np.abs(_points([c])[:, 0] - 40).max() < 2.0 for c in cs
+               if "fill_outline" not in c.tags)  # and the strand is still traced, as a line
+    assert area(0.0)[0][:, 1].max() > edge  # without the floor it creeps down the strand
+
+
 def test_rings_make_a_solid_area_look_filled_in_desmos():
     wedge = _wedge(20, 140, 50, 12.0, 2.0)
     line = Curve(g.line([10, 95], [150, 95]), stroke=1)

@@ -25,7 +25,7 @@ import numpy as np
 from line2func.curves import Curve, CurveSet
 from line2func.functions import FUNCTION_TOLERANCE, attach, curve_functions
 from line2func.geometry import flip_y, to_power
-from line2func.render import render_overlay, save_png
+from line2func.render import FILLED_TAGS, render_overlay, save_png
 
 
 DESMOS_CURVE_LIMIT = 5000  # the most curves line2func makes for Desmos by default (demo); more gets a warning
@@ -201,6 +201,26 @@ def to_latex(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, fo
 DESMOS_JS_VAR = "LINE2FUNC"  # the name the styled output binds its expression list to
 DESMOS_MIN_WIDTH = 0.5  # px: thinner than this a Desmos line all but disappears, and a faint
 # stroke measured at 0.09 px would be dropped from the drawing rather than drawn faintly
+OUTLINE_WIDTH = 1.0  # px: a filled area's outline is its edge, not a line anyone drew, so it is
+# stroked just wide enough to close the area, and the curves inside it (line2func.fill) carry the
+# tone. Falling back to the drawing's line width instead drew it half a line width outside the
+# area on every side: on a heavy eyelash measured at a half width of 3.6 px that alone drew it
+# 1.6x its own area. A dark area is spaced at the 1.5 px floor, so its first ring already reaches
+# this seal; a light one is meant to have paper showing between its curves. A thick stroke's own
+# outline (line2func.outline) has been written at this width all along; a filled area's had none.
+
+
+def outline_width(c: Curve, line_width: float) -> float:
+    """How wide the outline of a filled area is stroked.
+
+    A filled area's outline has ink on one side only, so no width is measured
+    along it (:mod:`line2func.attributes`) and every output used to fall back to
+    the drawing's own line width - which is wider than most of its strokes when
+    the ink threshold was lowered, and half of which lands outside the area.
+    """
+    if c.width is not None:
+        return float(c.width)
+    return OUTLINE_WIDTH if any(t in c.tags for t in FILLED_TAGS) else float(line_width)
 
 
 def tone_color(tone: float) -> str:
@@ -238,17 +258,15 @@ def desmos_style(c: Curve, line_width: float, dark: float) -> tuple[str, float]:
     Everything else keeps the width and color measured along it (``Curve.width`` /
     ``Curve.color``), falling back to the drawing's line width, and to the area tone
     where no color was measured - the outline of a filled area has ink on one side
-    only, so it has no width of its own (:mod:`line2func.attributes`).
+    only, so it has no width of its own (:mod:`line2func.attributes`) and takes
+    :func:`outline_width` instead.
     """
     from line2func.fill import FILL_TAG, spacing_for
 
     color = c.color
     if color is None:
         color = tone_color(c.tone) if c.tone is not None else BW_COLOR
-    if FILL_TAG in c.tags:
-        width = spacing_for(c.tone, dark)
-    else:
-        width = float(c.width) if c.width is not None else line_width
+    width = spacing_for(c.tone, dark) if FILL_TAG in c.tags else outline_width(c, line_width)
     return desmos_color(color), round(max(width, DESMOS_MIN_WIDTH), 2)
 
 
@@ -361,7 +379,10 @@ def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000
         attrs = f' class="{" ".join(tags)}"' if tags else ""
         picked = stroke_color(color_mode, stroke, seed) if chosen else None
         if measured:
-            widths = [c.width for c in pieces if c.width is not None]
+            # a filled area's outline has no measured width: outline_width gives it the one that
+            # closes the area rather than the drawing's line width (which the <g> would hand it)
+            widths = [outline_width(c, line_width) for c in pieces
+                      if c.width is not None or any(t in c.tags for t in FILLED_TAGS)]
             colors = [c.color for c in pieces if c.color is not None]
             if widths and not even:  # "uniform": the <g> above already carries the one width
                 attrs += f' stroke-width="{_svg_num(float(np.median(widths)))}"'

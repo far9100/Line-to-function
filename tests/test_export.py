@@ -10,6 +10,7 @@ from line2func.curves import Curve, CurveSet
 from line2func.export import (
     DESMOS_JS_VAR,
     DESMOS_MIN_WIDTH,
+    OUTLINE_WIDTH,
     desmos_color,
     desmos_line,
     format_number,
@@ -118,6 +119,10 @@ def test_svg_never_fills_anything():
     # closed and stroked in the color measured inside the area, but never filled
     assert shadow.get("d").endswith("Z") and shadow.get("stroke") == "#bfbfbf"
     assert solid.get("d").endswith("Z") and solid.get("stroke") == "#333333"
+    # an area's outline is its edge, not a line: stroked just wide enough to close it. At the
+    # drawing's line width (the <g>'s, which it used to inherit) half of it lands outside the area.
+    assert float(shadow.get("stroke-width")) == float(solid.get("stroke-width")) == OUTLINE_WIDTH
+    assert by_stroke["stroke-0"].get("stroke-width") is None  # a plain line with no measured width
 
 
 # ---------- the styled Desmos output (desmos.js) ----------
@@ -157,8 +162,9 @@ def test_desmos_js_carries_the_measured_width_and_color():
     """What desmos.txt can only say by drawing densely, desmos.js says with a color and a width."""
     by_stroke = {c.stroke: i for c, i in zip(shaded_set(), js_items(to_desmos_js(shaded_set())))}
     assert by_stroke[0]["color"] == "#222222" and by_stroke[0]["lineWidth"] == 3.0
-    # an outline has ink on one side only, so no width of its own: the drawing's line width
-    assert by_stroke[1]["color"] == "#999999" and by_stroke[1]["lineWidth"] == 2.5
+    # an outline has ink on one side only, so no width of its own: it is stroked just wide enough
+    # to close the area, not at the drawing's line width, which lands half of it outside the area
+    assert by_stroke[1]["color"] == "#999999" and by_stroke[1]["lineWidth"] == OUTLINE_WIDTH
     # a curve inside an area is drawn as wide as it is spaced, so the area comes out a solid
     # patch of its own gray instead of showing paper between the curves
     for stroke, tone in ((2, 0.40), (4, 0.80)):

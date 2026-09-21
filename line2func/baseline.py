@@ -81,6 +81,15 @@ class BaselineParams:
     # solid area too (heavy eyelashes, brush wedges; see solid_areas). None = only fill_ratio blobs
     solid_ratio: float | None = None
     solid_length: float = 2.0
+    # how deep the ink must stay for the thick part to grow along it, as a fraction of the seed
+    # radius. The grow-back is a fixed-radius dilation of the seeds, so without this every piece of
+    # ink within that radius joins the area however thin it is, and a hair strand crossing a heavy
+    # eyelash is swallowed along with the paper between them. 0 keeps the whole ink.
+    solid_depth: float = 0.5
+    # dilations (about a pixel each) of soft rim given back to a solid area when the ink threshold
+    # was lowered below Otsu's: the area is judged on the strong ink, and this much of the fainter
+    # edge around it is added back. More than the rim is wide reaches the next stroke instead.
+    solid_rim: int = 1
     smooth_sigma: float = 1.0  # smoothing of the pixel chain before fitting, px
     # measure the distorted zone around each junction on the junction itself (the disk inscribed in the
     # ink there) rather than using half the drawing's typical line width everywhere. Over 66 real
@@ -386,7 +395,7 @@ def ink_length(ink: np.ndarray, threshold: float | None = None) -> float:
 
 
 def solid_areas(ink: np.ndarray, mask: np.ndarray, dist: np.ndarray, skel: np.ndarray, line_w: float,
-                ratio: float, length: float, flat: float = 0.8) -> np.ndarray:
+                ratio: float, length: float, flat: float = 0.8, depth: float = 0.5) -> np.ndarray:
     """How dark each area of flat ink at least ``ratio`` line widths thick over ``length`` of them is.
 
     Returns the areas' tone: 0 where there is none, and where there is one, how
@@ -412,6 +421,15 @@ def solid_areas(ink: np.ndarray, mask: np.ndarray, dist: np.ndarray, skel: np.nd
     is what does the work and cannot be loosened: at ``flat`` 0.7 the areas on
     lineArt (11) go from 1.1% of the page to 3.5% as clusters of strokes start
     to qualify.
+
+    ``depth`` is how deep the ink must stay for the area to grow along it, as a
+    fraction of the seed radius. Growing the seeds back is a dilation by a fixed
+    radius, so on its own it takes in every piece of ink within that radius
+    however thin that ink is: a hair strand crossing a heavy eyelash is annexed,
+    and the paper between the two is then inside the area's outline. Requiring
+    half the seed radius follows the lash down its own taper and stops at a
+    strand a third as thick. Pieces left without a seed of their own are
+    dropped, so a floor cannot invent an area where there was none.
     """
     r = 0.5 * (ratio * line_w + 1.0)  # distance to the edge at the middle of ink that thick
     out = np.zeros(mask.shape, dtype=np.float32)
@@ -419,6 +437,10 @@ def solid_areas(ink: np.ndarray, mask: np.ndarray, dist: np.ndarray, skel: np.nd
     if not seeds.any():
         return out
     region = mask & (ndimage.distance_transform_edt(~seeds) <= r + 1.0)
+    if depth > 0.0:
+        region &= dist >= depth * r
+        keep, _ = ndimage.label(region, structure=_EIGHT)
+        region = np.isin(keep, np.unique(keep[seeds & region]))  # the floor can cut off seedless pieces
     labels, n = ndimage.label(region, structure=_EIGHT)
     run = np.bincount(labels[skel & seeds], minlength=n + 1)
     size = 2 * int(np.ceil(r)) + 1
@@ -1188,14 +1210,17 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *,
         fill_region = _remove_small(fill_region, 4.0 * fill_radius * fill_radius)
     if params.solid_ratio is not None:
         if not lowered:
-            solid = solid_areas(ink, mask, dist, skel0, rough_w, params.solid_ratio, params.solid_length) > 0
+            solid = solid_areas(ink, mask, dist, skel0, rough_w, params.solid_ratio, params.solid_length,
+                                depth=params.solid_depth) > 0
         else:
             # judged at the reference threshold, like the line width, then given back the soft rim
             # that the lower ink threshold adds around them
             core = _fill_holes(strong & mask, max(3.0, 0.5 * rough_w * rough_w))
             solid = solid_areas(ink, core, ndimage.distance_transform_edt(core), skel0, rough_w,
-                                params.solid_ratio, params.solid_length) > 0
-            solid = mask & ndimage.binary_dilation(solid, structure=_EIGHT, iterations=2)
+                                params.solid_ratio, params.solid_length, depth=params.solid_depth) > 0
+            if params.solid_rim > 0:
+                solid = mask & ndimage.binary_dilation(solid, structure=_EIGHT,
+                                                       iterations=params.solid_rim)
         fill_region = fill_region | solid
 
     line_mask = _remove_small(mask & ~fill_region, min_area, join) if fill_region.any() else mask

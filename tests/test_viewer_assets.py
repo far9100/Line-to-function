@@ -17,8 +17,9 @@ from line2func import app as app_mod
 from line2func import pipeline, serve
 from line2func.curves import Curve, CurveSet
 from line2func import geometry as g
-from line2func.export import (DESMOS_CURVE_LIMIT, LINE_COLOR_MODES, LINE_WIDTH_MODES, PALETTE,
+from line2func.export import (DESMOS_CURVE_LIMIT, LINE_COLOR_MODES, LINE_WIDTH_MODES, OUTLINE_WIDTH, PALETTE,
                               RANDOM_BUCKETS, desmos_line, stroke_color, to_desmos_js, to_svg)
+from line2func.render import FILLED_TAGS
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -50,6 +51,14 @@ def test_the_page_knows_every_stage():
 def test_the_viewer_and_the_exporter_share_the_desmos_limit():
     source = (serve.VIEWER_DIR / "viewer.js").read_text(encoding="utf-8")
     assert int(re.search(r"export const DESMOS_LIMIT = (\d+);", source).group(1)) == DESMOS_CURVE_LIMIT
+
+
+def test_the_viewer_and_the_exporter_share_the_outline_width():
+    """The canvas draws a filled area's outline at the width the SVG gives it, not the drawing's."""
+    source = (serve.VIEWER_DIR / "viewer.js").read_text(encoding="utf-8")
+    assert float(re.search(r"export const OUTLINE_WIDTH = ([\d.]+);", source).group(1)) == OUTLINE_WIDTH
+    tags = re.search(r"const FILLED_TAGS = \[(.*?)\];", source).group(1)
+    assert sorted(re.findall(r'"(\w+)"', tags)) == sorted(FILLED_TAGS)
 
 
 def test_the_page_starts_where_it_says_it_does():

@@ -18,6 +18,7 @@ from scipy import ndimage
 
 from line2func.attributes import _cross_sections, _own_peaks
 from line2func.curves import Curve, CurveSet
+from line2func.export import OUTLINE_WIDTH
 from line2func.fit import fit_polyline
 from line2func.geometry import arc_length
 
@@ -99,7 +100,7 @@ def outline_thick(
             continue
         for p in pieces:
             added.append(Curve(p, stroke=next_stroke, confidence=c.confidence, tags=tuple(c.tags) + ("outline",),
-                               width=1.0, color=c.color))
+                               width=OUTLINE_WIDTH, color=c.color))
         next_stroke += 1
         replaced += 1
     curves.curves = kept + added

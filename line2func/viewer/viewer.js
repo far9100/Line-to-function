@@ -13,6 +13,9 @@ export const LINE_COLOR_MODES = ["bw", "palette", "random"]; // the page's choic
 export const RANDOM_BUCKETS = 64; // = line2func.export.RANDOM_BUCKETS: hues repeat every 64 strokes
 export const LINE_WIDTH_MODES = ["measured", "uniform"]; // = line2func.export.LINE_WIDTH_MODES
 export const WIDTH_STEP = 0.1; // measured widths are drawn rounded to this, to keep the number of paths small
+export const OUTLINE_WIDTH = 1.0; // = line2func.export.OUTLINE_WIDTH: a filled area's outline is its edge,
+// not a line, so it is stroked only wide enough to close the area (the curves inside it carry the tone)
+const FILLED_TAGS = ["outline", "fill_outline"]; // = line2func.render.FILLED_TAGS
 const MIN_SCREEN_WIDTH = 0.75; // a thin stroke stays at least this many screen pixels wide, whatever the zoom
 export const BW_COLOR = "#000";
 
@@ -165,10 +168,13 @@ export function createViewer(el) {
     const fallback = docWidth;
     const perStroke = new Map(); // stroke -> its pieces' widths
     for (const c of curves) {
-      if (c.width == null) continue;
+      // a filled area's outline has no measured width; it takes the one that closes the area,
+      // as line2func.export.outline_width does, rather than the drawing's line width
+      const w0 = c.width ?? (c.tags.some((t) => FILLED_TAGS.includes(t)) ? OUTLINE_WIDTH : null);
+      if (w0 == null) continue;
       let w = perStroke.get(c.stroke);
       if (!w) perStroke.set(c.stroke, (w = []));
-      w.push(c.width);
+      w.push(w0);
     }
     const median = new Map();
     for (const [stroke, w] of perStroke) {

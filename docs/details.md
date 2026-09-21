@@ -605,12 +605,46 @@ separates a wash of tone from a cluster of strokes, and it cannot be loosened -
 at 0.7 x the darkest ink nearby instead of 0.8, the areas on `lineArt (11)` of
 the JPEG set go from 1.1% of the page to 3.5% as stroke clusters start to pass.
 
+**How far the area reaches.** The thick part is found as the disks that fit
+inside the ink, and those disks are then grown back by their own radius, so on
+its own the area takes in every piece of ink within that radius - however thin
+it is. A hair strand crossing a heavy eyelash is annexed, and the paper between
+the two ends up inside the area's outline. The area therefore only grows along
+ink that stays at least half the seed radius deep (`solid_depth`), which follows
+the lash down its own taper and stops at a strand a third as thick. On a chibi
+line drawing whose bangs cross both eyes, that takes the traced lash from 1.25
+and 1.19 times the drawing's own black down to 1.01 and 0.95, and the share of
+each area that is ink under 4 px wide - the annexed hair - from 25% to about
+12%. Where the ink threshold was lowered below Otsu's, the area is judged on the
+strong ink and the fainter rim around it is added back afterwards; that rim is
+one pixel (`solid_rim`), because two reached past the soft edge and into the
+next stroke (the same two lashes: 1.25 and 1.19 times the black, against 1.17
+and 1.10 at one pixel).
+
 **Every filled area is measured for how dark it is**, and is drawn at that tone.
 Nothing fills it: Desmos cannot fill a pasted expression and draws every line at
 one darkness, so the tone becomes line density there, and the SVG and the page
 draw the same curves Desmos gets, so all three show the same drawing. A shadow
 gets no outline drawn around it either - its edge is where the tone fades out,
 not a line anyone drew.
+
+An area's outline has ink on one side only, so no width is measured along it,
+and the page, the SVG and `desmos.js` used to fall back to the drawing's own
+line width - which is measured at the ink threshold, soft edges included, and so
+is wider than most of the drawing's strokes (3.43 px against a measured median
+of 2.36 px on the chibi drawing above). Stroked on the area's edge, half of that
+lands outside it. The outline is its edge, not a line anyone drew, so it is
+stroked at 1 px, just wide enough to close the area, and the curves inside carry
+the tone - the width a thick stroke's own outline has been written at all along
+(`line2func.outline`). On the two lashes that took the drawn area from 1.60 and
+1.57 times the drawing's black to 1.26 and 1.24; with the reach above as well,
+to 1.02 and 0.96, and the drawn half width from 8.25 px and 7.28 px to 5.39 px
+and 5.00 px, where the ink's own are 4.12 px and 3.61 px.
+
+Over the 81 real drawings, paired: **lines kept and missed ink do not move at all** (median
+difference 0, interval [0, 0]), and `precision`, `d_M`, PSNR, SSIM and the curve count do not
+reach significance. The cost is 0.4% more curve length per unit of skeleton - a smaller area
+hands its rim back to the line tracer - and 0.1 s on a 7.3 s median.
 
 One formula sets the spacing for every area, with no step anywhere in it:
 
@@ -1350,7 +1384,13 @@ python -m line2func.demo IMAGE [options]
 
 像粗重睫毛這種很粗的黑色筆畫，以前會被細化成一團短短的中心線，在 Desmos 裡也只畫成細線。至少 2.5 個線寬粗、有一定長度，而且中間夠**平坦**的墨跡，會被描成一個填滿的區域。兩條靠得太近、墨跡黏在一起的線不算：它們中間的墨比較淡，所以仍然是線。平坦度正是分辨「一片灰階塗抹」和「一堆擠在一起的線條」的關鍵，而且不能放寬：門檻從附近最黑墨色的 0.8 倍改成 0.7 倍時，JPEG 測試集裡 `lineArt (11)` 的區域面積就從整頁的 1.1% 衝到 3.5%，開始把密集線條也算進去。
 
+**區域會長到多大。** 粗的部分是用「塞得進墨裡的圓盤」找出來的，接著再以同樣的半徑往外長回去；所以單靠這一步，半徑內的每一塊墨都會被併進來——不管它自己有多細。橫過粗重睫毛的一撮頭髮就會被吃掉，連帶兩者之間的紙白也落進區域的外框裡。因此區域只會沿著「自己也至少有半個種子半徑深」的墨生長（`solid_depth`）：這樣會順著睫毛自己的錐形一路跟下去，但在只有三分之一粗的髮絲前停住。在一張瀏海蓋過雙眼的 Q 版線稿上，描出來的睫毛從原圖黑色的 1.25 倍與 1.19 倍降到 1.01 倍與 0.95 倍，而區域裡「寬度不到 4 px 的墨」（也就是被吃進來的頭髮）從 25% 降到約 12%。若墨門檻被調到 Otsu 之下，區域是用強墨判定的，之後再把周圍較淡的軟邊補回去；這個軟邊是 1 px（`solid_rim`），因為補 2 px 會越過軟邊、伸進旁邊的筆畫（同樣那兩道睫毛：補 2 px 是黑色的 1.25 倍與 1.19 倍，補 1 px 是 1.17 倍與 1.10 倍）。
+
 **每個填滿的區域都會量測自己有多深**，並照那個濃淡畫出來。**沒有任何地方會填色**：Desmos 沒辦法填滿貼上的算式，而且每條線都一樣深，所以在那裡濃淡是用線的密度表示；而 SVG 與網頁畫的就是 Desmos 拿到的同一批曲線，所以三種輸出看到的是同一張圖。陰影也不另外描邊——它的邊界是濃淡淡出去的地方，不是誰畫的線。
+
+區域的外框只有一側有墨，所以量不出自己的線寬；網頁、SVG 與 `desmos.js` 以前都退回用全圖的線寬——那是在墨門檻上量的、含軟邊，所以比圖中大多數筆畫還粗（上面那張 Q 版線稿是 3.43 px，實際量到的線寬中位數只有 2.36 px）。以區域邊界為中心描這麼粗的邊，等於有一半畫在區域外面。外框是區域的邊界、不是誰畫的線，所以只用 1 px 描邊，剛好把區域封起來，裡面的濃淡交給區域內的曲線——粗筆畫自己的外框一直都是用這個線寬寫出來的（`line2func.outline`）。同樣那兩道睫毛，畫出來的面積因此從原圖黑色的 1.60 倍與 1.57 倍降到 1.26 倍與 1.24 倍；再加上前面的生長規則，降到 1.02 倍與 0.96 倍，畫出來的半寬也從 8.25 px 與 7.28 px 降到 5.39 px 與 5.00 px（原圖的墨本身是 4.12 px 與 3.61 px）。
+
+在 81 張實測線稿上做配對比較：**保留的線與漏掉的墨完全沒有變動**（中位差 0，區間 [0, 0]），`precision`、`d_M`、PSNR、SSIM 與曲線數都未達顯著。代價是每單位骨架長度的曲線長度多 0.4%（區域縮小後，邊緣還給了線描），以及中位 7.3 秒多 0.1 秒。
 
 所有區域共用同一條間距算式，中間沒有任何跳階：
 
