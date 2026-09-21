@@ -2,7 +2,6 @@
 
     python -m line2func.synth valset --out data/val_v1           # once: write the standard set
     python -m line2func.eval --valset data/val_v1                    # the baseline engine
-    python -m line2func.eval --valset data/val_v1 --decisions learned   # a decision scorer vs the rules
     python -m line2func.eval --realset data/real_v1 --json runs/real_a.json      # real drawings, no ground truth
     python -m line2func.eval --realset data/real_v1 --set local_trim=false --json runs/real_b.json
     python -m line2func.eval --compare runs/real_b.json runs/real_a.json         # paired, with intervals
@@ -12,7 +11,6 @@ subset (clean, hard, hard2, thin): F_GT@2, crossing continuity, gap closure,
 fragments per stroke, curve count ratio, length ratio and CPU seconds per
 megapixel, plus the decision metrics and an F sweep over tolerances (in
 thousandths of the long edge, so it is comparable across resolutions).
-``--decisions`` also checks a scorer's gates (G1-G7).
 
 ``--realset`` judges real drawings, which have no ground truth, against their
 own ink (:mod:`line2func.quality`), traced at a fixed tolerance with no curve
@@ -42,8 +40,6 @@ import numpy as np
 from line2func import baseline, lineart
 from line2func.curves import CurveSet
 from line2func.metrics import (
-    decision_counts,
-    decision_scores,
     f_score,
     f_sweep,
     structure_scores,
@@ -53,10 +49,6 @@ from line2func.synth import load_scene_dir
 
 IMAGE_TYPES = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")  # the drawings --realset reads
 REAL_SEED = 2_000_011  # the bootstrap's resampling, so a comparison is reproducible
-# repeated timings of one subset that disagree by more than this do not decide G7 (--repeat)
-TIMING_SPREAD = 0.03
-
-
 def _subsets(valset: Path) -> dict[str, Path]:
     if any(valset.glob("*.json")):
         return {valset.name: valset}
@@ -76,10 +68,8 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
     a gate whose margin is under a percent can be turned over by whatever else
     the machine is doing, which has happened here.
 
-    Besides the structure metrics, every subset gets the decision metrics of
-    :func:`line2func.metrics.decision_scores` (pooled over its scenes), which
-    also penalize wrong joins. With ``pass_gt`` the engine is called as
-    ``vectorize(ink, gt)`` (oracle experiments).
+    With ``pass_gt`` the engine is called as ``vectorize(ink, gt)`` (oracle
+    experiments).
     """
     vectorize = vectorize or baseline.vectorize
     results = {}
@@ -92,7 +82,7 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
         len_pred = len_gt = 0.0
         megapixels = 0.0
         runs = np.zeros(max(1, repeat))  # each pass over the subset timed on its own
-        pooled: dict[str, float] = {}
+
         swept: dict[str, float] = {}
         for png, gt in scenes:
             ink = lineart.extract(png, "none")
@@ -100,8 +90,6 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
                 t = time.perf_counter()
                 pred = vectorize(ink, gt) if pass_gt else vectorize(ink)
                 runs[k] += time.perf_counter() - t
-            for key, value in decision_counts(pred, gt).items():
-                pooled[key] = pooled.get(key, 0.0) + value
             megapixels += gt.width * gt.height / 1e6
             f.append(f_score(pred, gt)["f"])
             len_pred += total_length(pred)
@@ -133,8 +121,6 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
             "repeat": len(runs),
             "crossing_checks": cont[1],
             "gap_checks": clos[1],
-            **decision_scores(pooled),
-            "decision_counts": pooled,
             "f_sweep": {k: v / len(scenes) for k, v in swept.items()} if scenes else {},
         }
     return results
@@ -155,7 +141,7 @@ def _real_images(folder: str | Path) -> list[Path]:
 
 
 def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = None,
-              decisions: str | None = "learned", options: dict | None = None) -> dict:
+              options: dict | None = None) -> dict:
     """Trace real drawings and judge each against its own ink (:mod:`line2func.quality`).
 
     There is no ground truth here, so nothing is scored against a drawing that
@@ -189,7 +175,7 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
         rgb = lineart.load_rgb(path)
         t = time.perf_counter()
         curves, ink = pipeline.trace(rgb, fit_tolerance=tolerance, curve_count=None, upscale="auto",
-                                     decisions=decisions, baseline_options=options)
+                                     baseline_options=options)
         seconds = time.perf_counter() - t
         # the judge's threshold comes from the ink alone, so it is the same for every setting
         # compared on this drawing even when the tracer chooses a different one
@@ -211,7 +197,7 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
             "seconds": round(seconds, 2),
             "threshold": round(thr, 4),
         })
-    return {"folder": str(folder), "tolerance": tolerance, "decisions": decisions, "options": options or {},
+    return {"folder": str(folder), "tolerance": tolerance, "options": options or {},
             "images": rows, "median": _medians(rows)}
 
 
@@ -323,102 +309,6 @@ def _print_compare(result: dict) -> None:
 
 
 
-def traced(ink: np.ndarray, scorer=None, upscale: str = "1") -> CurveSet:
-    """The baseline engine with a decision scorer; ``upscale="auto"`` traces thin lines at 2x like ``pipeline.trace``."""
-    from line2func import pipeline
-
-    factor = pipeline.choose_upscale(ink, "auto") if upscale == "auto" else 1
-    if factor == 1:
-        return baseline.vectorize(ink, scorer=scorer)
-    h, w = ink.shape
-    big = pipeline._resize_ink(ink, (w * factor, h * factor))
-    params = baseline.BaselineParams(fit_tolerance=float(factor))
-    return baseline.vectorize(big, params, scorer=scorer).scaled(1.0 / factor, w, h)
-
-
-def gate_decisions(ref: dict, cand: dict, gaps: bool = True, corners: bool = True) -> list[dict]:
-    """Conditions for switching a decision scorer on, against the rules it replaces (``ref``).
-
-    G1-G7 of the decision-scorer plan; G8 (real drawings) is checked by hand.
-    ``gaps`` / ``corners``: whether the candidate changes gap linking / corner
-    detection (their conditions are skipped otherwise).
-
-    G7's margin is under a percent, so when the runs behind a timing disagree by
-    more than :data:`TIMING_SPREAD` it is reported as unmeasured (``ok`` is
-    ``None``) rather than as a pass or a fail. A gate that noise can turn over
-    is one that gets ignored.
-    """
-    checks = []
-
-    def check(label: str, value: float, need: float, at_least: bool = True) -> None:
-        ok = bool(np.isfinite(value) and (value >= need if at_least else value <= need))
-        checks.append({"check": label, "model": value, "need": need, "ok": ok, "at_least": at_least})
-
-    def unmeasured(label: str, value: float, need: float, spread: float) -> None:
-        checks.append({"check": label, "model": value, "need": need, "ok": None, "at_least": False,
-                       "spread": round(spread, 4)})
-
-    common = [k for k in cand if k in ref]
-    for sub in ("hard", "hard2"):
-        if sub in common:
-            check(f"G1 {sub}: BCubed F >= rules + 0.01", cand[sub]["bcubed_f"], ref[sub]["bcubed_f"] + 0.01)
-    if "hard" in common:
-        r, c = ref["hard"], cand["hard"]
-        # half of what perfect decisions gain on val_v1 hard (+0.032, python -m line2func.labels oracle)
-        check("G2 hard: crossing continuity >= rules + 0.016", c["crossing_continuity"], r["crossing_continuity"] + 0.016)
-        if gaps:
-            check("G3 hard: gap closure >= rules + 0.05", c["gap_closure"], r["gap_closure"] + 0.05)
-    for sub in common:
-        r, c = ref[sub], cand[sub]
-        check(f"G4 {sub}: BCubed P >= rules - 0.002", c["bcubed_p"], r["bcubed_p"] - 0.002)
-        for key, label in (("joins_other_per100", "wrong joins / 100 strokes"),
-                           ("t_false_cont", "T stems continued"), ("crossing_false_turn", "turns at crossings")):
-            if np.isfinite(r[key]):
-                check(f"G4 {sub}: {label} <= rules", c[key], r[key], at_least=False)
-        check(f"G5 {sub}: F_GT@2 >= rules - 0.002", c["f_gt2"], r["f_gt2"] - 0.002)
-        check(f"G5 {sub}: curve ratio <= rules + 0.02", c["curve_ratio"], r["curve_ratio"] + 0.02, at_least=False)
-        spread = max(r.get("seconds_spread", float("nan")), c.get("seconds_spread", float("nan")))
-        label = f"G7 {sub}: s/MP <= 1.15 x rules"
-        if np.isfinite(spread) and spread > TIMING_SPREAD:
-            unmeasured(label, c["seconds_per_mp"], 1.15 * r["seconds_per_mp"], spread)
-        else:
-            check(label, c["seconds_per_mp"], 1.15 * r["seconds_per_mp"], at_least=False)
-    if "clean" in common:
-        r, c = ref["clean"], cand["clean"]
-        for key in ("crossing_continuity", "bcubed_f", "crossing_both_ok", "t_bar_ok"):
-            if np.isfinite(r[key]):
-                check(f"G5 clean: {key} >= rules - 0.005", c[key], r[key] - 0.005)
-    if corners:
-        if "hard2" in common:
-            check("G6 hard2: corner F >= rules + 0.03", cand["hard2"]["corner_f"], ref["hard2"]["corner_f"] + 0.03)
-        for sub in ("clean", "hard"):
-            if sub in common:
-                check(f"G6 {sub}: corner P >= rules - 0.01", cand[sub]["corner_p"], ref[sub]["corner_p"] - 0.01)
-    return checks
-
-
-def _print_decisions(results: dict) -> None:
-    cols = [("bcubed_p", "BCubed P"), ("bcubed_r", "BCubed R"), ("bcubed_f", "BCubed F"),
-            ("crossing_both_ok", "X both ok"), ("crossing_false_turn", "X turn"), ("t_bar_ok", "T bar ok"),
-            ("t_false_cont", "T stem cont"), ("joins_other_per100", "joins/100"), ("corner_p", "corner P"),
-            ("corner_r", "corner R")]
-    print(f"{'subset':<8}" + "".join(f"{h:>12}" for _, h in cols))
-    for name, r in results.items():
-        print(f"{name:<8}" + "".join(f"{r[k]:>12.3f}" for k, _ in cols))
-
-
-def _print_gate_decisions(checks: list[dict]) -> None:
-    print("decision scorer gates:")
-    for c in checks:
-        sign = ">=" if c["at_least"] else "<="
-        if c["ok"] is None:
-            print(f"  [ -- ] {c['check']}: {c['model']:.3f} (need {sign} {c['need']:.3f}) "
-                  f"- not measured: the runs behind it disagree by {c['spread']:.1%}, over the "
-                  f"{TIMING_SPREAD:.0%} allowed; re-run with nothing else on the machine")
-            continue
-        print(f"  [{'PASS' if c['ok'] else 'FAIL'}] {c['check']}: {c['model']:.3f} (need {sign} {c['need']:.3f})")
-
-
 def _print_scenes(results: dict) -> None:
     cols = [("f_gt2", "F_GT@2"), ("crossing_continuity", "cross cont."), ("gap_closure", "gap closure"),
             ("fragments_per_stroke", "frag/stroke"), ("curve_ratio", "curve ratio"),
@@ -434,13 +324,6 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m line2func.eval", description="Evaluate the tracer.")
     p.add_argument("--valset", type=Path, help="scene set (e.g. data/val_v1)")
     p.add_argument("--limit", type=int, default=None, help="evaluate at most this many scenes per subset")
-    p.add_argument("--decisions", default=None, metavar="SCORER",
-                   help="with --valset: compare this decision scorer (learned or a weights path) with the rules")
-    p.add_argument("--upscale", choices=("1", "auto"), default="1",
-                   help="with --decisions: trace thin lines at 2x like pipeline.trace (auto) or not (1)")
-    p.add_argument("--repeat", type=int, default=1, metavar="N",
-                   help="with --decisions: time each scene N times and report the median, refusing to "
-                        f"decide G7 when the runs disagree by more than a factor of {TIMING_SPREAD}")
     p.add_argument("--realset", type=Path,
                    help="folder of real drawings: trace each at a fixed tolerance and judge it against its ink")
     p.add_argument("--tolerance", type=float, default=1.0, help="with --realset: fit tolerance, px")
@@ -451,35 +334,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", type=Path, help="also write the results to this JSON file")
     args = p.parse_args(argv)
 
-    if args.valset is not None and args.decisions:
-        from line2func.decisions import load_scorer
-
-        scorer = load_scorer(args.decisions)
-        print("rules:")
-        ref = eval_scenes(args.valset, args.limit, repeat=args.repeat,
-                          vectorize=lambda ink: traced(ink, None, args.upscale))
-        _print_scenes(ref)
-        _print_decisions(ref)
-        print(f"decisions by {args.decisions}:")
-        cand = eval_scenes(args.valset, args.limit, repeat=args.repeat,
-                           vectorize=lambda ink: traced(ink, scorer, args.upscale))
-        _print_scenes(cand)
-        _print_decisions(cand)
-        checks = gate_decisions(ref, cand)
-        _print_gate_decisions(checks)
-        results = {"rules": ref, "decisions": cand, "gate": checks}
-    elif args.compare is not None:
+    if args.compare is not None:
         before, after = (json.loads(p_.read_text(encoding="utf-8")) for p_ in args.compare)
         results = compare_real(before, after)
         _print_compare(results)
     elif args.realset is not None:
         results = eval_real(args.realset, args.tolerance, args.limit,
-                            decisions=args.decisions or "learned", options=_options(p, args.options))
+                            options=_options(p, args.options))
         _print_real(results)
     elif args.valset is not None:
         results = eval_scenes(args.valset, args.limit)
         _print_scenes(results)
-        _print_decisions(results)
     else:
         p.error("give --valset (baseline scenes), --realset (real drawings) or --compare")
     if args.json:

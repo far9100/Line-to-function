@@ -49,7 +49,7 @@ def test_the_package_zip(site):
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         names = zf.namelist()
     assert names == sorted(names) and all(n.startswith("line2func/") for n in names)
-    assert {"line2func/__init__.py", "line2func/web.py", "line2func/jobs.py", "line2func/data/decisions_v1.npz"} <= set(names)
+    assert {"line2func/__init__.py", "line2func/web.py", "line2func/jobs.py"} <= set(names)
     assert not [n for n in names if "__pycache__" in n or "/viewer/" in n or not n.endswith((".py", ".npz"))]
     assert website.package_zip() == data  # the same files give the same bytes, and the same name
 

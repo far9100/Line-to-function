@@ -140,7 +140,7 @@ The first command traces `drawing.png` with the baseline engine and prints a
 summary, for example (a 256×256 synthetic test drawing):
 
 ```
-sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 recognized as lines or arcs [faint strokes on, learned decisions, all curves of the fine tracing, fewer than the 5000 allowed]
+sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 recognized as lines or arcs [faint strokes on, all curves of the fine tracing, fewer than the 5000 allowed]
   out\curves.json
   out\out.svg
   out\desmos.txt
@@ -352,7 +352,6 @@ python -m line2func.demo IMAGE [options]
 | `--lineart {none,canny,xdog,informative,informative-coarse}` | `none` | Line extraction (section 6) |
 | `--curves N` | `5000` | Make N curves: trace finely, then merge the neighbouring pieces whose merge changes the drawing least (section 8). A drawing that gives fewer keeps all of them |
 | `--tolerance PX` | off | Trace to this max curve-fitting error instead of a number of curves. Larger gives fewer, smoother curves |
-| `--decisions {learned,rules,PATH}` | `learned` | Who decides where strokes continue, where breaks are joined, which junctions are one crossing and where corners are: the learned scorer, the angle rules, or other learned weights (section 8) |
 | `--threshold 0..1` | automatic | Ink threshold. Automatic: Otsu's, but for line art at most 0.25 so light strokes stay whole (kept at Otsu's when the paper itself would be traced). Lower it if faint lines are missed, raise it if paper texture is traced |
 | `--form {parametric,named,function}` | `parametric` | How `desmos.txt` / `equations.tex` write each curve: parametric, named (lines and arcs; the other curves parametric) or as functions `y = f(x)` / `x = g(y)` (section 5) |
 | `--named` | off | The same as `--form named` |
@@ -637,72 +636,55 @@ Drawing 3 gains most: at 2,000 its merges moved curves by up to 1.1 px, at
 computer, `--curves 2000` or `--curves 1000` (99.7% of drawing 1's lines, PSNR
 21.6 dB) are smaller.
 
-#### How strokes are joined: `--decisions`
+#### Why there is no learned scorer
 
-The baseline engine makes all the geometry: the skeleton, the stroke graph and
-the curves. At four places it has to choose, and those choices decide which
-pieces become one stroke:
+Where strokes continue through a junction, which breaks are one line, which
+close junction pairs are one shallow crossing and where a stroke turns sharply
+enough to split are decided by the angle rules (`line2func/decisions.py`).
 
-- where a line continues through a junction;
-- which breaks are joined;
-- which two nearby junctions are really one shallow crossing;
-- where a stroke has a sharp corner.
+There used to be a learned scorer here as well, on by default: five small MLPs
+run with numpy, trained on generated scenes. It was removed in 1.3. It was
+better, and the difference could not be seen.
 
-By default a small learned scorer makes these choices. The scorer sees more
-than the angles: line widths, ink darkness, faint ink inside a break, and
-whether a link would cross another line. Three other deciders can be named:
+Paired over the 66 drawings of `data/real_v1`, bootstrapped, learned against
+the rules it replaced:
 
-| `--decisions` | Who decides |
-|---|---|
-| `learned` | The bundled scorer (the default) |
-| `rules` | Fixed angle rules only |
-| `r2` | The rules with wider candidates and one offset check, no learning |
-| `r2-gaps` | The rules looking 1.5x farther for the other end of a break, nothing else |
-| a path | Other weights, from `python -m line2func.train_decisions` |
-
-- It is five small networks, one per kind of choice, trained on 8,000 synthetic
-  tracings whose right answers are known, in 10 s on an RTX 5070.
-- It runs on numpy, so PyTorch is not needed to trace.
-- Its weights (143 KB) ship with line2func.
-- For inputs unlike its training data, the rules decide.
-
-Measured on synthetic test drawings with known strokes:
-
-| | Rules | Learned |
+| | median | 95% interval |
 |---|---|---|
-| Lines continuing through crossings (hard set) | 0.762 | **0.826** |
-| Breaks joined (hard set / thin pen lines) | 0.774 / 0.086 | **0.898 / 0.975** |
-| Wrong joins per 100 strokes (hard set) | 2.43 | **1.58** |
-| Corner precision (hard set) | 0.525 | **0.675** |
+| Curve length on ink (precision) | +0.0044 | [+0.0040, +0.0058] |
+| PSNR | +0.175 dB | [+0.13, +0.20] |
+| SSIM | +0.0030 | [+0.0026, +0.0032] |
+| **Seconds per drawing** | **+1.76** | **[+1.49, +1.945]** |
 
-**What that is worth on real drawings.** Paired over 66 real line drawings and
-again over 15 held-out JPEG ones, against the angle rules:
+Replicated on 15 held-out JPEG drawings at +0.0029 precision and +0.11 dB.
+Missed ink, faint-line coverage, drawn length and `d_M` all had intervals
+containing zero: it did not find more of the drawing, it placed what it found
+slightly better.
 
-| | 66 drawings | 15 held out |
-|---|---|---|
-| Curve length on ink (precision) | **+0.0044** [+0.0038, +0.0058] | **+0.0029** [+0.0005, +0.0035] |
-| PSNR | **+0.17 dB** | **+0.11 dB** |
-| Lines kept | +0.0005 | +0.0004, spans zero |
-| Curves | +40.5 | +6, spans zero |
+**Slightly enough not to see.** Rendering the same drawing both ways and
+comparing pixel by pixel, 89-93% of the difference is the same stroke drawn
+within 2 px of itself. What is left is 7-25 places per drawing where one engine
+put ink and the other did not, the largest of them 49 px - a 20 px stretch of
+line, inside dense hair texture. Around 7-9% of all decisions flipped, several
+hundred per drawing, to move precision by 0.4 of a percentage point.
 
-Every interval in bold misses zero, so the gain is real and it replicates. It is
-also small: under half a percentage point of precision, and a fifth of a decibel.
-Note what does *not* move — total curve length, missed ink and faint-line
-coverage all have intervals containing zero. The scorer finds the same ink as the
-rules and connects it better, which is what a decision scorer is for.
+Against that: 24% of the package, a fifth of the tracing time, and 52% of the
+browser download (the zip went 298,548 -> 142,807 bytes when it went).
 
-**The rules cannot be widened to match it.** `--decisions r2` and `r2-gaps` are
-the obvious no-learning alternative, and on synthetic scenes they look strong:
-`r2` closes 0.854 of the breaks against the rules' 0.774, two thirds of the way
-to the scorer's 0.898. On real drawings they are **worse than the plain rules**:
-precision -0.0014 [-0.0022, -0.0007] over the 66, and -0.0009 [-0.0023, -0.0007]
-over the 15. The reason is measurable - they draw 5.1% more curve length, bridging
-real faint breaks (missed ink -0.0021, faint coverage +0.0040, both resolved) and
-unreal ones together, and the unreal ones cost more than the real ones gain. So
-the synthetic gap-closure score does not transfer, and the scorer earns its place.
+**Widening the rules instead does not work, and that is measured too.** The
+obvious cheap substitute is to let the rules consider more candidates:
+`--decisions r2` and `r2-gaps` did that, and on synthetic scenes they looked
+strong (gap closure 0.854 against the rules' 0.774, two thirds of the way to
+the scorer's 0.898). On real drawings they were **worse than plain rules**:
+precision -0.0014 [-0.0022, -0.0007] over the 66 and -0.0009 over the 15. They
+drew 5.1% more curve length, bridging real breaks and imaginary ones together,
+and the imaginary ones cost more than the real ones gained. So removing the
+scorer means the rules, not a wider version of them.
 
-Tracing cost has not been measured cleanly: the ratio moves 3-20 points between
-runs on the same machine, so it needs a quiet machine and `--repeat`.
+The same caution applies to the synthetic numbers the scorer won on: the
+project measured that they do not transfer. Gap closure 0.774 -> 0.898 and
+corner precision 0.525 -> 0.624 are real on generated pages and did not reach
+the output.
 
 #### Judging the result: `--quality`
 
@@ -777,18 +759,6 @@ python -m line2func.eval --valset data/val_v1
 
 Add `--json results.json` to save the numbers, and `--limit N` for a quick run.
 
-#### Decision scorer: evaluate and retrain
-
-```bash
-python -m line2func.eval --valset data/val_v1 --decisions learned        # learned vs rules + gates
-python -m line2func.synth valset --version 2                             # data/val_v2: T-junctions, hatching, thin lines
-python -m line2func.eval --valset data/val_v2 --decisions learned --upscale auto
-python -m line2func.labels oracle --valset data/val_v1                   # what perfect decisions would gain
-python -m line2func.labels disagree drawing.png --decisions learned      # where learned and rules differ, to review
-python -m line2func.decisions_data --out data/decisions_v1               # ~25 min with 7 worker processes (20,000 tracings)
-python -m line2func.train_decisions --data data/decisions_v1 --out runs/decisions/v1   # needs PyTorch; ~20 s on a GPU
-```
-
 ### 10. Using line2func from Python
 
 The whole flow in one call, as `demo` and the web page run it (the second pass,
@@ -803,7 +773,7 @@ rgb = lineart.load_rgb("drawing.png")
 curves, ink = pipeline.trace(rgb, upscale="auto", curve_count=5000)   # up to 5,000 curves, as demo
 curves, ink = pipeline.trace(rgb, upscale="auto", fit_tolerance=1.0)  # a fitting tolerance instead
 curves, ink = pipeline.trace(rgb, upscale="auto", optimize=True)
-curves, ink = pipeline.trace(rgb, upscale="auto", decisions="rules")  # the angle rules decide
+curves, ink = pipeline.trace(rgb, upscale="auto")
 
 for c in curves:
     print(c.stroke, c.ctrl.tolist(), c.width, c.color, c.shape and c.shape["type"])
@@ -849,9 +819,7 @@ line2func/
   functions.py                             # curves as functions y = f(x) / x = g(y) (--form function)
   residual.py  outline.py  fill.py         # second pass, thick strokes as outlines, filling for Desmos
   budget.py  optimize.py  quality.py       # an exact number of curves, render-and-compare, quality check
-  decisions.py  decision_features.py      # the tracer's decisions as scores; candidate features
-  decision_model.py  data/                # the learned scorer (numpy) and its bundled weights
-  labels.py  decisions_data.py  train_decisions.py   # ground-truth labels and oracle, data, training
+  decisions.py                            # the tracer's decisions as scores (the angle rules)
   geometry.py  curves.py  render.py        # geometry core, data model, rasterizer
   synth.py  metrics.py  eval.py            # synthetic data, metrics, evaluation
 docs/           # details.md (this manual), third_party.md (licenses of third-party code and weights)
@@ -880,7 +848,7 @@ Generated folders (`out/`, `runs/`, `data/`, `_site/`, `.venv/`) are git-ignored
 
 ### 12. Status and roadmap
 
-This is version 1.2.
+This is version 1.3.
 
 - [x] Geometry core and renderer
 - [x] Baseline engine; SVG, Desmos and LaTeX export; viewer; `demo` and `serve`
@@ -889,7 +857,6 @@ This is version 1.2.
 - [x] Named equations for lines and arcs, curve refinement, line width and color
 - [x] Web page (`python -m line2func`) in English and Traditional Chinese
 - [x] Second pass over uncovered ink, thick strokes as filled outlines, render-and-compare (`--optimize`)
-- [x] Learned decisions (the default; `--decisions rules` for the angle rules)
 - [x] Filled areas such as heavy eyelashes and shadows, each measured for how dark it is and drawn at that tone (rings for a solid one, hatching for a shadow, so Desmos shows the difference); up to 5,000 curves by default; light and very faint lines
 - [x] Function mode: every curve as pieces of `y = f(x)` / `x = g(y)` (`--form function`)
 - [x] One-screen web page with three display modes; lines broken into dots and dashes kept; a noise filter slider (`--denoise`)
@@ -995,7 +962,7 @@ python -m line2func.serve out/
 第一行用傳統引擎描 `drawing.png`，並印出摘要，例如（一張 256×256 的合成測試圖）：
 
 ```
-sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 recognized as lines or arcs [faint strokes on, learned decisions, all curves of the fine tracing, fewer than the 5000 allowed]
+sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 recognized as lines or arcs [faint strokes on, all curves of the fine tracing, fewer than the 5000 allowed]
   out\curves.json
   out\out.svg
   out\desmos.txt
@@ -1161,7 +1128,6 @@ python -m line2func.demo IMAGE [options]
 | `--lineart {none,canny,xdog,informative,informative-coarse}` | `none` | 抽線稿方法（見第 6 節） |
 | `--curves N` | `5000` | 產生 N 條曲線：先細緻地描線，再合併「合併後對圖影響最小」的相鄰片段（見第 8 節）。曲線本來就比 N 少的圖會全部保留 |
 | `--tolerance PX` | 關閉 | 改用曲線擬合的最大誤差來描線，而不是指定曲線數量。數值越大，曲線越少、越平滑 |
-| `--decisions {learned,rules,PATH}` | `learned` | 由誰決定線條在交叉處怎麼接、哪些斷口要接起來、哪些相鄰的交叉點其實是同一個淺角交叉、哪裡是轉角：學習式評分器、角度規則，或其他學習權重（見第 8 節） |
 | `--threshold 0..1` | 自動 | 墨跡門檻。自動：採用 Otsu 門檻，但線稿最高只到 0.25，讓淺色的筆畫保持完整（如果連紙面都會被描出來，就維持 Otsu 門檻）。淡的線被漏掉時調低，紙張紋理被描出來時調高 |
 | `--form {parametric,named,function}` | `parametric` | `desmos.txt`／`equations.tex` 怎麼寫每條曲線：參數式、具名式（直線與圓弧；其他曲線仍是參數式），或函數 `y = f(x)`／`x = g(y)`（見第 5 節） |
 | `--named` | 關閉 | 等於 `--form named` |
@@ -1317,53 +1283,30 @@ python -m line2func.demo IMAGE [options]
 
 圖 3 進步最多：2,000 條時合併讓曲線最多偏移 1.1 px，5,000 條時只有 0.16 px。容差 1.0 大約 5–6 秒。如果在你的電腦上 Desmos 變慢，可以用 `--curves 2000` 或 `--curves 1000`（仍保留圖 1 的 99.7% 線條，PSNR 21.6 dB）。
 
-#### 筆畫怎麼接起來：`--decisions`
+#### 為何沒有學習式評分器
 
-傳統引擎負責產生所有幾何：骨架、筆畫圖和曲線。但有四個地方必須做選擇，而這些選擇決定了哪些片段會成為同一筆：
+筆畫在接點怎麼延續、哪些斷口其實是同一條線、哪些相鄰的交叉點是同一個淺角交叉、哪裡轉得夠急要切開 —— 這些都由角度規則決定（`line2func/decisions.py`）。
 
-- 線條在交叉處往哪裡延續；
-- 哪些斷口要接起來；
-- 兩個相鄰的交叉點是不是其實只是一個淺角交叉；
-- 筆畫在哪裡有尖角。
+這裡曾經還有一個預設開啟的學習式評分器：五個用 numpy 跑的小型 MLP，在生成場景上訓練。它在 1.3 被移除。它確實比較好，而且那個差別看不出來。
 
-預設由一個小型的學習式評分器決定。評分器看得比角度更多：線寬、墨的深淺、缺口裡的淡墨，以及一條連接會不會穿過別的線。另外還有三種決定方式可以指定：
+在 `data/real_v1` 的 66 張上做配對比較（bootstrap），學習式對上它取代的規則：
 
-| `--decisions` | 由誰決定 |
-|---|---|
-| `learned` | 隨附的評分器（預設） |
-| `rules` | 只用固定的角度規則 |
-| `r2` | 規則加上放寬的候選與一個偏移檢查，沒有學習 |
-| `r2-gaps` | 規則把斷線的另一端找遠 1.5 倍，其餘不變 |
-| 一個路徑 | 其他權重，由 `python -m line2func.train_decisions` 產生 |
-
-- 它是五個小型網路，每種選擇一個，在 8,000 筆有標準答案的合成描線上訓練，在 RTX 5070 上花 10 秒。
-- 它用 numpy 執行，所以描線不需要 PyTorch。
-- 它的權重（143 KB）隨 line2func 一起附上。
-- 遇到和訓練資料差太多的輸入時，交給規則決定。
-
-在有標準答案的合成測試圖上測得：
-
-| | 規則 | 學習式 |
+| | 中位數 | 95% 區間 |
 |---|---|---|
-| 線條穿過交叉點仍連續（困難組） | 0.762 | **0.826** |
-| 斷線補齊（困難組／細筆線） | 0.774 / 0.086 | **0.898 / 0.975** |
-| 每 100 筆畫的錯誤連接（困難組） | 2.43 | **1.58** |
-| 轉角精確度（困難組） | 0.525 | **0.675** |
+| 曲線長度落在墨上（precision） | +0.0044 | [+0.0040, +0.0058] |
+| PSNR | +0.175 dB | [+0.13, +0.20] |
+| SSIM | +0.0030 | [+0.0026, +0.0032] |
+| **每張圖的秒數** | **+1.76** | **[+1.49, +1.945]** |
 
-**這在真實線稿上值多少。** 在 66 張真實線稿上成對比較，再在另外 15 張沒看過的 JPEG 線稿上重做一次，對照角度規則：
+在另外 15 張 held-out 的 JPEG 上複現為 precision +0.0029、PSNR +0.11 dB。漏掉的墨、淡線覆蓋、畫出的總長度與 `d_M` 區間全部含 0：它並沒有多找到圖上的東西，只是把找到的東西擺得稍微準一點。
 
-| | 66 張 | 15 張保留 |
-|---|---|---|
-| 曲線長度落在墨上（precision） | **+0.0044** [+0.0038, +0.0058] | **+0.0029** [+0.0005, +0.0035] |
-| PSNR | **+0.17 dB** | **+0.11 dB** |
-| 保留的線條 | +0.0005 | +0.0004，區間含 0 |
-| 曲線數 | +40.5 | +6，區間含 0 |
+**準到看不出來。** 把同一張圖用兩種方式畫出來逐像素比對，89–93% 的差異是同一條線在 2 px 之內的位移。剩下的是每張圖 7–25 處「一邊有墨、另一邊沒有」，最大的一處 49 px —— 約 20 px 長的線段，夾在密集的髮絲紋理裡。大約 7–9% 的決策翻轉了，每張圖數百個，換來 0.4 個百分點的 precision。
 
-粗體的區間都不含 0，所以這個增益是真的，而且會複現。它同時也很小：precision 不到半個百分點，PSNR 五分之一分貝。也要注意**沒有動的**東西 —— 總曲線長度、漏掉的墨、淡線覆蓋率，三項區間都含 0。評分器找到的墨和規則一樣多，只是接得更準，而這正是決策評分器的用途。
+代價則是：包裡 24% 的程式碼、五分之一的描圖時間，以及 52% 的瀏覽器下載（移除後 zip 從 298,548 降到 142,807 bytes）。
 
-**規則沒辦法靠放寬來追上它。** `--decisions r2` 和 `r2-gaps` 是最明顯的「不用學習」替代方案，在合成場景上看起來很強：`r2` 補起 0.854 的斷線，規則是 0.774，已經走了三分之二到評分器的 0.898。但在真實線稿上它們**比純規則還差**：66 張上 precision −0.0014 [−0.0022, −0.0007]，15 張上 −0.0009 [−0.0023, −0.0007]。原因量得出來 —— 它們多畫了 5.1% 的曲線長度，把真正的淡線斷點（漏掉的墨 −0.0021、淡線覆蓋 +0.0040，都有解析度）和不存在的斷點一起接起來，而後者的代價大於前者的收穫。所以合成資料上的斷線補齊分數並沒有轉移，評分器是站得住腳的。
+**把規則放寬來代替也行不通，這一樣量過。** 最顯然的便宜替代方案是讓規則多考慮一些候選：`--decisions r2` 和 `r2-gaps` 就是這麼做的，在合成場景上看起來很強（斷線補齊 0.854 對規則的 0.774，已經走了三分之二到評分器的 0.898）。但在真實線稿上它們**比純規則還差**：66 張上 precision −0.0014 [−0.0022, −0.0007]，15 張上 −0.0009。它們多畫了 5.1% 的曲線長度，把真正的斷點和不存在的斷點一起接起來，而後者的代價大於前者的收穫。所以移除評分器等於回到規則，而不是回到放寬版的規則。
 
-描線的時間成本還沒有乾淨地量到：同一台機器上這個比值在不同次執行之間會移動 3–20 個百分點，需要安靜的機器加上 `--repeat`。
+評分器贏的那些合成數字也適用同樣的警告：專案量過它們不會轉移。斷線補齊 0.774 → 0.898、轉角 precision 0.525 → 0.624 在生成的頁面上是真的，但沒有到達輸出。
 
 #### 評判結果：`--quality`
 
@@ -1426,18 +1369,6 @@ python -m line2func.eval --valset data/val_v1
 
 加上 `--json results.json` 可以儲存數據，`--limit N` 可以快速跑少量場景。
 
-#### 決策評分器：評估與重新訓練
-
-```bash
-python -m line2func.eval --valset data/val_v1 --decisions learned        # 學習式對規則，並檢查關卡
-python -m line2func.synth valset --version 2                             # data/val_v2：T 字、排線、細線
-python -m line2func.eval --valset data/val_v2 --decisions learned --upscale auto
-python -m line2func.labels oracle --valset data/val_v1                   # 完美決策的上限
-python -m line2func.labels disagree drawing.png --decisions learned      # 學習式與規則判斷不同的地方，供人工審查
-python -m line2func.decisions_data --out data/decisions_v1               # 7 個行程約 25 分鐘（2 萬次描線）
-python -m line2func.train_decisions --data data/decisions_v1 --out runs/decisions/v1   # 需要 PyTorch；GPU 約 20 秒
-```
-
 ### 10. 在 Python 中使用
 
 一次跑完整個流程，和 `demo` 與網頁版的做法相同（第二遍、外框和讓外框在 Desmos 裡填滿的曲線預設開啟；兩者都指定最多 5,000 條曲線；`optimize=True` 需要 PyTorch）：
@@ -1450,7 +1381,7 @@ rgb = lineart.load_rgb("drawing.png")
 curves, ink = pipeline.trace(rgb, upscale="auto", curve_count=5000)   # 最多 5,000 條曲線，和 demo 一樣
 curves, ink = pipeline.trace(rgb, upscale="auto", fit_tolerance=1.0)  # 改用容差
 curves, ink = pipeline.trace(rgb, upscale="auto", optimize=True)
-curves, ink = pipeline.trace(rgb, upscale="auto", decisions="rules")  # 改由角度規則決定
+curves, ink = pipeline.trace(rgb, upscale="auto")
 
 for c in curves:
     print(c.stroke, c.ctrl.tolist(), c.width, c.color, c.shape and c.shape["type"])
@@ -1492,9 +1423,7 @@ line2func/
   functions.py                             # 把曲線寫成函數 y = f(x)／x = g(y)（--form function）
   residual.py  outline.py  fill.py         # 第二遍描線、粗筆畫外框、Desmos 用的填色曲線
   budget.py  optimize.py  quality.py       # 指定曲線數量、渲染後比對、品質檢查
-  decisions.py  decision_features.py      # 描線決策的評分介面、候選特徵
-  decision_model.py  data/                # 學習式評分器（numpy）與附帶的權重
-  labels.py  decisions_data.py  train_decisions.py   # 標準答案標籤與神諭、訓練資料、訓練
+  decisions.py                            # 描線決策的評分（角度規則）
   geometry.py  curves.py  render.py        # 幾何核心、資料結構、渲染器
   synth.py  metrics.py  eval.py            # 合成資料、指標、評估
 docs/           # details.md（本說明）、third_party.md（第三方程式碼與權重的授權）
@@ -1520,7 +1449,7 @@ python -m line2func.website --out _site --serve    # 並在 http://127.0.0.1:800
 
 ### 12. 現況與路線圖
 
-這是 1.2 版。
+這是 1.3 版。
 
 - [x] 幾何核心與渲染器
 - [x] 傳統引擎；SVG、Desmos、LaTeX 匯出；檢視器；`demo` 與 `serve`
@@ -1529,7 +1458,6 @@ python -m line2func.website --out _site --serve    # 並在 http://127.0.0.1:800
 - [x] 直線與圓弧的具名算式、曲線精修、線寬與顏色
 - [x] 網頁版（`python -m line2func`），繁體中文與英文介面
 - [x] 第二遍描線、粗筆畫改為填滿的外框、渲染後比對（`--optimize`）
-- [x] 學習式決策（預設；`--decisions rules` 改用角度規則）
 - [x] 粗重睫毛、陰影等填滿的區域，每一塊都量測自己有多深並照那個濃淡畫出來（實心用圈線、陰影用排線，Desmos 裡也分得出深淺）；預設最多 5,000 條曲線；淺色與極淡的線
 - [x] 函數模式：每條曲線切成 `y = f(x)`／`x = g(y)` 的顯函數（`--form function`）
 - [x] 單一畫面的網頁版，三種顯示方式；斷成點和虛線的線會保留；去雜訊強度拖動條（`--denoise`）

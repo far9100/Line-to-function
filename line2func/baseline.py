@@ -31,9 +31,7 @@ Pipeline
    smoothed and fitted with Schneider's algorithm (:mod:`line2func.fit`).
 
 Steps 5-8 each make a choice (shallow crossing, gap, junction pairing,
-corner). A scorer makes them (:mod:`line2func.decisions`): the angle rules by
-default here, or the learned scorer (:mod:`line2func.decision_model`), which
-``pipeline.trace`` uses.
+corner). The angle rules make them (:mod:`line2func.decisions`).
 
 Each curve's ``confidence`` is the fraction of its length that lies on ink,
 so curves that bridge a gap score lower.
@@ -49,16 +47,13 @@ from scipy.spatial import cKDTree
 
 from line2func.curves import Curve, CurveSet
 from line2func.decisions import (
-    RULES,
-    CornerCand,
-    CrossingCand,
-    DecisionContext,
     GapCand,
     JunctionCand,
     _angle,
     _direction_from,
-    exact_matching,
+    gap_scores,
     greedy_pairs,
+    junction_scores,
     pick_peaks,
 )
 from line2func.fit import fit_polyline
@@ -118,9 +113,6 @@ class BaselineParams:
     # the typical line width and the faint strokes' contrast are still judged, so faint lines now in the mask
     # do not make the lines look thinner nor faint-stroke detection more sensitive. None = the ink threshold
     reference_threshold: float | None = None
-    # who decides crossings, gap links, junction pairing and corners (line2func.decisions):
-    # None = the angle rules; "learned" = the bundled learned scorer; or a path to scorer weights
-    decisions: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -748,25 +740,15 @@ def _looks_like_crossing(g: _Graph, inc, eid: int, reach: float, max_bend: float
     return min(straight, swapped) <= max_bend
 
 
-def _crossing_cand(g: _Graph, inc, eid: int, reach: float, max_bend: float) -> CrossingCand:
-    e = g.edges[eid]
-    arms = [[((i, end), g.edges[i].from_end(end)) for i, end in inc[v] if i != eid] for v in (e.a, e.b)]
-    return CrossingCand(eid, e.a, e.b, e.length, _looks_like_crossing(g, inc, eid, reach, max_bend), e.pts,
-                        arms[0], arms[1])
-
-
 def _merge_close_junctions(
     g: _Graph, merge_len: float, crossing_len: float, reach: float, max_bend: float,
-    scorer=None, ctx: DecisionContext | None = None, recorder=None,
 ) -> None:
     """Contract short junction-to-junction edges.
 
     Edges shorter than ``merge_len`` are thinning noise and always contracted;
-    edges up to ``crossing_len`` are contracted only if the scorer takes the two
-    junctions for one shallow crossing (by default the angle rule
-    :func:`_looks_like_crossing`).
+    edges up to ``crossing_len`` are contracted only if the angle rule
+    (:func:`_looks_like_crossing`) takes the two junctions for one shallow crossing.
     """
-    scorer = scorer or RULES
     inc = g.incidence()
     deg = [len(x) for x in inc]
     parent = list(range(len(g.pos)))
@@ -782,12 +764,8 @@ def _merge_close_junctions(
 
     # The crossing test reads only this snapshot of the graph (the loop below
     # changes nothing it looks at), so every candidate is decided up front.
-    cands = [_crossing_cand(g, inc, eid, reach, max_bend) for eid, e in enumerate(g.edges)
-             if eligible(e) and merge_len <= e.length < crossing_len]
-    verdicts = scorer.crossing(cands)
-    if recorder is not None:
-        recorder.crossings(cands, verdicts, ctx)
-    decided = {c.eid: bool(v) for c, v in zip(cands, verdicts)}
+    decided = {eid: _looks_like_crossing(g, inc, eid, reach, max_bend) for eid, e in enumerate(g.edges)
+               if eligible(e) and merge_len <= e.length < crossing_len}
 
     merged = False
     for eid, e in enumerate(g.edges):
@@ -823,9 +801,7 @@ def _merge_close_junctions(
 
 def _link_gaps(
     g: _Graph, inc, links: dict, max_gap: float, max_angle: float, reach: float,
-    scorer=None, ctx: DecisionContext | None = None, recorder=None,
 ) -> None:
-    scorer = scorer or RULES
     tips, outs, ends = [], [], []
     for v, lst in enumerate(inc):
         if len(lst) != 1:
@@ -840,9 +816,7 @@ def _link_gaps(
     if len(tips) < 2:
         return
     tips_arr = np.array(tips)
-    limits = scorer.limits
-    radius = max_gap if limits.gap_radius_scale == 1.0 else max_gap * limits.gap_radius_scale
-    gate = max_angle if limits.gap_angle_gate is None else limits.gap_angle_gate
+    radius, gate = max_gap, max_angle
     cands = []
     for i, j in sorted(cKDTree(tips_arr).query_pairs(radius)):
         (ei, _), (ej, _) = ends[i], ends[j]
@@ -857,25 +831,15 @@ def _link_gaps(
             ai, aj = _angle(outs[i], unit), _angle(outs[j], -unit)
             if max(ai, aj) > gate:
                 continue
-        # with wider limits, candidates the rule would not even consider are kept, but not rule_ok
-        rule_ok = max(ai, aj) <= max_angle and (radius == max_gap or dist <= max_gap)
-        cands.append(GapCand(i, j, ends[i], ends[j], tips_arr[i], tips_arr[j], outs[i], outs[j], dist, ai, aj,
-                             rule_ok, dist * (1.0 + (ai + aj) / 90.0),
-                             g.edges[ends[i][0]].from_end(ends[i][1]), g.edges[ends[j][0]].from_end(ends[j][1])))
-    scores = scorer.gap_scores(cands)
-    chosen = greedy_pairs(scores, [(c.i, c.j) for c in cands])
-    if recorder is not None:
-        recorder.gaps(cands, chosen, ctx)
-    for i, j in chosen:
+        cands.append(GapCand(i, j, dist * (1.0 + (ai + aj) / 90.0)))
+    for i, j in greedy_pairs(gap_scores(cands), [(c.i, c.j) for c in cands]):
         links[ends[i]] = ends[j]
         links[ends[j]] = ends[i]
 
 
 def _link_junctions(
     g: _Graph, inc, links: dict, max_bend: float, reach: float,
-    scorer=None, ctx: DecisionContext | None = None, recorder=None,
 ) -> None:
-    scorer = scorer or RULES
     cands = []
     for v, lst in enumerate(inc):
         if len(lst) < 2:
@@ -889,30 +853,15 @@ def _link_junctions(
         dirs = [_direction_from(g.edges[eid].from_end(end), center, r) for eid, end in lst]
         pairs = [(i, j) for i in range(len(lst)) for j in range(i + 1, len(lst))]
         bends = np.array([_angle(dirs[i], -dirs[j]) for i, j in pairs], dtype=np.float64)
-        arms = [g.edges[eid].from_end(end) for eid, end in lst]
-        far = [len(inc[g.edges[eid].node(1 - end)]) for eid, end in lst]
-        cands.append(JunctionCand(v, list(lst), center, g.spread[v], r, dirs, pairs, bends, arms, far))
-    scores = scorer.junction_scores(cands, max_bend)
-    decisions = []
-    for c, (z, ends_here) in zip(cands, scores):
-        if scorer.junction_policy == "exact" and ends_here is not None:
-            chosen = exact_matching(z, c.pairs, ends_here, len(c.keys))
-        else:
-            chosen = greedy_pairs(z, c.pairs)
-        decisions.append(chosen)
-        for i, j in chosen:
+        cands.append(JunctionCand(list(lst), pairs, bends))
+    for c, z in zip(cands, junction_scores(cands, max_bend)):
+        for i, j in greedy_pairs(z, c.pairs):
             links[c.keys[i]], links[c.keys[j]] = c.keys[j], c.keys[i]
-    if recorder is not None:
-        recorder.junctions(cands, decisions, ctx)
 
 
-def _assemble(g: _Graph, inc, links: dict, trim: float, info: list | None = None,
+def _assemble(g: _Graph, inc, links: dict, trim: float,
               line_dist: np.ndarray | None = None) -> list[tuple[np.ndarray, bool]]:
     """Walk linked edges into strokes; returns ``(points, closed)`` pairs.
-
-    With ``info`` (a list), each stroke's seams are appended to it: where two
-    edges were joined, as ``(arc start, arc end, "junction" | "gap")`` along the
-    stroke's points (the stretch between the two edges' last and first points).
 
     ``trim`` is how far from a junction the skeleton is dropped. With
     ``line_dist`` (the distance transform of the lines) each junction is
@@ -992,27 +941,11 @@ def _assemble(g: _Graph, inc, links: dict, trim: float, info: list | None = None
                 if k == last and not closed and len(far):
                     p = np.vstack([p, foot(p[::-1], c)])
             chunks.append(p)
-        if info is not None:
-            out = np.vstack(chunks)
-            cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(out, axis=0), axis=1))])
-            first = np.cumsum([0] + [len(c) for c in chunks])
-            seams = []
-            for k in range(1, len(seq) + (1 if closed else 0)):
-                eid, entry = seq[k - 1]
-                kind = "junction" if is_junction[g.edges[eid].node(1 - entry)] else "gap"
-                if k < len(seq):
-                    seams.append((float(cum[first[k] - 1]), float(cum[first[k]]), kind))
-                else:  # a closed stroke's last edge joins its first one
-                    seams.append((float(cum[-1]), float(cum[-1]), kind))
-            info.append(seams)
-            return out
         return np.vstack(chunks)
 
     for e in g.edges:
         if e.alive and e.closed:
             strokes.append((e.pts, True))
-            if info is not None:
-                info.append([])
     for eid, e in enumerate(g.edges):
         if not e.alive or e.closed:
             continue
@@ -1029,23 +962,17 @@ def _assemble(g: _Graph, inc, links: dict, trim: float, info: list | None = None
 
 def _strokes_from_skeleton(
     skel: np.ndarray, radius: float, params: BaselineParams, close_gaps: bool,
-    scorer=None, ctx: DecisionContext | None = None, recorder=None, info: list | None = None,
     line_dist: np.ndarray | None = None,
 ):
-    scorer = scorer or RULES
     g = _trace_graph(skel)
     reach = 2.0 * radius + 3.0
     _prune_spurs(g, spur_len=2.0 * radius + 2.0)
-    scale = scorer.limits.crossing_len_scale
     _merge_close_junctions(
         g,
         merge_len=2.0 * radius + 3.0,
-        crossing_len=12.0 * radius + 6.0 if scale == 1.0 else 12.0 * radius * scale + 6.0,
+        crossing_len=12.0 * radius + 6.0,
         reach=reach,
         max_bend=params.continue_angle,
-        scorer=scorer,
-        ctx=ctx,
-        recorder=recorder,
     )
     _merge_degree_two(g)
     inc = g.incidence()
@@ -1054,10 +981,9 @@ def _strokes_from_skeleton(
         visible = params.max_gap if params.max_gap is not None else max(4.0, params.max_gap_widths * 2.0 * radius)
         # thinning pulls each skeleton end back by about half a line width,
         # so skeleton tips are one line width farther apart than the ink ends
-        _link_gaps(g, inc, links, visible + 2.0 * radius, params.gap_angle, reach, scorer=scorer, ctx=ctx,
-                   recorder=recorder)
-    _link_junctions(g, inc, links, params.continue_angle, reach, scorer=scorer, ctx=ctx, recorder=recorder)
-    return _assemble(g, inc, links, trim=radius + 1.0, info=info, line_dist=line_dist)
+        _link_gaps(g, inc, links, visible + 2.0 * radius, params.gap_angle, reach)
+    _link_junctions(g, inc, links, params.continue_angle, reach)
+    return _assemble(g, inc, links, trim=radius + 1.0, line_dist=line_dist)
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1051,6 @@ def _smooth(pts: np.ndarray, sigma: float, closed: bool) -> np.ndarray:
 
 def _fit_stroke(
     pts: np.ndarray, closed: bool, radius: float, params: BaselineParams,
-    scorer=None, ctx: DecisionContext | None = None, recorder=None, seams: list | None = None, stroke: int = -1,
 ) -> list[np.ndarray]:
     if closed:
         pts = np.vstack([pts, pts[:1]])
@@ -1137,15 +1062,7 @@ def _fit_stroke(
         if len(pts) < 3:
             return []
     skip = max(1, int(round(radius + 1)))
-    if scorer is None:
-        corners = _corners(pts, closed, k=4, skip=skip, min_angle=params.corner_angle)
-    else:
-        index, turn = _turn_profile(pts, closed, 4, skip)
-        cand = CornerCand(pts, closed, index, turn, skip, 4, seams or [])
-        key, threshold = scorer.corner_keys(cand, params.corner_angle)
-        corners = pick_peaks(index, key, threshold, len(pts), closed, 4 + skip)
-        if recorder is not None:
-            recorder.corners(cand, corners, ctx, stroke)
+    corners = _corners(pts, closed, k=4, skip=skip, min_angle=params.corner_angle)
     tol = params.fit_tolerance
     if closed and not corners:
         return fit_polyline(_smooth(pts, params.smooth_sigma, True), tol, closed=True)
@@ -1210,14 +1127,12 @@ def _support(ctrl: np.ndarray, ink: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 
-def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=None, recorder=None,
+def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *,
               rgb: np.ndarray | None = None) -> CurveSet:
     """Trace an ink map (``(H, W)``, 1 = line) into a :class:`CurveSet`.
 
-    ``scorer`` makes the tracer's decisions: crossings, gap links, junction
-    pairing and corners (:mod:`line2func.decisions`). By default these are the
-    angle rules, or the scorer named by ``params.decisions``. ``recorder``
-    collects every decision candidate (training data for a learned scorer).
+    Crossings, gap links, junction pairing and corners are decided by the angle
+    rules (:mod:`line2func.decisions`).
 
     ``rgb`` (the source image, ``(H, W, 3)``) is only used to color the filled
     areas from their inside, where their ink is, rather than from their rim;
@@ -1226,13 +1141,6 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
     """
 
     params = params or BaselineParams()
-    if scorer is None:
-        if params.decisions in (None, "rules"):
-            scorer = RULES
-        else:
-            from line2func.decisions import load_scorer
-
-            scorer = load_scorer(params.decisions)
     ink = np.asarray(ink, dtype=np.float32)
     if ink.ndim != 2:
         raise ValueError("ink map must be a 2-D array")
@@ -1298,21 +1206,15 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
     result.meta["line_width"] = round(line_w, 2)
 
     support = ndimage.binary_dilation(mask, structure=_EIGHT).astype(np.float32)
-    # how thick the lines are at every pixel: the trim around each junction and the scorer's
-    # features both read it (the same array as dist unless filled areas were cut out)
+    # how thick the lines are at every pixel: the trim around each junction reads it
+    # (the same array as dist unless filled areas were cut out)
     line_dist = ndimage.distance_transform_edt(line_mask) if fill_region.any() else dist
-    ctx = None
-    if scorer.needs_features or recorder is not None:
-        ctx = DecisionContext(ink, mask, line_dist, thr, line_w, radius)
-    scorer.begin(ctx)
     stroke_id = 0
 
-    def emit(strokes, tags: tuple[str, ...], seams=None, decide=None, tones=None, colors=None) -> None:
+    def emit(strokes, tags: tuple[str, ...], tones=None, colors=None) -> None:
         nonlocal stroke_id
         for k, (pts, closed) in enumerate(strokes):
-            ctrls = _fit_stroke(pts, closed, radius, params, scorer=decide, ctx=ctx,
-                                recorder=recorder if decide is not None else None,
-                                seams=seams[k] if seams is not None else None, stroke=stroke_id)
+            ctrls = _fit_stroke(pts, closed, radius, params)
             if not ctrls:
                 continue
             tone = tones[k] if tones is not None else None
@@ -1325,16 +1227,9 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
             stroke_id += 1
 
     min_len = max(2.0, line_w)
-    infos: list = []
-    raw = _strokes_from_skeleton(skel, radius, params, close_gaps=True, scorer=scorer, ctx=ctx, recorder=recorder,
-                                 info=infos, line_dist=line_dist if params.local_trim else None)
-    keep = [float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1))) >= min_len for p, _ in raw]
-    strokes = [s for s, ok in zip(raw, keep) if ok]
-    seams = [s for s, ok in zip(infos, keep) if ok]
-    emit(strokes, (), seams, decide=scorer)
-    report = scorer.report()
-    if report:
-        result.meta["decisions"] = report
+    raw = _strokes_from_skeleton(skel, radius, params, close_gaps=True,
+                                 line_dist=line_dist if params.local_trim else None)
+    emit([s for s in raw if float(np.sum(np.linalg.norm(np.diff(s[0], axis=0), axis=1))) >= min_len], ())
 
     if fill_region.any():
         # every filled area carries how dark it is, so the exports can show a shadow as the

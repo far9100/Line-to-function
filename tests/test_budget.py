@@ -99,10 +99,11 @@ def test_pipeline_curve_count():
     cs, _ = pipeline.trace(rgb, upscale=1, curve_count=len(coarse) - 2, progress=seen.append)
     assert len(cs) == len(coarse) - 2 and "count" in seen and seen.count("vectorize") == 1
     assert cs.meta["curve_count"]["merged"] == 2
-    # more than the first tracing gives: traced again, more finely
+    # more than the first tracing gives: traced again, more finely. The trigger has to come from
+    # the coarse tracing, which is what the first pass makes, not from the fine one
     seen = []
-    more, _ = pipeline.trace(rgb, upscale=1, curve_count=len(fine) - 1, progress=seen.append)
-    assert len(more) == len(fine) - 1 and seen.count("vectorize") == 2
+    more, _ = pipeline.trace(rgb, upscale=1, curve_count=len(coarse) + 1, progress=seen.append)
+    assert len(more) == len(coarse) + 1 and seen.count("vectorize") == 2
     seen = []
     many, _ = pipeline.trace(rgb, upscale=1, curve_count=10_000, progress=seen.append)
     assert len(many) == len(fine) and many.meta["curve_count"]["after"] < 10_000

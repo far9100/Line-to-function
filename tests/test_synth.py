@@ -115,32 +115,6 @@ def test_cli_scenes_and_valset(tmp_path):
     assert (tmp_path / "p.png").is_file()
 
 
-def test_decision_features_follow_their_metadata():
-    from line2func.metrics import _stroke_polylines, gt_corners
-
-    for i in range(3):
-        scene = synth.make_scene(np.random.default_rng([55, i]), 512, 512, "hard2")
-        meta, gt = scene.gt.meta, scene.gt
-        polys = _stroke_polylines(gt)
-        w_max = max(max(w) for w in meta["widths"])
-        for t in meta["t_junctions"]:
-            start = polys[t["stem"]][0]
-            d = np.min(np.linalg.norm(polys[t["bar"]] - start, axis=1))
-            assert d <= max(t["gap"], 0.0) + w_max + 1.0  # the stem starts at its bar (or just short of it)
-        found = gt_corners(gt, 15.0)
-        for c in (c for c in meta["corners"] if c["turn"] >= 15.5):
-            assert any(np.linalg.norm(p - np.array(c["point"])) < 0.01 and abs(turn - c["turn"]) < 0.1
-                       for p, turn in found)
-        assert meta["hatch_groups"] >= 0 and "pressure" in meta
-
-
-def test_thin_preset_has_thin_lines():
-    scene = synth.make_scene(np.random.default_rng([56, 0]), 512, 512, "thin")
-    widths = np.array(scene.gt.meta["widths"])
-    assert widths.max() <= 1.3 * 1.25 + 1e-9
-    assert scene.gt.meta["pressure"]
-
-
 def test_patch_targets_clip_and_merge():
     # one stroke made of two pieces joined smoothly, crossing a 40x40 patch at (30, 30)
     a = g.line([0, 50], [50, 50])

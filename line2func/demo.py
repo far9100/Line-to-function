@@ -66,9 +66,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"make N curves: trace finely, then merge the pieces whose merge changes the drawing "
                         f"least; a drawing that gives fewer keeps all of them. More curves follow the lines more "
                         f"closely (default: {DESMOS_CURVE_LIMIT})")
-    p.add_argument("--decisions", default="learned", metavar="SCORER",
-                   help="who decides crossings, gap links, junction pairing and corners: learned (default: "
-                        "the learned scorer), rules (the angle rules), or a path to decision weights")
     p.add_argument("--optimize", action="store_true",
                    help="refine the curves by render-and-compare (needs PyTorch; a few seconds on a GPU)")
     p.add_argument("--quality", action="store_true",
@@ -133,7 +130,6 @@ def main(argv: list[str] | None = None) -> int:
         fill=not args.no_fill,
         optimize=args.optimize,
         curve_count=curve_count,
-        decisions=None if args.decisions == "rules" else args.decisions,
         denoise=args.denoise,
         faint_sensitivity=args.faint_sensitivity,
     )
@@ -177,8 +173,6 @@ def main(argv: list[str] | None = None) -> int:
         extras.append(f"{n_fill} curves filling them for Desmos")
     if curves.meta.get("optimized"):
         extras.append("render-and-compare refined")
-    if curves.meta.get("decisions"):
-        extras.append("learned decisions")
     count = curves.meta.get("curve_count")
     if count and count["merged"]:
         extras.append(f"merged from {count['before']} to {count['target']}")

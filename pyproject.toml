@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "line2func"
-version = "1.2.0"
+version = "1.3.0"
 description = "Trace the lines in an image into cubic parametric curves, for Desmos, SVG and LaTeX."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -40,7 +40,7 @@ line2func = "line2func.app:main"  # the app: same as python -m line2func
 include = ["line2func*"]
 
 [tool.setuptools.package-data]
-line2func = ["viewer/*", "data/*.npz"]  # the app's page; the learned decision scorer's weights
+line2func = ["viewer/*"]  # the app's page; the learned decision scorer's weights
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

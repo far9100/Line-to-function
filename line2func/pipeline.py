@@ -166,7 +166,6 @@ def trace(
     fill: bool = True,
     optimize: bool = False,
     curve_count: int | None = None,
-    decisions: str | None = "learned",
     denoise: float = DENOISE,
     faint_sensitivity: float = FAINT_SENSITIVITY,
     baseline_options: dict | None = None,
@@ -179,11 +178,6 @@ def trace(
     lines are traced. ``progress`` is described in the module docstring.
     ``curve_count`` asks for that many curves (see the module docstring); it
     replaces ``fit_tolerance`` unless that is finer than :data:`COUNT_TOLERANCE`.
-    ``decisions`` picks who decides crossings, gap links, junction pairing and
-    corners in the baseline engine: "learned" (default: the learned scorer
-    bundled with line2func, :mod:`line2func.decision_model`), "rules" / ``None``
-    (the angle rules), or a path to other learned weights. It applies to the
-    first tracing pass; the second pass keeps the rules.
     ``denoise`` (0..100) is how strongly specks and short faint pieces are
     dropped as noise: :data:`DENOISE` (50) is as tuned, 0 keeps them all (most
     detail, but on a noisy scan the noise is traced too), 100 doubles the limits
@@ -231,14 +225,6 @@ def trace(
         thr = trace_threshold(work_ink, factor)
         reference = baseline.auto_threshold(work_ink)
 
-    if decisions == "learned":
-        from line2func.decision_model import BUNDLED
-
-        if not BUNDLED.is_file():
-            warnings.warn("the learned decision scorer is missing from this installation; "
-                          "the angle rules decide instead", stacklevel=2)
-            decisions = None
-
     # line art: broken lines stay (module docstring); above the default strength joining fades out
     join = JOIN_WIDTHS * min(1.0, 2.0 - strength) if lineart_method == "none" else 0.0
 
@@ -247,7 +233,7 @@ def trace(
         step("vectorize")
         first = dict(faint, very_faint_lines=faint.get("very_faint_lines", True) and lineart_method == "none")
         options = dict(fit_tolerance=tol, threshold=thr, reference_threshold=reference,
-                       decisions=decisions, solid_ratio=SOLID_RATIO if outline else None,
+                       solid_ratio=SOLID_RATIO if outline else None,
                        join_widths=join, denoise=strength, **first)
         options.update(baseline_options or {})  # an experiment's overrides win over the defaults
         params = baseline.BaselineParams(**options)

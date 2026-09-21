@@ -169,36 +169,6 @@ def _subset(seconds_per_mp: float, spread: float) -> dict:
     return {"hard2": row}
 
 
-def test_a_steady_timing_decides_g7_either_way():
-    from line2func.eval import gate_decisions
-
-    ref, cand = _subset(1.0, 0.01), _subset(1.10, 0.01)
-    g7 = [c for c in gate_decisions(ref, cand) if c["check"].startswith("G7")]
-    assert len(g7) == 1 and g7[0]["ok"] is True
-    g7 = [c for c in gate_decisions(ref, _subset(1.30, 0.01)) if c["check"].startswith("G7")][0]
-    assert g7["ok"] is False
-
-
-def test_a_timing_whose_runs_disagree_is_reported_as_unmeasured_not_as_a_failure():
-    """The margin is under a percent, and CPU contention has already produced an impossible
-    result here, so a noisy run must not be allowed to read as a verdict."""
-    from line2func.eval import TIMING_SPREAD, gate_decisions
-
-    g7 = [c for c in gate_decisions(_subset(1.0, 0.01), _subset(1.30, TIMING_SPREAD + 0.01))
-          if c["check"].startswith("G7")][0]
-    assert g7["ok"] is None  # would have been a clear FAIL on the number alone
-    assert g7["spread"] > TIMING_SPREAD
-
-
-def test_one_timing_run_still_decides_g7_as_before():
-    """repeat=1 leaves the spread unknown, and the gate behaves as it always has."""
-    from line2func.eval import gate_decisions
-
-    g7 = [c for c in gate_decisions(_subset(1.0, float("nan")), _subset(1.10, float("nan")))
-          if c["check"].startswith("G7")][0]
-    assert g7["ok"] is True
-
-
 def test_repeating_a_timing_reports_how_far_the_runs_disagreed(tmp_path):
     from line2func.eval import eval_scenes
     from line2func.synth import write_scenes
