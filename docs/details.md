@@ -185,6 +185,13 @@ there with curves tagged `fill`: rings 1.5 px apart when it is as dark as the
 drawing's own dark ink, and 45 degree hatching spaced by its tone when it is
 lighter, such as a shadow. The SVG leaves those out.
 
+**The page shows what Desmos will show**, not what the SVG will: it draws every
+curve as a line, including the rings and hatching, and fills nothing. Desmos is
+where a filled area looks least like itself, so that is the one worth previewing
+- an area that reads as a solid block on screen but as a ring pattern once
+pasted is a surprise at the wrong moment. A downloaded SVG is filled, so it is
+the one output that does not match the page.
+
 <details>
 <summary><code>curves.json</code> format</summary>
 
@@ -992,6 +999,8 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 **信心值**是曲線落在墨跡上的比例。描線器補過缺口的地方，信心值會低於 1。
 
 **填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑），SVG 會用在區域內部量到的顏色把它填滿。Desmos 無法填滿貼上的曲線，所以區域在那裡是用標上 `fill` 的曲線填的：和圖中暗墨一樣深的區域用間隔 1.5 px 的圈線，比較淺的（例如陰影）則用依濃淡調整間隔的 45 度排線。SVG 不含這些曲線。
+
+**網頁畫面顯示的是 Desmos 會看到的樣子**，而不是 SVG 的樣子：它把每一條曲線都畫成線，包含圈線與排線，完全不填色。填滿的區域在 Desmos 裡最不像它自己，所以那才是值得預覽的對象 —— 在畫面上看起來是一塊實心、貼進 Desmos 後卻變成一圈圈的線，這種意外出現的時機最糟。下載的 SVG 仍然是填色的，所以它是唯一和網頁畫面不一致的輸出。
 
 <details>
 <summary><code>curves.json</code> 格式</summary>

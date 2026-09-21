@@ -27,22 +27,6 @@ function hue(seed, bucket) {
   return x % 360;
 }
 
-export const FILLED_TAGS = ["outline", "fill_outline"]; // = line2func.render.FILLED_TAGS
-export const SOLID_SHARE = 0.8; // = line2func.render.SOLID_SHARE
-
-/** Whether a filled area of this tone is solid ink rather than a shadow (= line2func.render.is_solid). */
-export function isSolid(tone, dark) {
-  return tone == null || !(dark > 0) || tone >= SOLID_SHARE * dark;
-}
-
-/** The fill for a filled area (= line2func.export.fill_color). */
-export function fillColor(mode, stroke, seed, color, tone, dark, fallback = BW_COLOR) {
-  // a shadow keeps its measured gray whatever line color is chosen: the fill says how dark the
-  // area is, not which stroke it is. A solid area follows the chosen color, as it always has
-  if (color && (mode === "measured" || !isSolid(tone, dark))) return color;
-  return mode === "measured" ? fallback : strokeColor(mode, stroke, seed);
-}
-
 /** The color for stroke number `stroke` in line color `mode` (= line2func.export.stroke_color). */
 export function strokeColor(mode, stroke, seed = 0) {
   if (mode === "bw" || mode === "measured") return BW_COLOR;
@@ -116,7 +100,6 @@ export function createViewer(el) {
   let lineColor = "palette", colorSeed = 0; // the chosen line color (LINE_COLOR_MODES) and the random mode's seed
   let lineWidthMode = "measured"; // LINE_WIDTH_MODES: each stroke's own width, or one width for all
   let widthGroups = null; // paths grouped by (color bucket, rounded stroke width), built when first drawn
-  let fillPaths = []; // one closed path per filled area, with its measured tone and color
 
   let docWidth = 2; // the result's own line width (meta.line_width), the one "uniform" uses
   const bg = { images: {}, alpha: { original: 0.35, missed: 0.9 } }; // images: original, quality
@@ -126,7 +109,7 @@ export function createViewer(el) {
 
   // ---------- data ----------
   function reset() {
-    W = 0; H = 0; curves = []; groups = []; grid = new Map(); fillPaths = [];
+    W = 0; H = 0; curves = []; groups = []; grid = new Map();
     hover = -1; selected = -1; quality = null; fitted = false; functionCount = null; followFit = false;
     widthGroups = null;
     pointers.clear(); drag = null; pinch = null;
@@ -156,11 +139,7 @@ export function createViewer(el) {
     functionCount = curves.some((c) => c.functions) ? curves.reduce((n, c) => n + (c.functions ? c.functions.length : 0), 0) : null;
     // one path per random-color bucket; PALETTE.length divides RANDOM_BUCKETS, so bucket % 8 is the palette hue
     groups = Array.from({ length: RANDOM_BUCKETS }, () => new Path2D());
-    fillPaths = buildFills(curves, doc.meta && doc.meta.ink_dark);
     for (const c of curves) {
-      // the rings and hatching inside a filled area only exist for Desmos, which cannot fill:
-      // here the area is filled itself, so drawing them as lines would just paint it black again
-      if (c.tags.includes("fill")) continue;
       const p = c.p, path = groups[((c.stroke % RANDOM_BUCKETS) + RANDOM_BUCKETS) % RANDOM_BUCKETS];
       path.moveTo(p[0], p[1]); path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
       const x0 = Math.floor(c.box[0] / CELL), x1 = Math.floor(c.box[2] / CELL);
@@ -175,40 +154,6 @@ export function createViewer(el) {
     spacer.style.height = curves.length * ROW + "px";
   }
 
-  // One filled path per filled stroke, painted under the lines. The subpath rule mirrors
-  // line2func.export.to_svg, so the canvas and a downloaded SVG fill exactly the same shapes.
-  function buildFills(list, dark) {
-    const byStroke = new Map();
-    for (const c of list) {
-      if (!c.tags.some((tag) => FILLED_TAGS.includes(tag))) continue;
-      let pieces = byStroke.get(c.stroke);
-      if (!pieces) byStroke.set(c.stroke, (pieces = []));
-      pieces.push(c);
-    }
-    const out = [];
-    for (const [stroke, pieces] of byStroke) {
-      const path = new Path2D();
-      let prev = null;
-      for (const c of pieces) {
-        const p = c.p;
-        if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > 1e-6) path.moveTo(p[0], p[1]);
-        path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
-        prev = [p[6], p[7]];
-      }
-      path.closePath();
-      // every piece of a filled stroke carries its area's own tone and color, so the median and
-      // the commonest are the area's; taken the same way as line2func.export.to_svg takes them
-      const tones = pieces.map((c) => c.tone).filter((v) => v != null).sort((a, b) => a - b);
-      const tone = tones.length ? tones[(tones.length - 1) >> 1] : null;
-      const counts = new Map();
-      for (const c of pieces) if (c.color) counts.set(c.color, (counts.get(c.color) || 0) + 1);
-      let color = null, best = 0;
-      for (const [value, n] of counts) if (n > best) { color = value; best = n; }
-      out.push({ stroke, path, tone, color, dark });
-    }
-    return out;
-  }
-
   // Paths for the measured-width mode, grouped by (color bucket, rounded width) because one stroke() call
   // draws a single color at a single width. A stroke's pieces all take the stroke's median width, which is
   // what line2func.export.to_svg writes, so the canvas and a downloaded SVG agree.
@@ -217,7 +162,7 @@ export function createViewer(el) {
     const fallback = docWidth;
     const perStroke = new Map(); // stroke -> its pieces' widths
     for (const c of curves) {
-      if (c.width == null || c.tags.includes("fill")) continue;
+      if (c.width == null) continue;
       let w = perStroke.get(c.stroke);
       if (!w) perStroke.set(c.stroke, (w = []));
       w.push(c.width);
@@ -229,7 +174,6 @@ export function createViewer(el) {
     }
     const map = new Map();
     for (const c of curves) {
-      if (c.tags.includes("fill")) continue;
       const bucket = ((c.stroke % RANDOM_BUCKETS) + RANDOM_BUCKETS) % RANDOM_BUCKETS;
       const width = Math.max(WIDTH_STEP, Math.round((median.get(c.stroke) ?? fallback) / WIDTH_STEP) * WIDTH_STEP);
       const key = bucket + "|" + width.toFixed(2);
@@ -376,14 +320,6 @@ export function createViewer(el) {
       ctx.drawImage(img, 0, 0, W, H); ctx.globalAlpha = 1;
     }
     if (alone) return; // the original image by itself: no curves
-    // filled areas go down first, so the lines drawn over them stay visible; the missed-detail
-    // view is a diagnostic drawn in one quiet gray, and filling it would bury its marks
-    if (shown !== "missed") {
-      for (const f of fillPaths) {
-        ctx.fillStyle = fillColor(lineColor, f.stroke, colorSeed, f.color, f.tone, f.dark);
-        ctx.fill(f.path, "evenodd");
-      }
-    }
     ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = 1.5 / view.s;
     // the missed-detail map is a diagnostic: one quiet gray at one width, so its red, orange and blue stand out
     const even = lineWidthMode === "uniform" || shown === "missed";
