@@ -57,7 +57,10 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   button.primary:hover { filter: brightness(1.06); background: var(--accent); }
   button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--hover); outline-offset: 1px; }
-  .lang { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  /* flex:none because of the overflow:hidden that rounds the group off: it also makes the group's
+     automatic minimum size 0, so a narrow header shrank the switch and clipped "EN" instead of
+     shortening the file name next to it, which is the one item here that may give way. */
+  .lang { display: inline-flex; flex: none; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .lang button { border: 0; border-radius: 0; padding: 4px 10px; }
   .lang button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
   label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
@@ -139,7 +142,13 @@
   }
   .convert-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
   .convert-row + .convert-row { margin-top: 8px; }
-  #denoise, #faint { width: 180px; }
+  /* The two sliders are one control each, so they get one line each, sharing three columns: the
+     label, the track, the reading. In a single flex row they wrapped between the pair - "Faint
+     lines" left at the end of the first line, its track alone and full width on the second - and
+     the two controls, which do the same kind of thing, looked nothing like each other. */
+  .sliders { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }  /* the gap is .convert-row's */
+  .sliders label.inline { justify-content: flex-end; }  /* both labels end at the track; only the first has a checkbox */
+  #denoise, #faint { min-width: 0; }  /* the track stretches to its column, so the reading sits beside it */
   #denoise-value, #faint-value { min-width: 5em; color: var(--muted); font-variant-numeric: tabular-nums; }
   #convert { padding: 6px 16px; }
   #convert-note { margin: 6px 0 0; font-size: 12px; max-width: 640px; }
@@ -207,6 +216,9 @@
        flex:none is load-bearing: overflow-y:hidden makes the flex automatic minimum size 0, and a
        short window would otherwise squeeze the toolbar to nothing. */
     .toolbar { flex: none; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+    /* the row scrolls, so nothing in it has to give: without this the checkbox's label was squeezed
+       to its narrowest and "Original" (two characters in Chinese) was set one character per line */
+    .toolbar > * { flex: none; }
     .toolbar .spacer { display: none; }  /* scoped: header .spacer must keep pushing the language switch right */
     #stats { order: 99; white-space: nowrap; }
     #bg-alpha { width: 108px; }
@@ -228,7 +240,6 @@
       border-radius: 12px 12px 0 0; border-left: 0; border-right: 0; border-bottom: 0; padding: 10px 12px;
     }
     #convert-bar .chips { flex: 1 1 100%; }
-    #denoise, #faint { flex: 1 1 96px; width: auto; min-width: 0; }
     #convert { flex: 1 1 100%; }
     #convert-note { max-width: none; }
 
@@ -337,7 +348,7 @@
             </span>
             <button type="button" id="convert" class="primary" data-i18n="convert.go">Convert ▶</button>
           </div>
-          <div class="convert-row">
+          <div class="convert-row sliders">
             <label class="inline" data-i18n-title="convert.denoiseHint">
               <input type="checkbox" id="denoise-on"><span data-i18n="convert.denoise">Remove noise</span></label>
             <input type="range" id="denoise" min="0" max="100" step="5" data-i18n-aria-label="convert.strengthLabel" data-i18n-title="convert.denoiseHint" aria-label="Noise filter strength">
