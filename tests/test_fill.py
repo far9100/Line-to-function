@@ -7,7 +7,7 @@ from line2func import attributes, geometry as g, pipeline
 from line2func.baseline import BaselineParams, vectorize
 from line2func.curves import Curve, CurveSet
 from line2func.export import to_desmos, to_svg
-from line2func.fill import add_fill
+from line2func.fill import add_fill, spacing_for
 from line2func.fit import fit_polyline
 from line2func.render import fill_loops, filled_area, rasterize
 
@@ -91,9 +91,8 @@ def _dense(x0, y0, x1, y1, step=2.0):
                       edge((x1, y1), (x0, y1), nx), edge((x0, y1), (x0, y0), ny)])
 
 
-def test_a_shadow_is_hatched_by_its_tone_and_a_solid_area_still_gets_rings():
+def test_how_densely_an_area_is_drawn_follows_its_tone():
     """In Desmos every line is equally dark, so a lighter area must be drawn less densely."""
-    # thin enough that the 8 rings of a solid area reach its middle (see add_fill's max_rings)
     box = _dense(20, 30, 130, 52)
     area = fill_loops([box], W, H) > 0.5
 
@@ -110,10 +109,13 @@ def test_a_shadow_is_hatched_by_its_tone_and_a_solid_area_still_gets_rings():
         drawn = rasterize(props, W, H, line_width=2.5) > 0.5
         return float((drawn & area).sum() / area.sum())
 
-    solid, half, light = inked(1.0), inked(0.5), inked(0.25)
-    assert solid > 0.9  # as dark as the drawing's dark ink: rings, and the area reads solid
-    assert 0.15 < light < 0.45  # a quarter as dark: hatched about a quarter as densely
-    assert light < half < solid  # darker areas are drawn denser
+    # one formula, no step anywhere: the coverage rises with the tone across the whole range
+    tones = [0.2, 0.35, 0.5, 0.65, 0.8, 1.0]
+    got = [inked(t) for t in tones]
+    assert all(a < b for a, b in zip(got, got[1:])), dict(zip(tones, got))
+    assert got[0] < 0.4  # a fifth as dark as the drawing's ink reads as clearly lighter
+    assert got[-1] > 0.7  # as dark as it gets reads as near solid
+    assert spacing_for(1.0, 1.0) < spacing_for(0.5, 1.0) < spacing_for(0.2, 1.0)
 
 
 def test_a_shadow_is_drawn_not_filled_in_every_line_color():

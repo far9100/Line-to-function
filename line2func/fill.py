@@ -38,9 +38,11 @@ from line2func.curves import Curve, CurveSet
 from line2func.render import filled_area
 
 FILL_TAG = "fill"
+FILL_SPACING = 1.5  # px: the closest the curves inside an area are ever drawn
 LINE_PX = 2.5  # px: how wide Desmos draws a line, with the whole drawing on screen
+COVER = 0.88  # curves tiled at their own width cover ~92% of an area, not 100%, because they curve:
+# they have to overlap by this much for the darkest areas to come out solid (measured on lineArt (11))
 MAX_SPACING = 12.0  # px: hatching wider apart than this reads as lines, not as tone
-SOLID_SHARE = 0.8  # of the drawing's dark ink (meta["ink_dark"]): this dark an area gets rings, not hatching
 
 
 def _area_tones(curves: CurveSet, labels: np.ndarray) -> list[float | None]:
@@ -89,25 +91,47 @@ def _straight(p0: np.ndarray, p1: np.ndarray) -> np.ndarray:
     return np.array([p0, p0 + (p1 - p0) / 3.0, p0 + 2.0 * (p1 - p0) / 3.0, p1])
 
 
-def add_fill(curves: CurveSet, spacing: float = 1.5, tolerance: float = 0.5, max_rings: int = 0,
-             line_px: float = LINE_PX, max_spacing: float = MAX_SPACING,
-             solid_share: float = SOLID_SHARE) -> int:
-    """Fill every filled area of ``curves`` at its own tone (in place); returns how many curves were added.
+def spacing_for(tone: float | None, dark: float, closest: float = FILL_SPACING,
+                widest: float = MAX_SPACING, line_px: float = LINE_PX, cover: float = COVER) -> float:
+    """How far apart to draw the curves inside an area of darkness ``tone``.
 
-    ``spacing`` and ``tolerance`` (the rings' fitting tolerance) are in the
-    curves' pixels. ``max_rings`` caps how many rings one area gets; 0 is as
-    many as it is deep, so its middle is drawn rather than left hollow. It used
-    to stop at 8 to save curves, which left a white hole in the middle of
-    anything deeper than 8 x ``spacing`` - visible as blanks inside a heavy
-    eyelash. Drawing them out costs 66 curves on lineArt (11) and takes its
-    solid areas from 95.1% covered to 99.8%.
+    ``line_px / (tone / dark)``: a curve inks ``line_px`` of every ``spacing``,
+    so the share of the area that comes out inked is the share of the drawing's
+    dark ink that its own ink is. Continuous in ``tone`` - an area a little
+    darker than another is drawn a little denser, with no step anywhere - and
+    clipped to [``closest``, ``widest``]. An area with no measured tone is drawn
+    at ``closest``, the way filled areas were before tones were measured.
 
-    An area is solid when its tone reaches ``solid_share`` of the drawing's dark
-    ink (``meta["ink_dark"]``); a lighter one is hatched ``line_px / share`` px
-    apart, so the share of it Desmos inks matches the share of black its ink is,
-    capped at ``max_spacing``. The comparison is against the drawing's own dark
-    ink rather than against black, because Desmos draws the drawing's lines at
-    one darkness whatever their ink: tone is only readable next to them.
+    ``cover`` is why the spacing is a little tighter than that arithmetic says.
+    Tiled curves only cover ``line_px`` of every ``spacing`` if they are straight
+    and parallel; rings curve, and measured on lineArt (11) they cover 92% of an
+    area at a spacing of their own width rather than 100%. Overlapping them by
+    ``cover`` is what lets the darkest areas come out solid.
+
+    Measured against the drawing's own dark ink rather than against black,
+    because Desmos draws every line at one darkness whatever its ink: an area's
+    tone is only readable next to the lines around it.
+    """
+    if tone is None or dark <= 0.0:
+        return closest
+    return float(np.clip(cover * line_px * dark / max(tone, 1e-3), closest, widest))
+
+
+def add_fill(curves: CurveSet, spacing: float = FILL_SPACING, tolerance: float = 0.5, max_rings: int = 0,
+             line_px: float = LINE_PX, max_spacing: float = MAX_SPACING, cover: float = COVER) -> int:
+    """Draw every filled area of ``curves`` at its own tone (in place); returns how many curves were added.
+
+    The spacing comes from :func:`spacing_for`, the same formula for every area.
+    What is drawn at that spacing is chosen by the area's shape, not its tone:
+    **rings** (contour lines of the distance to its edge) when the area is deeper
+    than one spacing, and **45 degree hatching** when it is not. A ring only
+    exists where the area is deeper than the ring's own depth, so on a shadow
+    along a jaw or a finger, only a few pixels deep, rings alone leave most areas
+    with nothing in them at all; a hatch line crosses an area however thin it is.
+
+    ``max_rings`` caps how many rings one area gets; 0 is as many as it is deep,
+    so its middle is drawn rather than left hollow. ``tolerance`` is the rings'
+    fitting tolerance, in the curves' pixels.
     """
     inside = filled_area(curves, curves.width, curves.height) >= 0.5
     if not inside.any():
@@ -123,18 +147,17 @@ def add_fill(curves: CurveSet, spacing: float = 1.5, tolerance: float = 0.5, max
         y0, x0 = max(0, box[0].start - 1), max(0, box[1].start - 1)
         area = labels[y0 : box[0].stop + 1, x0 : box[1].stop + 1] == k
         tone = tones[k] if k < len(tones) else None
-        if tone is not None and dark > 0.0 and tone < solid_share * dark:
-            # a shadow: hatch it so the share of it Desmos inks is the share of black its ink is
-            gap = min(max_spacing, line_px / max(tone / dark, 1e-3))
+        gap = spacing_for(tone, dark, spacing, max_spacing, line_px, cover)
+        dist = ndimage.distance_transform_edt(area)
+        if dist.max() <= gap:  # too shallow for even one ring: hatch across it instead
             for run in _hatch(area, gap, min_run=max(2.0, spacing)):
                 added.append(Curve(_straight(run[0] + (x0, y0), run[1] + (x0, y0)),
                                    stroke=stroke, confidence=1.0, tags=(FILL_TAG,), tone=tone))
                 stroke += 1
             continue
-        dist = ndimage.distance_transform_edt(area)
-        rings = max_rings or int(dist.max() / spacing) + 1  # 0: as many as the area is deep
+        rings = max_rings or int(dist.max() / gap) + 1  # 0: as many as the area is deep
         for ring in range(1, rings + 1):
-            level = dist > ring * spacing
+            level = dist > ring * gap
             if not level.any():
                 break
             # contours, for the same reason the area's own outline uses them: a ring is closed,
