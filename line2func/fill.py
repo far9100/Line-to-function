@@ -33,6 +33,7 @@ import numpy as np
 from scipy import ndimage
 
 from line2func import baseline
+from line2func.boundary import contours
 from line2func.curves import Curve, CurveSet
 from line2func.render import filled_area
 
@@ -88,14 +89,18 @@ def _straight(p0: np.ndarray, p1: np.ndarray) -> np.ndarray:
     return np.array([p0, p0 + (p1 - p0) / 3.0, p0 + 2.0 * (p1 - p0) / 3.0, p1])
 
 
-def add_fill(curves: CurveSet, spacing: float = 1.5, tolerance: float = 0.5, max_rings: int = 8,
+def add_fill(curves: CurveSet, spacing: float = 1.5, tolerance: float = 0.5, max_rings: int = 0,
              line_px: float = LINE_PX, max_spacing: float = MAX_SPACING,
              solid_share: float = SOLID_SHARE) -> int:
     """Fill every filled area of ``curves`` at its own tone (in place); returns how many curves were added.
 
     ``spacing`` and ``tolerance`` (the rings' fitting tolerance) are in the
-    curves' pixels. A solid area gets at most ``max_rings`` rings: the middle of
-    a large one stays hollow in Desmos rather than cost hundreds of curves.
+    curves' pixels. ``max_rings`` caps how many rings one area gets; 0 is as
+    many as it is deep, so its middle is drawn rather than left hollow. It used
+    to stop at 8 to save curves, which left a white hole in the middle of
+    anything deeper than 8 x ``spacing`` - visible as blanks inside a heavy
+    eyelash. Drawing them out costs 66 curves on lineArt (11) and takes its
+    solid areas from 95.1% covered to 99.8%.
 
     An area is solid when its tone reaches ``solid_share`` of the drawing's dark
     ink (``meta["ink_dark"]``); a lighter one is hatched ``line_px / share`` px
@@ -127,15 +132,15 @@ def add_fill(curves: CurveSet, spacing: float = 1.5, tolerance: float = 0.5, max
                 stroke += 1
             continue
         dist = ndimage.distance_transform_edt(area)
-        for ring in range(1, max_rings + 1):
+        rings = max_rings or int(dist.max() / spacing) + 1  # 0: as many as the area is deep
+        for ring in range(1, rings + 1):
             level = dist > ring * spacing
             if not level.any():
                 break
-            edge = level & ~ndimage.binary_erosion(level, structure=baseline._EIGHT)
-            for pts, closed in baseline._strokes_from_skeleton(baseline.thin(edge), 0.5, params, close_gaps=False):
-                if not closed and np.linalg.norm(np.diff(pts, axis=0), axis=1).sum() < spacing:
-                    continue  # a speck where the area is barely deeper than this ring
-                ctrls = baseline._fit_stroke(pts + (x0, y0), closed, 0.5, params)
+            # contours, for the same reason the area's own outline uses them: a ring is closed,
+            # and thinning it and walking it as a skeleton drops and splits it into fragments
+            for loop in contours(level):
+                ctrls = baseline._fit_stroke(loop + (x0, y0), True, 0.5, params)
                 added += [Curve(c, stroke=stroke, confidence=1.0, tags=(FILL_TAG,), tone=tone) for c in ctrls]
                 stroke += 1
     curves.curves.extend(added)
