@@ -23,7 +23,7 @@ def drawing(tmp_path):
 
 def test_demo_writes_all_outputs(drawing, tmp_path, capsys):
     out = tmp_path / "out"
-    assert demo.main([str(drawing), "--lineart", "none", "--vectorizer", "baseline", "--out", str(out)]) == 0
+    assert demo.main([str(drawing), "--lineart", "none", "--out", str(out)]) == 0
     for name in ("curves.json", "out.svg", "desmos.txt", "equations.tex", "overlay.png", "source.png"):
         assert (out / name).is_file(), name
     doc = json.loads((out / "curves.json").read_text(encoding="utf-8"))
@@ -34,8 +34,6 @@ def test_demo_writes_all_outputs(drawing, tmp_path, capsys):
 
 def test_demo_errors(drawing, tmp_path):
     assert demo.main([str(tmp_path / "missing.png")]) == 2
-    # the model engine needs a checkpoint
-    assert demo.main([str(drawing), "--vectorizer", "model", "--out", str(tmp_path / "o")]) == 2
     # a number of curves or a fitting tolerance, not both
     assert demo.main([str(drawing), "--curves", "10", "--tolerance", "1", "--out", str(tmp_path / "o")]) == 2
     # --named is --form named

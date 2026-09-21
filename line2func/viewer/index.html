@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-view="result">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -102,6 +102,7 @@
   #detail .fns { max-height: 9.6em; overflow-y: auto; } /* a curve's functions: six lines, then scroll */
   #detail .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
   #detail .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  #list-toggle { display: none; }
   #list { position: relative; flex: 1; overflow-y: auto; }
   #spacer { position: relative; }
   .row {
@@ -118,7 +119,7 @@
   /* ---------- no image yet: the drop zone; an image to convert: the convert bar ---------- */
   #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: auto; }
   .dropzone {
-    width: min(560px, 100%); padding: 36px 24px; text-align: center; background: var(--panel);
+    width: min(560px, 100%); margin: auto; padding: 36px 24px; text-align: center; background: var(--panel);
     border: 2px dashed var(--border-strong); border-radius: 16px;
   }
   .dropzone svg { width: 52px; height: 52px; color: var(--accent); }
@@ -130,6 +131,11 @@
     position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px);
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+    /* Never taller than the stage it floats in. A percentage max-height resolves against #stage's
+       padding box, so with bottom:16px the bar's top stays at least 16px inside the stage at any
+       size, in any language, however its rows wrap: Convert is always reachable, by scrolling the
+       bar itself if it ever comes to that. Not a breakpoint, so it holds in landscape too. */
+    max-height: calc(100% - 32px); overflow-y: auto; overscroll-behavior: contain;
   }
   .convert-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
   .convert-row + .convert-row { margin-top: 8px; }
@@ -185,10 +191,72 @@
   #toast.error { background: var(--danger); color: #fff; }
   #fatal { position: fixed; z-index: 70; }
 
+  /* ---------- narrow: the equation list moves under the stage ---------- */
   @media (max-width: 860px) {
     .viewer { flex-direction: column; }
-    aside { width: auto; height: 42vh; border-left: 0; border-top: 1px solid var(--border); }
+    /* a share of the viewer, not of the window: 42vh ignored the header and the toolbar, and on a
+       phone vh is the URL-bar-collapsed height, which is not the height you can see */
+    aside { width: auto; flex: 0 0 38%; min-height: 0; border-left: 0; border-top: 1px solid var(--border); }
     header, .toolbar { padding: 6px 12px; }
+  }
+
+  /* ---------- a phone-sized window: portrait, or a short one on its side ---------- */
+  @media (max-width: 640px), (max-height: 560px) {
+    header { padding: 4px 12px; gap: 6px 8px; }
+    /* one row that scrolls sideways instead of four wrapped ones, with the numbers last.
+       flex:none is load-bearing: overflow-y:hidden makes the flex automatic minimum size 0, and a
+       short window would otherwise squeeze the toolbar to nothing. */
+    .toolbar { flex: none; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+    .toolbar .spacer { display: none; }  /* scoped: header .spacer must keep pushing the language switch right */
+    #stats { order: 99; white-space: nowrap; }
+    #bg-alpha { width: 108px; }
+
+    /* nothing to show yet: every toolbar control is disabled until there is a result, and the list is empty */
+    html[data-view="empty"] .toolbar,
+    html[data-view="empty"] aside,
+    html[data-view="preview"] aside { display: none; }
+
+    .dropzone { padding: 20px 16px; border-radius: 12px; }
+    .dropzone svg { width: 40px; height: 40px; }
+    .dropzone h1 { font-size: 19px; margin: 8px 0 4px; }
+
+    /* the convert bar as a bottom sheet: the full width wraps less, and Convert becomes a real target.
+       width:auto is load-bearing - a width beats right:0 when both are set, and the sheet would keep
+       its content width and sit against the left edge. */
+    #convert-bar {
+      left: 0; right: 0; bottom: 0; width: auto; max-width: none; transform: none;
+      border-radius: 12px 12px 0 0; border-left: 0; border-right: 0; border-bottom: 0; padding: 10px 12px;
+    }
+    #convert-bar .chips { flex: 1 1 100%; }
+    #denoise, #faint { flex: 1 1 96px; width: auto; min-width: 0; }
+    #convert { flex: 1 1 100%; }
+    #convert-note { max-width: none; }
+
+    /* no 96px held open for a curve nobody has picked yet */
+    #detail { min-height: 0; max-height: 50%; overflow-y: auto; padding: 8px 12px; }
+    #detail:empty { display: none; }
+
+    /* the list appears with a result, collapsed to its header row until it is asked for */
+    html[data-view="result"] aside { flex: 0 0 auto; }
+    html[data-view="result"] aside[data-open] { flex: 0 0 38%; }
+    aside:not([data-open]) #detail,
+    aside:not([data-open]) #list { display: none; }
+    #list-toggle {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      width: 100%; min-height: 40px; padding: 0 12px; border: 0; border-radius: 0;
+      background: none; text-align: left;
+    }
+    #list-toggle::after { content: "\25B2"; color: var(--muted); }
+    aside[data-open] #list-toggle::after { content: "\25BC"; }
+    aside[data-open] #list-toggle { border-bottom: 1px solid var(--border); }
+  }
+
+  /* ---------- short and wide (a phone on its side): side by side beats 1.6 rows ---------- */
+  @media (min-width: 561px) and (max-width: 860px) and (max-height: 560px) {
+    .viewer { flex-direction: row; }
+    aside { flex: 0 0 min(46%, 340px); border-left: 1px solid var(--border); border-top: 0; }
+    html[data-view="result"] aside[data-open] { flex: 0 0 min(46%, 340px); }
+    #detail { max-height: 45%; }
   }
 </style>
 </head>
@@ -281,6 +349,7 @@
         </div>
       </div>
       <aside>
+        <button id="list-toggle" type="button" aria-expanded="false" aria-controls="list"><span id="list-toggle-label"></span></button>
         <section id="detail"></section>
         <div id="list"><div id="spacer"></div></div>
       </aside>

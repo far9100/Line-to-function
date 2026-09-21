@@ -54,7 +54,6 @@ browser loads them from the jsDelivr CDN at run time, pinned to Pyodide
 - The total-length metric (`metrics.stroke_length_scores`) follows the stroke-length error reported in
   *Deep Sketch Vectorization* (SIGGRAPH 2024); the resolution-relative distance unit and the F sweep
   (`metrics.distance_base`, `metrics.f_sweep`) follow the Rough Sketch Cleanup Benchmark's conventions.
-- Model design inspired by *Deep Vectorization of Technical Drawings* (ECCV 2020, arXiv:2003.05471) and DETR (Carion et al., ECCV 2020).
 - XDoG: Winnemöller, Kyprianidis & Olsen, 2012.
 
 ## MIT license text (Informative Drawings)

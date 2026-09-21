@@ -27,6 +27,22 @@ function hue(seed, bucket) {
   return x % 360;
 }
 
+export const FILLED_TAGS = ["outline", "fill_outline"]; // = line2func.render.FILLED_TAGS
+export const SOLID_SHARE = 0.8; // = line2func.render.SOLID_SHARE
+
+/** Whether a filled area of this tone is solid ink rather than a shadow (= line2func.render.is_solid). */
+export function isSolid(tone, dark) {
+  return tone == null || !(dark > 0) || tone >= SOLID_SHARE * dark;
+}
+
+/** The fill for a filled area (= line2func.export.fill_color). */
+export function fillColor(mode, stroke, seed, color, tone, dark, fallback = BW_COLOR) {
+  // a shadow keeps its measured gray whatever line color is chosen: the fill says how dark the
+  // area is, not which stroke it is. A solid area follows the chosen color, as it always has
+  if (color && (mode === "measured" || !isSolid(tone, dark))) return color;
+  return mode === "measured" ? fallback : strokeColor(mode, stroke, seed);
+}
+
 /** The color for stroke number `stroke` in line color `mode` (= line2func.export.stroke_color). */
 export function strokeColor(mode, stroke, seed = 0) {
   if (mode === "bw" || mode === "measured") return BW_COLOR;
@@ -79,7 +95,8 @@ export function esc(s) {
 const tagName = (tag) => t("tag." + tag, {}, tag);
 const shapeName = (type) => t("shape." + type, {}, type);
 
-// el: {stage, canvas, tip, message, list, spacer, detail, stats, fit, originalOnly, viewMode, bgAlpha}
+// el: {stage, canvas, tip, message, list, spacer, detail, stats, fit, originalOnly, viewMode, bgAlpha,
+//      convertBar, listToggleLabel}
 // Display modes (el.viewMode): "lines" (the curves on paper), "original" (on the original image) and "missed"
 // (on the quality check's map of missed detail). el.originalOnly shows the original image alone.
 export function createViewer(el) {
@@ -93,12 +110,14 @@ export function createViewer(el) {
   let view = { s: 1, tx: 0, ty: 0 }, dpr = window.devicePixelRatio || 1;
   let hover = -1, selected = -1, dirty = true, fitted = false, generation = 0;
   // followFit: refit when the stage changes size until the user pans or zooms (a banner or a wrapping
-  // toolbar can appear after the first fit); insetBottom: stage pixels at the bottom that are covered
-  let followFit = false, insetBottom = 0;
+  // toolbar can appear after the first fit)
+  let followFit = false;
   let mode = "original", originalOnly = false; // the chosen display; a mode whose image is missing shows "lines"
   let lineColor = "palette", colorSeed = 0; // the chosen line color (LINE_COLOR_MODES) and the random mode's seed
   let lineWidthMode = "measured"; // LINE_WIDTH_MODES: each stroke's own width, or one width for all
   let widthGroups = null; // paths grouped by (color bucket, rounded stroke width), built when first drawn
+  let fillPaths = []; // one closed path per filled area, with its measured tone and color
+
   let docWidth = 2; // the result's own line width (meta.line_width), the one "uniform" uses
   const bg = { images: {}, alpha: { original: 0.35, missed: 0.9 } }; // images: original, quality
   const pointers = new Map();
@@ -107,8 +126,8 @@ export function createViewer(el) {
 
   // ---------- data ----------
   function reset() {
-    W = 0; H = 0; curves = []; groups = []; grid = new Map();
-    hover = -1; selected = -1; quality = null; fitted = false; functionCount = null; followFit = false; insetBottom = 0;
+    W = 0; H = 0; curves = []; groups = []; grid = new Map(); fillPaths = [];
+    hover = -1; selected = -1; quality = null; fitted = false; functionCount = null; followFit = false;
     widthGroups = null;
     pointers.clear(); drag = null; pinch = null;
     canvas.classList.remove("dragging", "over");
@@ -131,12 +150,17 @@ export function createViewer(el) {
       for (let k = 0; k <= n; k++) { const q = bezier(p, k / n); poly[2 * k] = q[0]; poly[2 * k + 1] = q[1]; }
       const cx = power(p[0], p[2], p[4], p[6]), cy = power(H - p[1], H - p[3], H - p[5], H - p[7]);
       return { i, stroke: c.stroke, conf: c.confidence, tags: c.tags || [], p, box, poly, cx, cy,
-               width: c.width ?? null, color: c.color ?? null, shape: c.shape ?? null, functions: c.functions ?? null };
+               width: c.width ?? null, color: c.color ?? null, tone: c.tone ?? null,
+               shape: c.shape ?? null, functions: c.functions ?? null };
     });
     functionCount = curves.some((c) => c.functions) ? curves.reduce((n, c) => n + (c.functions ? c.functions.length : 0), 0) : null;
     // one path per random-color bucket; PALETTE.length divides RANDOM_BUCKETS, so bucket % 8 is the palette hue
     groups = Array.from({ length: RANDOM_BUCKETS }, () => new Path2D());
+    fillPaths = buildFills(curves, doc.meta && doc.meta.ink_dark);
     for (const c of curves) {
+      // the rings and hatching inside a filled area only exist for Desmos, which cannot fill:
+      // here the area is filled itself, so drawing them as lines would just paint it black again
+      if (c.tags.includes("fill")) continue;
       const p = c.p, path = groups[((c.stroke % RANDOM_BUCKETS) + RANDOM_BUCKETS) % RANDOM_BUCKETS];
       path.moveTo(p[0], p[1]); path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
       const x0 = Math.floor(c.box[0] / CELL), x1 = Math.floor(c.box[2] / CELL);
@@ -151,6 +175,40 @@ export function createViewer(el) {
     spacer.style.height = curves.length * ROW + "px";
   }
 
+  // One filled path per filled stroke, painted under the lines. The subpath rule mirrors
+  // line2func.export.to_svg, so the canvas and a downloaded SVG fill exactly the same shapes.
+  function buildFills(list, dark) {
+    const byStroke = new Map();
+    for (const c of list) {
+      if (!c.tags.some((tag) => FILLED_TAGS.includes(tag))) continue;
+      let pieces = byStroke.get(c.stroke);
+      if (!pieces) byStroke.set(c.stroke, (pieces = []));
+      pieces.push(c);
+    }
+    const out = [];
+    for (const [stroke, pieces] of byStroke) {
+      const path = new Path2D();
+      let prev = null;
+      for (const c of pieces) {
+        const p = c.p;
+        if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > 1e-6) path.moveTo(p[0], p[1]);
+        path.bezierCurveTo(p[2], p[3], p[4], p[5], p[6], p[7]);
+        prev = [p[6], p[7]];
+      }
+      path.closePath();
+      // every piece of a filled stroke carries its area's own tone and color, so the median and
+      // the commonest are the area's; taken the same way as line2func.export.to_svg takes them
+      const tones = pieces.map((c) => c.tone).filter((v) => v != null).sort((a, b) => a - b);
+      const tone = tones.length ? tones[(tones.length - 1) >> 1] : null;
+      const counts = new Map();
+      for (const c of pieces) if (c.color) counts.set(c.color, (counts.get(c.color) || 0) + 1);
+      let color = null, best = 0;
+      for (const [value, n] of counts) if (n > best) { color = value; best = n; }
+      out.push({ stroke, path, tone, color, dark });
+    }
+    return out;
+  }
+
   // Paths for the measured-width mode, grouped by (color bucket, rounded width) because one stroke() call
   // draws a single color at a single width. A stroke's pieces all take the stroke's median width, which is
   // what line2func.export.to_svg writes, so the canvas and a downloaded SVG agree.
@@ -159,7 +217,7 @@ export function createViewer(el) {
     const fallback = docWidth;
     const perStroke = new Map(); // stroke -> its pieces' widths
     for (const c of curves) {
-      if (c.width == null) continue;
+      if (c.width == null || c.tags.includes("fill")) continue;
       let w = perStroke.get(c.stroke);
       if (!w) perStroke.set(c.stroke, (w = []));
       w.push(c.width);
@@ -171,6 +229,7 @@ export function createViewer(el) {
     }
     const map = new Map();
     for (const c of curves) {
+      if (c.tags.includes("fill")) continue;
       const bucket = ((c.stroke % RANDOM_BUCKETS) + RANDOM_BUCKETS) % RANDOM_BUCKETS;
       const width = Math.max(WIDTH_STEP, Math.round((median.get(c.stroke) ?? fallback) / WIDTH_STEP) * WIDTH_STEP);
       const key = bucket + "|" + width.toFixed(2);
@@ -202,7 +261,14 @@ export function createViewer(el) {
     dirty = true;
   }
 
+  // the label of the phone layout's collapsed equation list (the button is display:none elsewhere)
+  function renderListToggle() {
+    if (!el.listToggleLabel) return;
+    el.listToggleLabel.textContent = status === "ready" ? t("count.curves", { n: curves.length }) : "";
+  }
+
   function renderStats() {
+    renderListToggle();
     if (status === "loading") { stats.textContent = t("viewer.loadingShort"); stats.title = ""; return; }
     if (status === "failed") { stats.textContent = t("viewer.failedShort"); stats.title = ""; return; }
     if (status !== "ready") { stats.textContent = ""; stats.title = ""; return; }
@@ -266,8 +332,20 @@ export function createViewer(el) {
     if ((!fitted || followFit) && W && w && h) fitted = fit();
     dirty = true;
   }
+  // Stage pixels the convert bar covers: the overlap of the two boxes, measured on every fit, so a
+  // language change, a rotation, a rewrapped bar and a bar that sits below the stage are all handled
+  // without being told. With the bar at bottom:16px this is its height + 24, which is the number
+  // app.js used to pass in. Capped so fit() always has somewhere to put the image.
+  function bottomInset() {
+    const bar = el.convertBar;
+    if (!bar || bar.hidden || !bar.offsetParent) return 0;
+    const box = stage.getBoundingClientRect(), b = bar.getBoundingClientRect();
+    const overlap = box.bottom - Math.max(b.top, box.top);
+    if (!(overlap > 0)) return 0; // shown below the stage, not over it
+    return Math.min(overlap + 8, Math.max(0, box.height - 96));
+  }
   function fit() {
-    const w = stage.clientWidth, h = stage.clientHeight - insetBottom, pad = 24;
+    const w = stage.clientWidth, h = stage.clientHeight - bottomInset(), pad = 24;
     if (!W || !w || h <= 0) return false; // hidden: fit once the stage has a size
     view.s = Math.max(1e-3, Math.min((w - 2 * pad) / W, (h - 2 * pad) / H));
     view.tx = (w - W * view.s) / 2; view.ty = (h - H * view.s) / 2; dirty = true;
@@ -298,6 +376,14 @@ export function createViewer(el) {
       ctx.drawImage(img, 0, 0, W, H); ctx.globalAlpha = 1;
     }
     if (alone) return; // the original image by itself: no curves
+    // filled areas go down first, so the lines drawn over them stay visible; the missed-detail
+    // view is a diagnostic drawn in one quiet gray, and filling it would bury its marks
+    if (shown !== "missed") {
+      for (const f of fillPaths) {
+        ctx.fillStyle = fillColor(lineColor, f.stroke, colorSeed, f.color, f.tone, f.dark);
+        ctx.fill(f.path, "evenodd");
+      }
+    }
     ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = 1.5 / view.s;
     // the missed-detail map is a diagnostic: one quiet gray at one width, so its red, orange and blue stand out
     const even = lineWidthMode === "uniform" || shown === "missed";
@@ -497,6 +583,9 @@ export function createViewer(el) {
   });
   new ResizeObserver(() => { resize(); renderList(); }).observe(stage);
   new ResizeObserver(renderList).observe(list);
+  // the bar's height changes with the language and with how its rows wrap; refit under it while the
+  // view is still the fitted one
+  if (el.convertBar) new ResizeObserver(() => { if (followFit) fitted = fit(); }).observe(el.convertBar);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { dirty = true; });
 
   // ---------- public ----------
@@ -523,10 +612,10 @@ export function createViewer(el) {
   }
   // Show an image alone, e.g. a drawing waiting to be converted; w, h: its size in pixels; bottom: stage
   // pixels at the bottom that something covers (it is fitted above them).
-  function preview(url, w, h, bottom = 0) {
+  function preview(url, w, h) {
     const mine = ++generation;
     reset();
-    W = w; H = h; status = "preview"; insetBottom = bottom;
+    W = w; H = h; status = "preview";
     resize(); renderList(); showDetail(); renderStats(); renderMessage(); updateControls();
     const img = new Image();
     img.onload = () => { if (mine !== generation) return; bg.images.original = img; dirty = true; };
@@ -575,5 +664,5 @@ export function createViewer(el) {
   }
 
   return { load, preview, setLoading, fail, unload, rerender, setDesmosWarning, fit, handleKey, debug,
-           setLineColor, lineColorState, setLineWidth };
+           setLineColor, lineColorState, setLineWidth, refreshList: renderList, curveCount: () => curves.length };
 }

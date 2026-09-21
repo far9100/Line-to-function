@@ -9,7 +9,16 @@ import pytest
 from line2func import geometry as g
 from line2func.baseline import BaselineParams, vectorize
 from line2func.curves import Curve, CurveSet
-from line2func.decisions import RULES, Scorer, exact_matching, greedy_pairs, load_scorer, pick_peaks
+from line2func.decisions import (
+    RULES,
+    ImprovedRules,
+    Scorer,
+    WideGapRules,
+    exact_matching,
+    greedy_pairs,
+    load_scorer,
+    pick_peaks,
+)
 from line2func.metrics import joint_corners
 from line2func.render import render_lineart
 
@@ -134,3 +143,35 @@ def test_tracing_never_imports_torch():
             "vectorize(np.pad(np.ones((4, 60)), 20)); print('torch' in sys.modules)")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+def test_the_no_learning_rule_variants_are_reachable_by_name():
+    """``r2`` / ``r2-gaps``: the rules with wider candidates, so the measurement can be redone.
+
+    Both are measurably worse than the plain rules on real drawings (docs/details.md,
+    "How strokes are joined"); they are kept so that result stays reproducible.
+    """
+    assert type(load_scorer("r2")) is ImprovedRules
+    assert type(load_scorer("r2-gaps")) is WideGapRules
+    # neither learns anything, so neither may need PyTorch or the bundled weights
+    assert WideGapRules.needs_features is False
+    for cls in (WideGapRules, ImprovedRules):
+        assert cls.limits.gap_radius_scale == 1.5  # the widening they exist for
+        assert cls.limits.gap_angle_gate is None  # ... at the rule's own angle gate
+
+
+def test_a_wider_gap_radius_closes_a_break_the_rules_leave_open():
+    """The rule's radius is 4 line widths; at 1.5x it reaches a break the rules give up on."""
+    def broken(total_gap):
+        h = total_gap // 2
+        return _ink([g.line([20, 64], [64 - h, 64]), g.line([64 + h, 64], [108, 64])])
+
+    for total_gap in (12, 14):  # measured: inside 1.5x the rule's radius, outside the rule's own
+        ink = broken(total_gap)
+        assert vectorize(ink).num_strokes == 2, total_gap  # the rules leave it broken
+        assert vectorize(ink, scorer=WideGapRules()).num_strokes == 1, total_gap
+        assert vectorize(ink, scorer=ImprovedRules()).num_strokes == 1, total_gap
+
+    for total_gap in (10, 18):  # inside both radii, and outside both
+        ink = broken(total_gap)
+        assert vectorize(ink, scorer=WideGapRules()).num_strokes == vectorize(ink).num_strokes

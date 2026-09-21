@@ -144,8 +144,10 @@ def reduce_to(curves: CurveSet, n: int, spacing: float = 1.0) -> dict:
         widths = [(c.width, length) for c, length in ((ca, a.length), (cb, b.length)) if c.width is not None]
         width = (sum(w * length for w, length in widths) / max(sum(length for _, length in widths), 1e-9)
                  if widths else None)
+        longer = ca if a.length >= b.length else cb
         merged = Curve(ctrl, stroke=ca.stroke, confidence=min(ca.confidence, cb.confidence), tags=ca.tags,
-                       width=width, color=(ca if a.length >= b.length else cb).color)
+                       width=width, color=longer.color, tone=longer.tone)
+
         m = _Node(merged, np.vstack([a.pts, b.pts[1:]]), u, a.length + b.length, a.order)
         m.prev, m.next = a.prev, b.next
         if m.prev is not None:

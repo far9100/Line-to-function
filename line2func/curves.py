@@ -3,7 +3,6 @@
 ``curves.json`` stores control points in image pixel coordinates (y down, see
 :mod:`line2func.geometry`), together with the image size so exporters can flip
 to y-up coordinates. Layout::
-
     {
       "format": "line2func.curves",
       "version": 1,
@@ -52,7 +51,9 @@ class Curve:
     tags: tuple[str, ...] = ()
     width: float | None = None  # measured line width, px
     color: str | None = None  # measured ink color, "#rrggbb"
+    tone: float | None = None  # filled areas and their hatching: how dark, 0 (paper) to 1 (black)
     shape: dict | None = None  # recognized line / arc (line2func.shapes)
+
     functions: list[str] | None = None  # the curve as y = f(x) / x = g(y) equations (line2func.functions)
 
     def __post_init__(self) -> None:
@@ -70,6 +71,11 @@ class Curve:
             isinstance(self.color, str) and len(self.color) == 7 and self.color.startswith("#")
         ):
             raise ValueError(f"color must look like '#rrggbb', got {self.color!r}")
+        if self.tone is not None:
+            self.tone = float(self.tone)
+            if not 0.0 <= self.tone <= 1.0:
+                raise ValueError(f"tone must be in [0, 1], got {self.tone}")
+
         if self.functions is not None:
             self.functions = [str(f) for f in self.functions]
 
@@ -113,9 +119,10 @@ class CurveSet:
         """
         curves = [
             Curve(c.ctrl * factor, c.stroke, c.confidence, c.tags,
-                  width=None if c.width is None else c.width * factor, color=c.color)
+                  width=None if c.width is None else c.width * factor, color=c.color, tone=c.tone)
             for c in self.curves
         ]
+
         meta = dict(self.meta)
         if meta.get("line_width"):
             meta["line_width"] = round(float(meta["line_width"]) * factor, 2)
@@ -146,6 +153,8 @@ class CurveSet:
             d["width"] = round(c.width, 3)
         if c.color is not None:
             d["color"] = c.color
+        if c.tone is not None:
+            d["tone"] = round(c.tone, 4)
         if c.shape is not None:
             d["shape"] = c.shape
         if c.functions is not None:
@@ -170,7 +179,9 @@ class CurveSet:
                 tags=tuple(item.get("tags", ())),
                 width=item.get("width"),
                 color=item.get("color"),
+                tone=item.get("tone"),
                 shape=item.get("shape"),
+
                 functions=item.get("functions"),
             )
             for item in data.get("curves", [])

@@ -63,7 +63,7 @@ from line2func.baseline import _remove_small, auto_threshold, local_contrast, pa
 from line2func.curves import CurveSet
 from line2func.export import DESMOS_CURVE_LIMIT
 from line2func.metrics import sample_points
-from line2func.render import filled_area, render_coverage, stroke_loops
+from line2func.render import fill_share, filled_area, render_coverage, stroke_loops
 
 FAINT = 0.08  # ink below this is paper texture / noise, not drawing
 DARK = 0.5
@@ -229,7 +229,10 @@ def assess(curves: CurveSet, ink: np.ndarray, threshold: float | None = None, to
     widths = np.array([c.width if c.width else line_w for c in curves.curves]) if len(curves) else np.zeros(0)
     darkness = float(np.percentile(ink[mask], 90)) if mask.any() else 1.0
     # outline strokes (thick / wedge shapes) are filled, all other curves drawn as lines
-    cov = render_coverage(curves, w, h, line_width=widths) if len(curves) else np.zeros_like(ink)
+    # a filled area goes on the paper at its own tone, so it is judged as that gray rather than
+    # as solid ink; judging a shadow as if it were black would hide both the fault and the fix
+    share = fill_share(curves, w, h, darkness) if len(curves) else None
+    cov = render_coverage(curves, w, h, line_width=widths, fill_share=share) if len(curves) else np.zeros_like(ink)
     render = cov * darkness
     mse = float(np.mean((render - ink) ** 2))
     drawn = render > 0.5 * darkness

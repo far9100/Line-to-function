@@ -87,9 +87,29 @@ def test_svg_is_valid_and_joins_pieces():
     assert root.get("viewBox") == "0 0 100 80"
     paths = root.findall(".//{http://www.w3.org/2000/svg}path")
     assert len(paths) == 2
-    assert paths[0].get("d").count("M") == 1 and paths[0].get("d").count("C") == 2
-    assert paths[1].get("class") == "fill_outline"
+    # the filled area is painted first, so the lines drawn over it stay visible
+    assert paths[0].get("class") == "fill_outline"
+    assert paths[1].get("d").count("M") == 1 and paths[1].get("d").count("C") == 2
     assert 'stroke-width="2.5"' in svg
+
+
+def test_svg_fills_a_shadow_without_outlining_it():
+    """A filled area lighter than the drawing's dark ink is a shadow: filled, not stroked."""
+    cs = CurveSet(
+        100, 80,
+        [
+            Curve(g.line([10, 10], [50, 10]), stroke=0),
+            Curve(g.line([70, 70], [90, 70]), stroke=1, tags=("fill_outline",), tone=0.25, color="#bfbfbf"),
+            Curve(g.line([20, 40], [40, 40]), stroke=2, tags=("fill_outline",), tone=0.80, color="#333333"),
+        ],
+        meta={"line_width": 2.5, "ink_dark": 0.8},
+    )
+    svg = to_svg(cs)
+    root = ET.fromstring(svg.split("\n", 1)[1])
+    by_stroke = {p.get("id"): p for p in root.findall(".//{http://www.w3.org/2000/svg}path")}
+    shadow, solid = by_stroke["stroke-1"], by_stroke["stroke-2"]
+    assert shadow.get("fill") == "#bfbfbf" and shadow.get("stroke") == "none"
+    assert solid.get("fill") == "#333333" and solid.get("stroke") == "#333333"
 
 
 def test_write_outputs(tmp_path):

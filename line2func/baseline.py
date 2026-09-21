@@ -13,7 +13,9 @@ Pipeline
 2. **Filled areas**: parts much thicker than the typical line are cut out and
    only their outline is traced (tagged ``fill_outline``). With
    ``solid_ratio`` set, so is ink that is merely a few line widths thick over
-   some length, such as a heavy eyelash (:func:`solid_areas`).
+   some length and flat in its middle, such as a heavy eyelash or a shadow
+   (:func:`solid_areas`). Each one carries how dark it is (:func:`area_tones`),
+   which is how densely :mod:`line2func.fill` hatches it.
 3. **Thin** the remaining lines to a 1-px skeleton (Guo-Hall / Lam-Lee-Suen
    thinning, as in ``skimage.morphology.thin``).
 4. **Graph**: skeleton pixels become a graph whose nodes are end points and
@@ -391,38 +393,96 @@ def ink_length(ink: np.ndarray, threshold: float | None = None) -> float:
 
 
 def solid_areas(ink: np.ndarray, mask: np.ndarray, dist: np.ndarray, skel: np.ndarray, line_w: float,
-                ratio: float, length: float, dark: float = 0.8, flat: float = 0.8) -> np.ndarray:
-    """Solid ink at least ``ratio`` line widths thick along at least ``length`` line widths.
+                ratio: float, length: float, flat: float = 0.8) -> np.ndarray:
+    """How dark each area of flat ink at least ``ratio`` line widths thick over ``length`` of them is.
 
-    The thick part is the union of the disks inscribed in the ink (``dist``, its
+    Returns the areas' tone: 0 where there is none, and where there is one, how
+    dark its ink is (0 paper, 1 black), the same value over the whole area. The
+    thick part is the union of the disks inscribed in the ink (``dist``, its
     distance transform) that are at least ``ratio`` x ``line_w`` across: a
     morphological opening. A piece of it counts when its centerline (``skel``)
     runs through such disks for at least ``length`` line widths, and when its
-    middle is solid: the ink there is typically at least ``dark`` x the
-    drawing's dark ink (the 90th percentile) and at least ``flat`` x the darkest
+    middle is flat: the ink there is typically at least ``flat`` x the darkest
     ink around it. Two lines drawn close together make thick ink too, but a
-    lighter one in between; a blot at a line end or a junction is too short.
-    Those are left to the line tracer.
+    lighter one in between, so the flatness test leaves them to the line tracer;
+    a blot at a line end or a junction is too short.
+
+    An area used to have to be as dark as the drawing's own dark ink (the 90th
+    percentile) to count. That bar is relative, so on a light pencil drawing
+    with no true black it collapses: lineArt (9) of the JPEG set measures an ink
+    p90 of 0.576, which put the bar at 0.46 and promoted every mid-gray shadow
+    to solid ink - and then every shadow was drawn equally black. Measuring the
+    tone instead keeps the drawings that do have black exactly where they were
+    (lineArt (5), p90 1.00: the areas measure 0.81-0.91 and still read as
+    solid), leaves pure line art untouched (lineArt (3): not one curve differs),
+    and gives the shaded drawing the 0.28-0.50 range it actually has. Flatness
+    is what does the work and cannot be loosened: at ``flat`` 0.7 the areas on
+    lineArt (11) go from 1.1% of the page to 3.5% as clusters of strokes start
+    to qualify.
     """
     r = 0.5 * (ratio * line_w + 1.0)  # distance to the edge at the middle of ink that thick
+    out = np.zeros(mask.shape, dtype=np.float32)
     seeds = dist >= r
     if not seeds.any():
-        return np.zeros_like(mask)
+        return out
     region = mask & (ndimage.distance_transform_edt(~seeds) <= r + 1.0)
     labels, n = ndimage.label(region, structure=_EIGHT)
     run = np.bincount(labels[skel & seeds], minlength=n + 1)
-    dark_ink = float(np.percentile(ink[mask], 90))
     size = 2 * int(np.ceil(r)) + 1
-    keep = np.zeros(n + 1, dtype=bool)
+    tone = np.zeros(n + 1, dtype=np.float32)
     for k, box in enumerate(ndimage.find_objects(labels), start=1):
         if box is None or run[k] < length * line_w:
             continue
         box = tuple(slice(max(0, s.start - size), s.stop + size) for s in box)
         middle = (labels[box] == k) & seeds[box]
+        if not middle.any():
+            continue
         near = ndimage.maximum_filter(ink[box], size=size)[middle]
         v = ink[box][middle]
-        keep[k] = np.median(v) >= dark * dark_ink and np.median(v / np.maximum(near, 1e-6)) >= flat
-    return keep[labels]
+        if np.median(v / np.maximum(near, 1e-6)) >= flat:
+            tone[k] = float(np.median(v))
+    return tone[labels]
+
+
+def area_tones(ink: np.ndarray, region: np.ndarray, line_w: float, rgb: np.ndarray | None = None):
+    """Label the filled areas of ``region``, and measure how dark and what color each one is.
+
+    Returns ``(labels, tone, color)``: the 8-connected labelling, the median ink
+    of every area indexed by label (``tone[0]`` is 0, for "no area"), and with
+    ``rgb``, its median color as ``"#rrggbb"`` (``None`` where there is no area).
+    Both are taken over the middle of the area - the pixels at least half a line
+    width from its edge - because its rim is where the ink fades into paper. An
+    area measured at its rim comes out a washed-out gray whatever it really is,
+    which is how a solid lash and a light shadow used to get the same color.
+    Areas too thin to have a middle are measured whole.
+    """
+    labels, n = ndimage.label(region, structure=_EIGHT)
+    tone = np.zeros(n + 1, dtype=np.float32)
+    color: list[str | None] = [None] * (n + 1)
+    if n == 0:
+        return labels, tone, color
+    inner = ndimage.distance_transform_edt(region) >= max(1.0, 0.5 * line_w)
+    for k, box in enumerate(ndimage.find_objects(labels), start=1):
+        if box is None:
+            continue
+        here = labels[box] == k
+        middle = here & inner[box]
+        pick = middle if middle.any() else here
+        tone[k] = float(np.median(ink[box][pick]))
+        if rgb is not None:
+            v = [float(np.median(rgb[box][:, :, ch][pick])) for ch in range(3)]
+            color[k] = "#" + "".join(f"{int(round(min(255.0, max(0.0, c)))):02x}" for c in v)
+    return labels, tone, color
+
+
+def _stroke_area(pts: np.ndarray, labels: np.ndarray) -> int:
+    """Which filled area a boundary stroke runs around: the commonest label under it, 0 for none."""
+    xy = np.rint(np.asarray(pts, dtype=np.float64)).astype(int)
+    x = np.clip(xy[:, 0], 0, labels.shape[1] - 1)
+    y = np.clip(xy[:, 1], 0, labels.shape[0] - 1)
+    under = labels[y, x]
+    under = under[under > 0]
+    return int(np.bincount(under).argmax()) if len(under) else 0
 
 
 def _fill_holes(mask: np.ndarray, max_area: float) -> np.ndarray:
@@ -1150,14 +1210,21 @@ def _support(ctrl: np.ndarray, ink: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 
-def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=None, recorder=None) -> CurveSet:
+def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=None, recorder=None,
+              rgb: np.ndarray | None = None) -> CurveSet:
     """Trace an ink map (``(H, W)``, 1 = line) into a :class:`CurveSet`.
 
     ``scorer`` makes the tracer's decisions: crossings, gap links, junction
     pairing and corners (:mod:`line2func.decisions`). By default these are the
     angle rules, or the scorer named by ``params.decisions``. ``recorder``
     collects every decision candidate (training data for a learned scorer).
+
+    ``rgb`` (the source image, ``(H, W, 3)``) is only used to color the filled
+    areas from their inside, where their ink is, rather than from their rim;
+    :func:`line2func.attributes.measure` cannot do it later because by then the
+    areas are only outlines (:func:`area_tones`).
     """
+
     params = params or BaselineParams()
     if scorer is None:
         if params.decisions in (None, "rules"):
@@ -1212,15 +1279,16 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
         fill_region = _remove_small(fill_region, 4.0 * fill_radius * fill_radius)
     if params.solid_ratio is not None:
         if not lowered:
-            solid = solid_areas(ink, mask, dist, skel0, rough_w, params.solid_ratio, params.solid_length)
+            solid = solid_areas(ink, mask, dist, skel0, rough_w, params.solid_ratio, params.solid_length) > 0
         else:
             # judged at the reference threshold, like the line width, then given back the soft rim
             # that the lower ink threshold adds around them
             core = _fill_holes(strong & mask, max(3.0, 0.5 * rough_w * rough_w))
             solid = solid_areas(ink, core, ndimage.distance_transform_edt(core), skel0, rough_w,
-                                params.solid_ratio, params.solid_length)
+                                params.solid_ratio, params.solid_length) > 0
             solid = mask & ndimage.binary_dilation(solid, structure=_EIGHT, iterations=2)
         fill_region = fill_region | solid
+
     line_mask = _remove_small(mask & ~fill_region, min_area, join) if fill_region.any() else mask
 
     skel = thin(line_mask)
@@ -1239,7 +1307,7 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
     scorer.begin(ctx)
     stroke_id = 0
 
-    def emit(strokes, tags: tuple[str, ...], seams=None, decide=None) -> None:
+    def emit(strokes, tags: tuple[str, ...], seams=None, decide=None, tones=None, colors=None) -> None:
         nonlocal stroke_id
         for k, (pts, closed) in enumerate(strokes):
             ctrls = _fit_stroke(pts, closed, radius, params, scorer=decide, ctx=ctx,
@@ -1247,9 +1315,13 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
                                 seams=seams[k] if seams is not None else None, stroke=stroke_id)
             if not ctrls:
                 continue
+            tone = tones[k] if tones is not None else None
+            color = colors[k] if colors is not None else None
             for c in ctrls:
                 conf = round(_support(c, support), 3)
-                result.curves.append(Curve(c, stroke=stroke_id, confidence=conf, tags=tags))
+                result.curves.append(Curve(c, stroke=stroke_id, confidence=conf, tags=tags,
+                                           tone=tone, color=color))
+
             stroke_id += 1
 
     min_len = max(2.0, line_w)
@@ -1265,7 +1337,18 @@ def vectorize(ink: np.ndarray, params: BaselineParams | None = None, *, scorer=N
         result.meta["decisions"] = report
 
     if fill_region.any():
+        # every filled area carries how dark it is, so the exports can show a shadow as the
+        # gray it is rather than as solid ink (line2func.fill, line2func.export)
+        # what "black" means in this drawing: Desmos draws every line at one darkness, so a filled
+        # area's tone is only readable against the drawing's own dark ink (line2func.fill)
+        result.meta["ink_dark"] = round(float(np.percentile(ink[mask], 90)), 3)
+        labels, tone, color = area_tones(ink, fill_region, line_w, rgb)
         outline = fill_region & ~ndimage.binary_erosion(fill_region, structure=_EIGHT)
         outline_strokes = _strokes_from_skeleton(thin(outline), 0.5, params, close_gaps=False)
-        emit(outline_strokes, ("fill_outline",))
+        found = [_stroke_area(pts, labels) for pts, _ in outline_strokes]
+        tones = [float(tone[k]) or None for k in found]
+        colors = [color[k] for k in found]
+        emit(outline_strokes, ("fill_outline",), tones=tones, colors=colors)
+
     return result
+

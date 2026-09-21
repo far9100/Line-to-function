@@ -1,4 +1,4 @@
-"""Turn an input image into an ink map for the vectorizers.
+"""Turn an input image into an ink map for the tracer.
 
 Every method returns an **ink map**: float32 in ``[0, 1]``, shape ``(H, W)``,
 where 1 means "line" and 0 means "paper".

@@ -123,9 +123,17 @@ def measure(curves: CurveSet, ink: np.ndarray, rgb: np.ndarray | None = None) ->
     Curves tagged ``"outline"`` are left as they are: they trace the edge of a
     thick stroke and carry the width and color of the centerline they replaced
     (:func:`line2func.outline.outline_thick`); measured at the edge, they would
-    get a gray, half-dark color. So are the rings inside filled areas (``"fill"``,
-    :mod:`line2func.fill`), which only matter where nothing can be filled.
+    get a gray, half-dark color. So is the hatching inside filled areas
+    (``"fill"``, :mod:`line2func.fill`), which carries its area's tone and color.
+
+    A filled area's own outline (``"fill_outline"``) keeps the color measured
+    inside it while tracing (:func:`line2func.baseline.area_tones`), for the
+    same reason: here there is only its rim to sample, where the ink is fading
+    into paper, so every area - a solid lash and a light shadow alike - would
+    come out the same washed-out gray. It still gets no width, having ink on
+    one side only.
     """
+
     ink = np.asarray(ink, dtype=np.float32)
     reach = max(3.0, 2.0 * _line_width(curves))
     channels = None
@@ -159,7 +167,7 @@ def measure(curves: CurveSet, ink: np.ndarray, rgb: np.ndarray | None = None) ->
         core = [p for p, _, peak in samples if peak >= 0.5 * darkness]
         # the outline of a filled area sees ink on one side only: no meaningful width
         c.width = float(np.median(widths)) if widths and "fill_outline" not in c.tags else None
-        if channels is not None and core:
+        if channels is not None and core and "fill_outline" not in c.tags:
             core_pts = np.array(core)
             col = [float(np.median(_sample(ch, core_pts))) for ch in channels]
             c.color = "#" + "".join(f"{int(round(min(255.0, max(0.0, v)))):02x}" for v in col)

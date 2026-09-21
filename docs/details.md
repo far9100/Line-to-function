@@ -19,11 +19,10 @@ The [README](../README.md) shows how to install and use line2func; this page has
 6. [Photos and color images](#6-photos-and-color-images)
 7. [All `demo` options](#7-all-demo-options)
 8. [Tips for good results](#8-tips-for-good-results)
-9. [The neural engine (optional)](#9-the-neural-engine-optional)
-10. [Evaluation and the blind test](#10-evaluation-and-the-blind-test)
-11. [Using line2func from Python](#11-using-line2func-from-python)
-12. [Project layout and tests](#12-project-layout-and-tests)
-13. [Status and roadmap](#13-status-and-roadmap)
+9. [Evaluation](#9-evaluation)
+10. [Using line2func from Python](#10-using-line2func-from-python)
+11. [Project layout and tests](#11-project-layout-and-tests)
+12. [Status and roadmap](#12-status-and-roadmap)
 
 ### 1. Install
 
@@ -43,7 +42,7 @@ pip install -e .
 This installs `numpy`, `pillow` and `scipy`, which is all you need to trace line
 art, export, and view the results.
 
-#### Optional: PyTorch (pretrained photo line art, neural engine, training)
+#### Optional: PyTorch (pretrained photo line art, training)
 
 Install a PyTorch build that matches your GPU **first**, then the extras:
 
@@ -52,7 +51,7 @@ Install a PyTorch build that matches your GPU **first**, then the extras:
 pip install torch --index-url https://download.pytorch.org/whl/cu130
 # (CPU only: pip install torch)
 
-pip install -e ".[train,dev]"     # adds pyyaml (configs) and pytest
+pip install -e ".[train,dev]"     # adds pytest
 ```
 
 Verified setup: torch 2.14.0+cu130, Python 3.14, RTX 5070 (driver 596.21),
@@ -177,11 +176,14 @@ top-left, y down). `desmos.txt` and `equations.tex` flip to math orientation
 **Confidence** is the fraction of a curve that lies on ink. It is below 1 where
 the tracer bridged a gap.
 
-**Filled areas.** Solid black areas, large ones and heavy strokes such as
-thick eyelashes, are traced by their outline only (tagged `fill_outline`; the
-outline of a thick or strongly tapered stroke is tagged `outline`). The SVG
-fills them. Desmos cannot fill pasted curves, so rings inside each area (tagged `fill`, 1.5 px apart) make it look
-solid there; the SVG leaves the rings out.
+**Filled areas.** Areas of flat ink, large ones and heavy strokes such as thick
+eyelashes, are traced by their outline only (tagged `fill_outline`; the outline
+of a thick or strongly tapered stroke is tagged `outline`). Each one carries how
+dark it is, as `tone` (0 paper, 1 black), and the SVG fills it with the color
+measured inside it. Desmos cannot fill pasted curves, so the area is filled
+there with curves tagged `fill`: rings 1.5 px apart when it is as dark as the
+drawing's own dark ink, and 45 degree hatching spaced by its tone when it is
+lighter, such as a shadow. The SVG leaves those out.
 
 <details>
 <summary><code>curves.json</code> format</summary>
@@ -348,8 +350,6 @@ python -m line2func.demo IMAGE [options]
 |---|---|---|
 | `--out DIR` | `out` | Output folder |
 | `--lineart {none,canny,xdog,informative,informative-coarse}` | `none` | Line extraction (section 6) |
-| `--vectorizer {baseline,model}` | `baseline` | Tracing engine |
-| `--ckpt FILE` | – | Checkpoint for `--vectorizer model` (section 9) |
 | `--curves N` | `5000` | Make N curves: trace finely, then merge the neighbouring pieces whose merge changes the drawing least (section 8). A drawing that gives fewer keeps all of them |
 | `--tolerance PX` | off | Trace to this max curve-fitting error instead of a number of curves. Larger gives fewer, smoother curves |
 | `--decisions {learned,rules,PATH}` | `learned` | Who decides where strokes continue, where breaks are joined, which junctions are one crossing and where corners are: the learned scorer, the angle rules, or other learned weights (section 8) |
@@ -366,7 +366,7 @@ python -m line2func.demo IMAGE [options]
 | `--quality` | off | Judge the result against the image: `quality.json`, `quality.png` and a summary (section 8) |
 | `--no-residual` | second pass on | Skip the second pass that traces the ink the first pass left uncovered (section 8) |
 | `--no-outline` | outlines on | Keep solid areas (heavy eyelashes) and thick or wedge-shaped strokes (brush strokes) as centerlines instead of filled outlines |
-| `--no-fill` | rings on | Leave filled areas hollow in Desmos: no rings inside them (the SVG fills them anyway) |
+| `--no-fill` | fill on | Leave filled areas hollow in Desmos: nothing inside them (the SVG fills them anyway) |
 | `--optimize` | off | Refine every curve by render-and-compare. Needs PyTorch; for a 760×818 drawing about 3 s on an RTX 5070, 13 s on the CPU (section 8) |
 
 ### 8. Tips for good results
@@ -387,9 +387,6 @@ with known answers.
   paper's own noise, when they are clearly lines (below). For very faint pencil
   work on clean paper, try `--threshold 0.15` or lower (more detail, more
   curves).
-- **Engine choice for real drawings:** use the baseline. On a real anime line
-  drawing the neural engine missed more ink and produced more fragments,
-  although it wins on synthetic tests.
 - **Width range:** if the thickest line is more than ~4.5× the thinnest,
   quality can drop. Much thicker areas are treated as fills.
 - **Noisy scans / JPEG:** the baseline removes small specks (on clean paper it
@@ -411,8 +408,8 @@ Three steps target detail that a single tracing pass loses:
   dropped.
 - **Outlines** (on by default, `--no-outline` to skip): solid areas, such as a
   heavy eyelash, and strokes much thicker than the drawing's lines or strongly
-  tapered (a brush tip) become closed outlines. The SVG fills them, and rings
-  inside make them look solid in Desmos (below).
+  tapered (a brush tip) become closed outlines. The SVG fills them, and curves
+  inside make them look filled in Desmos, at their own tone (below).
 - **Render-and-compare** (`--optimize`, needs PyTorch): all curves are drawn
   with a differentiable renderer and moved by gradient descent until the
   drawing matches the image. Strokes stay joined and filled outlines are kept.
@@ -538,15 +535,55 @@ noise is traced too (as with `--denoise 0`): on 25 synthetic noisy scans the
 share of curve length on true lines fell from 0.929 at 50 to 0.902 at 75 and
 0.826 at 100 (0.165 on the worst scan). Clean synthetic scans are unchanged.
 
-#### Heavy eyelashes and other solid areas
+#### Shadows, heavy eyelashes and other filled areas
 
 Thick black strokes such as heavy eyelashes used to thin down to a tangle of
 short centerlines, and Desmos drew them as thin lines. Ink that is at least
-2.5 line widths thick over some length, and as dark in its middle as the
-drawing's darkest ink, is traced as one filled area. Rings inside the area, 1.5
-px apart, make it solid in Desmos too (`--no-fill` leaves it hollow). Two lines
-drawn so close that their ink merges do not count: their ink is lighter in
-between, so they stay lines.
+2.5 line widths thick over some length, and *flat* in its middle, is traced as
+one filled area instead. Two lines drawn so close that their ink merges do not
+count: their ink is lighter in between, so they stay lines. Flatness is what
+separates a wash of tone from a cluster of strokes, and it cannot be loosened -
+at 0.7 x the darkest ink nearby instead of 0.8, the areas on `lineArt (11)` of
+the JPEG set go from 1.1% of the page to 3.5% as stroke clusters start to pass.
+
+**Every filled area is measured for how dark it is**, and is drawn at that tone.
+The SVG fills it with the color sampled *inside* it, and a shadow gets no
+outline drawn around it - its edge is where the tone fades out, not a line
+anyone drew. Desmos cannot fill a pasted expression and draws every line at one
+darkness, so there the tone becomes line density: an area as dark as the
+drawing's own dark ink gets rings 1.5 px apart, as before, and a lighter one
+gets 45 degree hatching spaced `2.5 px / (its share of the dark ink)`, so the
+share of it Desmos inks is the share of black its ink is. Hatching rather than
+wider rings, because a ring at depth *k* x spacing only exists where the area is
+deeper than that: spacing the rings by tone instead left 23 of the 59 areas on
+`lineArt (9)` - 12% of the shaded pixels - with no ring at all, since a shadow
+along a jaw or a finger is only a few pixels deep. A hatch line crosses an area
+however thin it is.
+
+An area used to have to be as dark as the drawing's own dark ink (the 90th
+percentile) to count as filled at all. That bar is relative, so on a light
+pencil drawing with no true black it collapses: `lineArt (9)` measures an ink
+p90 of 0.576, which put the bar at 0.46 and promoted every mid-gray shadow to
+solid ink - and then every shadow in the drawing was drawn equally black, which
+is what this replaced.
+
+| | Curves | PSNR | SSIM |
+|---|---|---|---|
+| `lineArt (9).jpg` (soft gray shading) | 2,066 -> 2,062 | 22.52 -> **22.88 dB** | 0.781 -> 0.776 |
+| `lineArt (11).jpg` (dense pencil, black eyes) | 3,585 -> **3,111** | 19.00 -> **19.71 dB** | 0.670 -> 0.668 |
+| `lineArt (7).jpg` (little real shading) | 1,253 -> 1,347 | 17.96 -> 17.92 dB | 0.582 -> 0.578 |
+| `lineArt (5).jpg` (real black) | 8,072 -> 8,039 | 8.32 -> **8.82 dB** | 0.631 -> 0.629 |
+| `lineArt (3).jpg` (pure line art) | 1,432 -> 1,432 | 22.10 -> 22.10 dB | identical |
+
+Filled areas' measured tone on `lineArt (9)` runs 0.30 / 0.40 / 0.60
+(p10/p50/p90) where every one of them used to be drawn solid black. Pure line
+art is untouched, curve for curve, and a drawing that does have black keeps its
+solid areas (`lineArt (5)`, ink p90 1.00: its areas measure 0.81-0.91).
+
+Over the 66 drawings of `data/real_v1`, paired: **recall and missed ink do not
+move at all** (median difference 0, interval [0, 0]), `precision` and `d_M` do
+not reach significance, and the cost is +18 curves (0.7% of the median drawing)
+and +0.13 s. The eyelash benchmark drawing improves on every measure.
 
 Drawing 1 at tolerance 1.0:
 
@@ -557,9 +594,10 @@ Drawing 1 at tolerance 1.0:
 | PSNR / SSIM | 21.9 dB / 0.922 | **22.1 dB / 0.923** |
 | Curves | 1,078 | 1,111 (35 of them rings) |
 
-On a light sketch whose close double lines merge in many places, only 2 small
-areas qualify. Zoomed in far in Desmos, the rings show as rings; with the whole
-drawing on screen they merge into a solid area.
+A lash that dark still gets rings, so those numbers stand. On a light sketch
+whose close double lines merge in many places, only 2 small areas qualify.
+Zoomed in far in Desmos, the rings show as rings; with the whole drawing on
+screen they merge into a solid area.
 
 #### The number of curves: up to 5,000 by default, `--curves N`
 
@@ -610,15 +648,22 @@ pieces become one stroke:
 - which two nearby junctions are really one shallow crossing;
 - where a stroke has a sharp corner.
 
-By default a small learned scorer makes these choices; `--decisions rules`
-uses fixed angle rules instead. The scorer sees more than the angles: line
-widths, ink darkness, faint ink inside a break, and whether a link would cross
-another line.
+By default a small learned scorer makes these choices. The scorer sees more
+than the angles: line widths, ink darkness, faint ink inside a break, and
+whether a link would cross another line. Three other deciders can be named:
 
-- It was trained on 20,000 synthetic tracings whose right answers are known,
-  in 17 s on an RTX 5070.
-- It runs on numpy, so PyTorch is not needed.
-- Its weights (150 KB) ship with line2func.
+| `--decisions` | Who decides |
+|---|---|
+| `learned` | The bundled scorer (the default) |
+| `rules` | Fixed angle rules only |
+| `r2` | The rules with wider candidates and one offset check, no learning |
+| `r2-gaps` | The rules looking 1.5x farther for the other end of a break, nothing else |
+| a path | Other weights, from `python -m line2func.train_decisions` |
+
+- It is five small networks, one per kind of choice, trained on 8,000 synthetic
+  tracings whose right answers are known, in 10 s on an RTX 5070.
+- It runs on numpy, so PyTorch is not needed to trace.
+- Its weights (143 KB) ship with line2func.
 - For inputs unlike its training data, the rules decide.
 
 Measured on synthetic test drawings with known strokes:
@@ -630,10 +675,34 @@ Measured on synthetic test drawings with known strokes:
 | Wrong joins per 100 strokes (hard set) | 2.43 | **1.58** |
 | Corner precision (hard set) | 0.525 | **0.675** |
 
-On two real test drawings it made 4–5% fewer curves, kept the same share of the
-lines and invented no more. It joined breaks in faint lines well. At dense
-junctions it was only slightly better than the rules, and it misses a few real
-sharp tips. Tracing takes about 10–15% longer than with the rules.
+**What that is worth on real drawings.** Paired over 66 real line drawings and
+again over 15 held-out JPEG ones, against the angle rules:
+
+| | 66 drawings | 15 held out |
+|---|---|---|
+| Curve length on ink (precision) | **+0.0044** [+0.0038, +0.0058] | **+0.0029** [+0.0005, +0.0035] |
+| PSNR | **+0.17 dB** | **+0.11 dB** |
+| Lines kept | +0.0005 | +0.0004, spans zero |
+| Curves | +40.5 | +6, spans zero |
+
+Every interval in bold misses zero, so the gain is real and it replicates. It is
+also small: under half a percentage point of precision, and a fifth of a decibel.
+Note what does *not* move — total curve length, missed ink and faint-line
+coverage all have intervals containing zero. The scorer finds the same ink as the
+rules and connects it better, which is what a decision scorer is for.
+
+**The rules cannot be widened to match it.** `--decisions r2` and `r2-gaps` are
+the obvious no-learning alternative, and on synthetic scenes they look strong:
+`r2` closes 0.854 of the breaks against the rules' 0.774, two thirds of the way
+to the scorer's 0.898. On real drawings they are **worse than the plain rules**:
+precision -0.0014 [-0.0022, -0.0007] over the 66, and -0.0009 [-0.0023, -0.0007]
+over the 15. The reason is measurable - they draw 5.1% more curve length, bridging
+real faint breaks (missed ink -0.0021, faint coverage +0.0040, both resolved) and
+unreal ones together, and the unreal ones cost more than the real ones gain. So
+the synthetic gap-closure score does not transfer, and the scorer earns its place.
+
+Tracing cost has not been measured cleanly: the ratio moves 3-20 points between
+runs on the same machine, so it needs a quiet machine and `--repeat`.
 
 #### Judging the result: `--quality`
 
@@ -673,68 +742,16 @@ These numbers were validated on synthetic drawings with known answers. The
 false alarms. IoU is reported too but should not be trusted on lines thinner
 than ~2 px: a 1 px shift can halve it.
 
-### 9. The neural engine (optional)
+### 9. Evaluation
 
-The neural engine is **experimental**. On synthetic test drawings it passes
-every enabling condition checked there (section 10): compared with the baseline
-engine using the angle rules, it continues strokes through crossings better
-(0.92 vs 0.76) and closes more gaps (0.95 vs 0.78). The baseline's default
-learned decisions narrow that gap (0.83 and 0.90). On a real anime drawing it
-missed more ink and produced more fragments than the baseline, and the final
-condition, a blind test on real drawings, has not been run. No pretrained
-weights are published, so you train your own.
-
-#### Train
-
-```bash
-python -m line2func.train --config configs/overfit_multi.yaml   # 5-minute self-check, must print PASSED
-python -m line2func.train --config configs/multi_curve.yaml --device cuda
-```
-
-- The full run is 150k steps: **about 4.5 h on an RTX 5070 + Ryzen 7 9700X**.
-  Data is generated on the fly, so no dataset download is needed.
-- Output goes to `runs/m3/`: `best.pt`, `last.pt` and `log.csv`.
-- **Time cap:** each run stops cleanly after 36 h (`--max-hours` to change) and
-  saves `last.pt`. Continue with:
-  ```bash
-  python -m line2func.train --config configs/multi_curve.yaml --device cuda --resume
-  ```
-  A resumed run continues the same data stream and learning-rate schedule. On
-  CPU the final weights are bit-identical to an uninterrupted run (tested); on
-  GPU, cuDNN's nondeterminism causes tiny numerical differences.
-- `last.pt` is also saved every 30 minutes and on Ctrl+C.
-- Windows: DataLoader workers use `spawn`; the defaults (7 workers) already
-  account for that.
-
-#### Use it
-
-```bash
-python -m line2func.demo drawing.png --vectorizer model --ckpt runs/m3/best.pt --out out/
-```
-
-The model reads the image in overlapping 64×64 tiles and stitches the curves
-into strokes. After that come the same refinement, measurement and export steps
-as the baseline.
-
-#### Other configs
-
-| Config | Purpose |
-|---|---|
-| `configs/overfit.yaml` | Self-check for the single-curve model |
-| `configs/single_curve.yaml` | Single-curve model (a stepping stone; ~0.8 h) |
-| `configs/overfit_multi.yaml` | Self-check for the multi-curve model |
-| `configs/multi_curve.yaml` | The model used by `--vectorizer model` |
-
-Preview the synthetic training data:
+Preview the synthetic data the metrics below are measured on:
 
 ```bash
 python -m line2func.synth preview --kind hard --out preview.png
 python -m line2func.synth preview --kind hard --patches --out patches.png
 ```
 
-### 10. Evaluation and the blind test
-
-The engines are scored on synthetic drawings with ground truth, in a "clean"
+The tracer is scored on synthetic drawings with ground truth, in a "clean"
 set and a "hard" set (noise, broken lines, dense crossings, width variation).
 Besides whether the curves lie on the lines, the scores check that the strokes
 are right:
@@ -749,25 +766,13 @@ are right:
 
 - **Baseline targets:** F_GT@2 ≥ 0.97 on the clean set, at most 5 s of CPU per
   megapixel.
-- **Conditions for enabling the neural engine by default:**
-  - on the hard set, crossing continuity and gap closure each at least 0.05
-    higher than the baseline, and F_GT@2 no lower;
-  - on the clean set, F_GT@2 at most 0.01 below the baseline;
-  - in a blind comparison on real line drawings, at least 60% rated better or
-    tied (below).
 
 ```bash
 # a fixed synthetic validation set (100 clean + 100 hard scenes, identical on every machine)
 python -m line2func.synth valset --out data/val_v1
 
-# baseline scores: F_GT@2, crossing continuity, gap closure, fragments/stroke, curve ratio, s/MP
+# the scores: F_GT@2, crossing continuity, gap closure, fragments/stroke, curve ratio, s/MP
 python -m line2func.eval --valset data/val_v1
-
-# both engines on whole drawings + the enabling conditions (PASS/FAIL)
-python -m line2func.eval --ckpt runs/m3/best.pt --valset data/val_v1
-
-# a model on patches vs the baseline
-python -m line2func.eval --ckpt runs/m3/best.pt
 ```
 
 Add `--json results.json` to save the numbers, and `--limit N` for a quick run.
@@ -784,32 +789,10 @@ python -m line2func.decisions_data --out data/decisions_v1               # ~25 m
 python -m line2func.train_decisions --data data/decisions_v1 --out runs/decisions/v1   # needs PyTorch; ~20 s on a GPU
 ```
 
-#### Blind test on real drawings
-
-This is the last condition for enabling the neural engine: human raters must
-judge it better or tied on at least 60% of real drawings.
-
-1. Put real line drawings (PNG/JPEG) in `data/full_v1/`.
-2. Build the kit:
-   ```bash
-   python -m line2func.eval --ckpt runs/m3/best.pt --fullset data/full_v1
-   ```
-   This writes `runs/m3/blindtest/index.html`, an offline page. For each
-   drawing it shows the original and the two tracings as **A** and **B** in
-   random order. The page never names the engines, and the answer key is in
-   `key.json`, which raters must not open.
-3. Each rater opens the page and votes (keys `1` = A, `2` = B, `3` = tie). Then
-   they click **Export votes** and send you their `votes.json`. Use at least
-   two raters.
-4. Score:
-   ```bash
-   python -m line2func.blindtest score runs/m3/blindtest votes_alice.json votes_bob.json
-   ```
-
-### 11. Using line2func from Python
+### 10. Using line2func from Python
 
 The whole flow in one call, as `demo` and the web page run it (the second pass,
-outlines and the rings that fill them in Desmos are on by default; both ask for
+outlines and the curves that fill them in Desmos are on by default; both ask for
 up to 5,000 curves; `optimize=True` needs PyTorch):
 
 ```python
@@ -845,20 +828,12 @@ shapes.recognize(curves)                  # mark lines and arcs
 print(to_desmos(curves, named=True))
 ```
 
-With the neural engine:
-
-```python
-from line2func.model.infer import load_vectorizer
-run = load_vectorizer("runs/m3/best.pt")   # uses the GPU if available
-curves = run(ink)
-```
-
 Other useful modules: `line2func.geometry` (evaluate, split, flatten, arc
 length, bounding box, closest point), `line2func.render` (anti-aliased
 rasterizer), `line2func.fit.fit_polyline` (Schneider fitting),
 `line2func.metrics` (F-score, chamfer, structure scores).
 
-### 12. Project layout and tests
+### 11. Project layout and tests
 
 ```
 line2func/
@@ -872,22 +847,20 @@ line2func/
   baseline.py  fit.py                      # baseline engine, Schneider fitting
   attributes.py  shapes.py  export.py      # refinement, width/color, lines/arcs, exports
   functions.py                             # curves as functions y = f(x) / x = g(y) (--form function)
-  residual.py  outline.py  fill.py         # second pass, thick strokes as outlines, rings for Desmos
+  residual.py  outline.py  fill.py         # second pass, thick strokes as outlines, filling for Desmos
   budget.py  optimize.py  quality.py       # an exact number of curves, render-and-compare, quality check
   decisions.py  decision_features.py      # the tracer's decisions as scores; candidate features
   decision_model.py  data/                # the learned scorer (numpy) and its bundled weights
   labels.py  decisions_data.py  train_decisions.py   # ground-truth labels and oracle, data, training
   geometry.py  curves.py  render.py        # geometry core, data model, rasterizer
-  synth.py  metrics.py  eval.py  blindtest.py        # synthetic data, metrics, evaluation, blind test
-  train.py  model/                         # networks, data, losses, tiled inference
-configs/        # training configs
+  synth.py  metrics.py  eval.py            # synthetic data, metrics, evaluation
 docs/           # details.md (this manual), third_party.md (licenses of third-party code and weights)
 tests/          # pytest suite; tests/pyodide/: Pyodide for the WebAssembly test
 .github/workflows/pages.yml   # tests, builds and publishes the online page
 ```
 
 ```bash
-python -m pytest            # about 390 tests; model tests skip without PyTorch, viewer JS checks without Node.js
+python -m pytest            # about 430 tests; PyTorch tests skip without PyTorch, viewer JS checks without Node.js
 npm ci --prefix tests/pyodide && LINE2FUNC_PYODIDE=1 python -m pytest tests/test_pyodide.py   # in WebAssembly
 ```
 
@@ -905,25 +878,23 @@ of Pyodide 314.0.7.
 
 Generated folders (`out/`, `runs/`, `data/`, `_site/`, `.venv/`) are git-ignored.
 
-### 13. Status and roadmap
+### 12. Status and roadmap
 
-This is version 1.0. The baseline engine is the one to use; the neural engine is experimental.
+This is version 1.2.
 
 - [x] Geometry core and renderer
 - [x] Baseline engine; SVG, Desmos and LaTeX export; viewer; `demo` and `serve`
-- [x] Synthetic data generator; single- and multi-curve neural models; whole-image inference
+- [x] Synthetic data generator with ground truth, and the evaluation harness
 - [x] Pretrained line art for photos (Informative Drawings, MIT; downloaded with a SHA-256 check)
 - [x] Named equations for lines and arcs, curve refinement, line width and color
 - [x] Web page (`python -m line2func`) in English and Traditional Chinese
 - [x] Second pass over uncovered ink, thick strokes as filled outlines, render-and-compare (`--optimize`)
 - [x] Learned decisions (the default; `--decisions rules` for the angle rules)
-- [x] Solid areas such as heavy eyelashes, with rings for Desmos; up to 5,000 curves by default; light and very faint lines
+- [x] Filled areas such as heavy eyelashes and shadows, each measured for how dark it is and drawn at that tone (rings for a solid one, hatching for a shadow, so Desmos shows the difference); up to 5,000 curves by default; light and very faint lines
 - [x] Function mode: every curve as pieces of `y = f(x)` / `x = g(y)` (`--form function`)
 - [x] One-screen web page with three display modes; lines broken into dots and dashes kept; a noise filter slider (`--denoise`)
 - [x] Faint-line sensitivity (`--faint-sensitivity`)
 - [x] Online page: the web page with line2func running in the browser (Pyodide), published with GitHub Pages
-- [ ] Blind test on real drawings (tooling ready; needs human raters)
-- [ ] Optional: retrain the neural engine on these line styles and fine-tune it on real drawings
 
 ---
 
@@ -939,11 +910,10 @@ This is version 1.0. The baseline engine is the one to use; the neural engine is
 6. [照片與彩色圖片](#6-照片與彩色圖片)
 7. [`demo` 的所有選項](#7-demo-的所有選項)
 8. [取得好結果的訣竅](#8-取得好結果的訣竅)
-9. [神經網路引擎（選用）](#9-神經網路引擎選用)
-10. [評估與盲測](#10-評估與盲測)
-11. [在 Python 中使用](#11-在-python-中使用)
-12. [專案結構與測試](#12-專案結構與測試)
-13. [現況與路線圖](#13-現況與路線圖)
+9. [評估](#9-評估)
+10. [在 Python 中使用](#10-在-python-中使用)
+11. [專案結構與測試](#11-專案結構與測試)
+12. [現況與路線圖](#12-現況與路線圖)
 
 ### 1. 安裝
 
@@ -962,7 +932,7 @@ pip install -e .
 
 這會安裝 `numpy`、`pillow` 和 `scipy`，描線稿、匯出和檢視結果只需要這些。
 
-#### 選用：PyTorch（照片用的預訓練線稿模型、神經網路引擎、訓練）
+#### 選用：PyTorch（照片用的預訓練線稿模型、訓練）
 
 **先**安裝符合你 GPU 的 PyTorch，再安裝額外套件：
 
@@ -971,7 +941,7 @@ pip install -e .
 pip install torch --index-url https://download.pytorch.org/whl/cu130
 # （只用 CPU：pip install torch）
 
-pip install -e ".[train,dev]"     # 加上 pyyaml（設定檔）與 pytest
+pip install -e ".[train,dev]"     # 加上 pytest
 ```
 
 已驗證的環境：torch 2.14.0+cu130、Python 3.14、RTX 5070（驅動程式 596.21）、Windows 11。
@@ -1054,7 +1024,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 
 **信心值**是曲線落在墨跡上的比例。描線器補過缺口的地方，信心值會低於 1。
 
-**填滿的區域。** 塗黑的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。SVG 會把它們填滿。Desmos 無法填滿貼上的曲線，所以每個區域內會加上一圈圈的曲線（標上 `fill`，間隔 1.5 px），讓它在 Desmos 裡看起來也是實心的；SVG 不含這些圈。
+**填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑），SVG 會用在區域內部量到的顏色把它填滿。Desmos 無法填滿貼上的曲線，所以區域在那裡是用標上 `fill` 的曲線填的：和圖中暗墨一樣深的區域用間隔 1.5 px 的圈線，比較淺的（例如陰影）則用依濃淡調整間隔的 45 度排線。SVG 不含這些曲線。
 
 <details>
 <summary><code>curves.json</code> 格式</summary>
@@ -1189,8 +1159,6 @@ python -m line2func.demo IMAGE [options]
 |---|---|---|
 | `--out DIR` | `out` | 輸出資料夾 |
 | `--lineart {none,canny,xdog,informative,informative-coarse}` | `none` | 抽線稿方法（見第 6 節） |
-| `--vectorizer {baseline,model}` | `baseline` | 描線引擎 |
-| `--ckpt FILE` | – | `--vectorizer model` 使用的 checkpoint（見第 9 節） |
 | `--curves N` | `5000` | 產生 N 條曲線：先細緻地描線，再合併「合併後對圖影響最小」的相鄰片段（見第 8 節）。曲線本來就比 N 少的圖會全部保留 |
 | `--tolerance PX` | 關閉 | 改用曲線擬合的最大誤差來描線，而不是指定曲線數量。數值越大，曲線越少、越平滑 |
 | `--decisions {learned,rules,PATH}` | `learned` | 由誰決定線條在交叉處怎麼接、哪些斷口要接起來、哪些相鄰的交叉點其實是同一個淺角交叉、哪裡是轉角：學習式評分器、角度規則，或其他學習權重（見第 8 節） |
@@ -1207,7 +1175,7 @@ python -m line2func.demo IMAGE [options]
 | `--quality` | 關閉 | 拿結果和原圖比對：輸出 `quality.json`、`quality.png` 與摘要（見第 8 節） |
 | `--no-residual` | 第二遍開啟 | 跳過第二遍描線（第二遍只描第一遍沒蓋到的墨跡，見第 8 節） |
 | `--no-outline` | 外框開啟 | 實心區域（粗重的睫毛）以及粗筆畫、楔形筆畫（筆刷）維持中心線，不改成填滿的外框 |
-| `--no-fill` | 圈線開啟 | 在 Desmos 裡讓填滿的區域保持空心：不在裡面加圈線（SVG 本來就會填滿） |
+| `--no-fill` | 填色開啟 | 在 Desmos 裡讓填滿的區域保持空心：裡面不加曲線（SVG 本來就會填滿） |
 | `--optimize` | 關閉 | 用「渲染後比對」微調每一條曲線。需要 PyTorch；760×818 的圖在 RTX 5070 上約 3 秒，CPU 約 13 秒（見第 8 節） |
 
 ### 8. 取得好結果的訣竅
@@ -1216,7 +1184,6 @@ python -m line2func.demo IMAGE [options]
 
 - **解析度：** 線寬約 1.5–5 px 時效果最好。細線的圖會自動以 2 倍解析度描線（`--upscale auto`）；很大的掃描圖請自行縮小。在兩張線寬約 1.7 px 的真實線稿上，自動放大加上淡線，讓線條保留率從 95–97% 提高到 98–99%，漏掉的墨跡大約減半，曲線數為原本的 1.2–1.4 倍。
 - **淺色與很淡的線：** 線稿的自動墨跡門檻最高只到 0.25，所以淺灰色的筆畫（例如飄散的髮絲）會完整描出，而不是斷成一段一段的虛線。比這更淡的線，只要明顯比周圍背景深也會被加入；最淡的、一直到紙張本身的雜訊為止，只要明顯是線也會被加入（見下文）。在乾淨紙面上很淡的鉛筆稿，可以試試 `--threshold 0.15` 或更低（細節更多，曲線也更多）。
-- **真實線稿請用傳統引擎：** 在一張真實的動漫線稿上，神經網路引擎漏掉較多墨跡、碎片也較多，雖然它在合成測試中勝過傳統引擎。
 - **線寬差距：** 最粗的線如果超過最細的約 4.5 倍，品質可能下降；粗很多的區域會被當成填色區域。
 - **掃描雜訊、JPEG：** 傳統引擎會去除小雜點（紙面乾淨時，接續某條線的小點會保留，見後面）。如果灰塵還是被描出來，先清理掃描圖或調高 `--threshold`。
 - **曲線太多或太少：** `demo` 最多產生 5,000 條；用 `--curves N` 指定其他數量（見下文）。用這個方法減少曲線，比調高 `--tolerance` 保留更多細節。
@@ -1227,7 +1194,7 @@ python -m line2func.demo IMAGE [options]
 有三個步驟專門處理單次描線會遺失的細節：
 
 - **第二遍描線**（預設開啟，`--no-residual` 關閉）：第一遍描完後，把還沒有任何曲線蓋到的墨跡單獨再描一次。太短的、大部分不在墨跡上的、或只是重複描既有曲線的片段都會被丟掉。
-- **外框**（預設開啟，`--no-outline` 關閉）：實心區域（例如粗重的睫毛），以及比圖中一般線條粗很多、或兩端粗細差很多的筆畫（例如筆刷的尖端），會改用封閉的外框表示。SVG 會把它們填滿，裡面的圈線則讓它們在 Desmos 裡看起來也是實心的（見下文）。
+- **外框**（預設開啟，`--no-outline` 關閉）：實心區域（例如粗重的睫毛），以及比圖中一般線條粗很多、或兩端粗細差很多的筆畫（例如筆刷的尖端），會改用封閉的外框表示。SVG 會把它們填滿，裡面的曲線則讓它們在 Desmos 裡也照自己的濃淡顯示（見下文）。
 - **渲染後比對**（`--optimize`，需要 PyTorch）：用可微分的渲染器把所有曲線畫出來，再用梯度下降移動曲線，直到畫出來的圖和原圖一致。同一筆畫的各段曲線會保持相連，填滿的外框則維持不動。
 
 加入這三個步驟時，它們一起讓兩張真實線稿的線條保留率從 98.3% 和 99.0% 提高到 99.7% 和 99.5%，漏掉的墨跡從 1.8% 降到 0.6%、從 6.3% 降到 5.2%。這三個步驟都救不回來的，是淡到不像線的墨跡（模糊的陰影、虹膜柔和的光環）。
@@ -1294,9 +1261,25 @@ python -m line2func.demo IMAGE [options]
 
 調到最高時，鉛筆紋理會變成短線被描出來；有雜訊的掃描圖連雜訊也會描（和 `--denoise 0` 一樣）：在 25 張有雜訊的合成掃描圖上，曲線落在真實線條上的比例從 50 時的 0.929 降到 75 時的 0.902、100 時的 0.826（最差一張 0.165）。乾淨的合成掃描圖不受影響。
 
-#### 粗重的睫毛與其他實心區域
+#### 陰影、粗重的睫毛與其他填滿的區域
 
-像粗重睫毛這種很粗的黑色筆畫，以前會被細化成一團短短的中心線，在 Desmos 裡也只畫成細線。至少 2.5 個線寬粗、有一定長度，而且中間和圖中最黑的墨一樣黑的墨跡，會被描成一個填滿的區域。區域內每隔 1.5 px 加一圈曲線，讓它在 Desmos 裡也是實心的（`--no-fill` 可保持空心）。兩條靠得太近、墨跡黏在一起的線不算：它們中間的墨比較淡，所以仍然是線。
+像粗重睫毛這種很粗的黑色筆畫，以前會被細化成一團短短的中心線，在 Desmos 裡也只畫成細線。至少 2.5 個線寬粗、有一定長度，而且中間夠**平坦**的墨跡，會被描成一個填滿的區域。兩條靠得太近、墨跡黏在一起的線不算：它們中間的墨比較淡，所以仍然是線。平坦度正是分辨「一片灰階塗抹」和「一堆擠在一起的線條」的關鍵，而且不能放寬：門檻從附近最黑墨色的 0.8 倍改成 0.7 倍時，JPEG 測試集裡 `lineArt (11)` 的區域面積就從整頁的 1.1% 衝到 3.5%，開始把密集線條也算進去。
+
+**每個填滿的區域都會量測自己有多深**，並照那個濃淡畫出來。SVG 會用在區域**內部**取樣到的顏色填色；陰影不另外描邊——它的邊界是濃淡淡出去的地方，不是誰畫的線。Desmos 沒辦法填滿貼上的算式，而且每條線都一樣深，所以在那裡濃淡是用線的密度表示：和圖中暗墨一樣深的區域照舊每隔 1.5 px 加一圈圈線（`--no-fill` 可保持空心），比較淺的區域則改用 45 度的排線，間隔是 `2.5 px ÷（它占暗墨的比例）`，讓 Desmos 畫到的面積比例正好等於它的墨色比例。用排線而不是把圈線拉疏，是因為第 *k* 圈只存在於「深度大於 k × 間距」的地方：改成依濃淡調整圈線間距時，`lineArt (9)` 的 59 個區域有 23 個完全畫不出任何一圈（占陰影像素的 12%），因為下顎或手指邊上的陰影只有幾個像素深。排線則不管區域多薄都能穿過去。
+
+以前區域必須和圖中自己的暗墨（第 90 百分位）一樣黑才算得上填滿區域。這個門檻是相對的，所以在沒有純黑的淺鉛筆稿上就會塌掉：`lineArt (9)` 量到的墨色 p90 是 0.576，門檻只剩 0.46，於是每一塊中灰陰影都被升級成實心墨塊——然後整張圖的陰影就都一樣黑了，這正是這次改掉的東西。
+
+| | 曲線數 | PSNR | SSIM |
+|---|---|---|---|
+| `lineArt (9).jpg`（柔和灰階陰影） | 2,066 → 2,062 | 22.52 → **22.88 dB** | 0.781 → 0.776 |
+| `lineArt (11).jpg`（濃密鉛筆、黑眼睛） | 3,585 → **3,111** | 19.00 → **19.71 dB** | 0.670 → 0.668 |
+| `lineArt (7).jpg`（幾乎沒有真陰影） | 1,253 → 1,347 | 17.96 → 17.92 dB | 0.582 → 0.578 |
+| `lineArt (5).jpg`（有真黑） | 8,072 → 8,039 | 8.32 → **8.82 dB** | 0.631 → 0.629 |
+| `lineArt (3).jpg`（純線稿） | 1,432 → 1,432 | 22.10 → 22.10 dB | 完全相同 |
+
+`lineArt (9)` 的填滿區域量到的濃淡是 0.30／0.40／0.60（p10／p50／p90），而這些以前全部都畫成實心黑。純線稿一條不差；本來就有純黑的圖也保住它的實心區域（`lineArt (5)` 墨色 p90 為 1.00，區域量到 0.81–0.91）。
+
+在 `data/real_v1` 的 66 張上做配對比較：**召回率與漏掉的墨完全沒有變動**（中位差 0，區間 [0, 0]），`precision` 與 `d_M` 未達顯著，代價是曲線 +18（中位圖的 0.7%）與 +0.13 秒。睫毛基準圖每一項都變好。
 
 圖 1，容差 1.0：
 
@@ -1307,7 +1290,7 @@ python -m line2func.demo IMAGE [options]
 | PSNR／SSIM | 21.9 dB／0.922 | **22.1 dB／0.923** |
 | 曲線數 | 1,078 | 1,111（其中 35 條是圈線） |
 
-在一張很多地方雙線黏在一起的淡色草稿上，只有 2 個小區域符合條件。在 Desmos 裡放得很大時看得出一圈圈的線；整張圖顯示在畫面上時，它們會連成實心的一塊。
+那麼深的睫毛仍然會拿到圈線，所以這些數字依然成立。在一張很多地方雙線黏在一起的淡色草稿上，只有 2 個小區域符合條件。在 Desmos 裡放得很大時看得出一圈圈的線；整張圖顯示在畫面上時，它們會連成實心的一塊。
 
 #### 曲線數量：預設最多 5,000 條，`--curves N`
 
@@ -1343,23 +1326,44 @@ python -m line2func.demo IMAGE [options]
 - 兩個相鄰的交叉點是不是其實只是一個淺角交叉；
 - 筆畫在哪裡有尖角。
 
-預設由一個小型的學習式評分器做這些選擇；`--decisions rules` 則改用固定的角度規則。評分器看到的不只是角度，還有線寬、墨色深淺、斷口裡的淡墨，以及一條連線會不會穿過別的線。
+預設由一個小型的學習式評分器決定。評分器看得比角度更多：線寬、墨的深淺、缺口裡的淡墨，以及一條連接會不會穿過別的線。另外還有三種決定方式可以指定：
 
-- 它用 2 萬次有標準答案的合成描線訓練，在 RTX 5070 上只花 17 秒。
-- 推論只用 numpy，不需要 PyTorch。
-- 權重只有 150 KB，隨 line2func 一起附帶。
-- 遇到和訓練資料差很多的輸入時，仍由規則決定。
+| `--decisions` | 由誰決定 |
+|---|---|
+| `learned` | 隨附的評分器（預設） |
+| `rules` | 只用固定的角度規則 |
+| `r2` | 規則加上放寬的候選與一個偏移檢查，沒有學習 |
+| `r2-gaps` | 規則把斷線的另一端找遠 1.5 倍，其餘不變 |
+| 一個路徑 | 其他權重，由 `python -m line2func.train_decisions` 產生 |
 
-在有已知筆畫的合成測試圖上的量測結果：
+- 它是五個小型網路，每種選擇一個，在 8,000 筆有標準答案的合成描線上訓練，在 RTX 5070 上花 10 秒。
+- 它用 numpy 執行，所以描線不需要 PyTorch。
+- 它的權重（143 KB）隨 line2func 一起附上。
+- 遇到和訓練資料差太多的輸入時，交給規則決定。
+
+在有標準答案的合成測試圖上測得：
 
 | | 規則 | 學習式 |
 |---|---|---|
-| 線條穿過交叉處不斷（困難組） | 0.762 | **0.826** |
-| 斷口被接起來（困難組／細筆線） | 0.774 / 0.086 | **0.898 / 0.975** |
-| 每 100 筆的錯誤接合（困難組） | 2.43 | **1.58** |
-| 轉角精確率（困難組） | 0.525 | **0.675** |
+| 線條穿過交叉點仍連續（困難組） | 0.762 | **0.826** |
+| 斷線補齊（困難組／細筆線） | 0.774 / 0.086 | **0.898 / 0.975** |
+| 每 100 筆畫的錯誤連接（困難組） | 2.43 | **1.58** |
+| 轉角精確度（困難組） | 0.525 | **0.675** |
 
-在兩張真實測試圖上，曲線數少了 4–5%，線條保留率不變，也沒有多出不在墨上的曲線。淡線的斷口接得很好；在密集的交叉處只比規則略好，而且會漏掉少數真正的尖端。描線時間比用規則時約多 10–15%。
+**這在真實線稿上值多少。** 在 66 張真實線稿上成對比較，再在另外 15 張沒看過的 JPEG 線稿上重做一次，對照角度規則：
+
+| | 66 張 | 15 張保留 |
+|---|---|---|
+| 曲線長度落在墨上（precision） | **+0.0044** [+0.0038, +0.0058] | **+0.0029** [+0.0005, +0.0035] |
+| PSNR | **+0.17 dB** | **+0.11 dB** |
+| 保留的線條 | +0.0005 | +0.0004，區間含 0 |
+| 曲線數 | +40.5 | +6，區間含 0 |
+
+粗體的區間都不含 0，所以這個增益是真的，而且會複現。它同時也很小：precision 不到半個百分點，PSNR 五分之一分貝。也要注意**沒有動的**東西 —— 總曲線長度、漏掉的墨、淡線覆蓋率，三項區間都含 0。評分器找到的墨和規則一樣多，只是接得更準，而這正是決策評分器的用途。
+
+**規則沒辦法靠放寬來追上它。** `--decisions r2` 和 `r2-gaps` 是最明顯的「不用學習」替代方案，在合成場景上看起來很強：`r2` 補起 0.854 的斷線，規則是 0.774，已經走了三分之二到評分器的 0.898。但在真實線稿上它們**比純規則還差**：66 張上 precision −0.0014 [−0.0022, −0.0007]，15 張上 −0.0009 [−0.0023, −0.0007]。原因量得出來 —— 它們多畫了 5.1% 的曲線長度，把真正的淡線斷點（漏掉的墨 −0.0021、淡線覆蓋 +0.0040，都有解析度）和不存在的斷點一起接起來，而後者的代價大於前者的收穫。所以合成資料上的斷線補齊分數並沒有轉移，評分器是站得住腳的。
+
+描線的時間成本還沒有乾淨地量到：同一台機器上這個比值在不同次執行之間會移動 3–20 個百分點，需要安靜的機器加上 `--repeat`。
 
 #### 評判結果：`--quality`
 
@@ -1391,54 +1395,16 @@ missed ink: 11.9% of all ink; by cause: below_threshold 84.8%, speck 6.3%, untra
 
 這些數字已在有標準答案的合成圖上驗證過。「lines」保留率與真實值平均只差約 0.01（500 組結果的 Spearman 相關係數 0.93），距離 d_M 與真實誤差高度一致（Spearman 0.97），亂線檢查抓到 98% 刻意加入的亂線，而且沒有誤報。報告中也有 IoU，但線寬細於約 2 px 時不可信：只偏移 1 px 就可能讓它減半。
 
-### 9. 神經網路引擎（選用）
+### 9. 評估
 
-神經網路引擎目前是**實驗功能**。在合成測試圖上，它通過了能在合成圖上檢查的所有啟用條件（見第 10 節）：和使用角度規則的傳統引擎相比，它穿過交叉點時更能保持筆畫連續（0.92 對 0.76），也補起更多缺口（0.95 對 0.78）。傳統引擎預設的學習式決策縮小了這個差距（0.83 與 0.90）。在一張真實的動漫線稿上，它漏掉的墨跡和碎片都比傳統引擎多；最後一項條件，也就是真實線稿的盲測，尚未進行。目前沒有公開的預訓練權重，需要自行訓練。
-
-#### 訓練
-
-```bash
-python -m line2func.train --config configs/overfit_multi.yaml   # 約 5 分鐘的自我檢查，必須印出 PASSED
-python -m line2func.train --config configs/multi_curve.yaml --device cuda
-```
-
-- 完整訓練是 15 萬步，**在 RTX 5070 + Ryzen 7 9700X 上約 4.5 小時**。資料是即時產生的，不需要下載資料集。
-- 輸出在 `runs/m3/`：`best.pt`、`last.pt`、`log.csv`。
-- **時間上限：** 每次訓練最多 36 小時（可用 `--max-hours` 更改），到時會存 `last.pt` 並正常停止。接續訓練：
-  ```bash
-  python -m line2func.train --config configs/multi_curve.yaml --device cuda --resume
-  ```
-  接續時會沿用同一份資料流與學習率排程。在 CPU 上，最後的權重與不中斷訓練逐位元相同（有測試驗證）；在 GPU 上，cuDNN 的非確定性會造成極小的數值差異。
-- 另外每 30 分鐘和按 Ctrl+C 時也會存 `last.pt`。
-- Windows：DataLoader 的 worker 以 `spawn` 方式啟動；預設值（7 個 worker）已經考慮到這點。
-
-#### 使用
-
-```bash
-python -m line2func.demo drawing.png --vectorizer model --ckpt runs/m3/best.pt --out out/
-```
-
-模型以互相重疊的 64×64 圖塊讀取整張圖，再把曲線接成筆畫。之後的精修、量測與匯出步驟和傳統引擎相同。
-
-#### 其他設定檔
-
-| 設定檔 | 用途 |
-|---|---|
-| `configs/overfit.yaml` | 單曲線模型的自我檢查 |
-| `configs/single_curve.yaml` | 單曲線模型（過渡用的模型；約 0.8 小時） |
-| `configs/overfit_multi.yaml` | 多曲線模型的自我檢查 |
-| `configs/multi_curve.yaml` | `--vectorizer model` 使用的模型 |
-
-預覽合成的訓練資料：
+預覽下面各項指標所使用的合成資料：
 
 ```bash
 python -m line2func.synth preview --kind hard --out preview.png
 python -m line2func.synth preview --kind hard --patches --out patches.png
 ```
 
-### 10. 評估與盲測
-
-兩種引擎都用有標準答案的合成圖評分，分成「乾淨組」和「困難組」（雜訊、斷線、密集交叉、線寬變化）。除了曲線有沒有落在線上，也檢查筆畫是否正確：
+描線器用有標準答案的合成圖評分，分成「乾淨組」和「困難組」（雜訊、斷線、密集交叉、線寬變化）。除了曲線有沒有落在線上，也檢查筆畫是否正確：
 
 | 指標 | 意義 |
 |---|---|
@@ -1449,23 +1415,13 @@ python -m line2func.synth preview --kind hard --patches --out patches.png
 | 曲線數比 | 輸出曲線數 ÷ 真實曲線數，越接近 1 越精簡 |
 
 - **傳統引擎的目標：** 乾淨組 F_GT@2 ≥ 0.97，每百萬像素最多 5 秒 CPU。
-- **神經網路引擎成為預設的條件：**
-  - 困難組的交叉接續與斷線補齊都比傳統引擎高至少 0.05，而且 F_GT@2 不低於傳統引擎；
-  - 乾淨組的 F_GT@2 最多比傳統引擎低 0.01；
-  - 在真實線稿的盲測中，至少 60% 被判定更好或打平（見下文）。
 
 ```bash
 # 固定的合成驗證集（乾淨、困難各 100 張，在每台電腦上都完全相同）
 python -m line2func.synth valset --out data/val_v1
 
-# 傳統引擎的分數：F_GT@2、交叉接續、斷線補齊、每筆畫碎片數、曲線數比、每百萬像素秒數
+# 分數：F_GT@2、交叉接續、斷線補齊、每筆畫碎片數、曲線數比、每百萬像素秒數
 python -m line2func.eval --valset data/val_v1
-
-# 兩種引擎描整張圖，並檢查啟用條件（PASS／FAIL）
-python -m line2func.eval --ckpt runs/m3/best.pt --valset data/val_v1
-
-# 模型與傳統引擎在圖塊上的比較
-python -m line2func.eval --ckpt runs/m3/best.pt
 ```
 
 加上 `--json results.json` 可以儲存數據，`--limit N` 可以快速跑少量場景。
@@ -1482,25 +1438,9 @@ python -m line2func.decisions_data --out data/decisions_v1               # 7 個
 python -m line2func.train_decisions --data data/decisions_v1 --out runs/decisions/v1   # 需要 PyTorch；GPU 約 20 秒
 ```
 
-#### 真實線稿的盲測
+### 10. 在 Python 中使用
 
-這是啟用神經網路引擎的最後一項條件：在真實線稿上，評分者要有至少 60% 判定它更好或打平。
-
-1. 把真實線稿（PNG／JPEG）放進 `data/full_v1/`。
-2. 產生盲測網頁：
-   ```bash
-   python -m line2func.eval --ckpt runs/m3/best.pt --fullset data/full_v1
-   ```
-   這會產生 `runs/m3/blindtest/index.html`，一個離線網頁。每張圖會顯示原圖和兩種描線結果，以 **A**、**B** 隨機排列。網頁不會透露引擎名稱，答案存在 `key.json`，評分者不可以打開。
-3. 每位評分者打開網頁投票（按鍵 `1` = A、`2` = B、`3` = 打平），再按 **Export votes**，把匯出的 `votes.json` 交給你。至少請兩位評分者。
-4. 計分：
-   ```bash
-   python -m line2func.blindtest score runs/m3/blindtest votes_alice.json votes_bob.json
-   ```
-
-### 11. 在 Python 中使用
-
-一次跑完整個流程，和 `demo` 與網頁版的做法相同（第二遍、外框和讓外框在 Desmos 裡填滿的圈線預設開啟；兩者都指定最多 5,000 條曲線；`optimize=True` 需要 PyTorch）：
+一次跑完整個流程，和 `demo` 與網頁版的做法相同（第二遍、外框和讓外框在 Desmos 裡填滿的曲線預設開啟；兩者都指定最多 5,000 條曲線；`optimize=True` 需要 PyTorch）：
 
 ```python
 from line2func import functions, lineart, pipeline
@@ -1534,17 +1474,9 @@ shapes.recognize(curves)                  # 標出直線與圓弧
 print(to_desmos(curves, named=True))
 ```
 
-使用神經網路引擎：
-
-```python
-from line2func.model.infer import load_vectorizer
-run = load_vectorizer("runs/m3/best.pt")   # 有 GPU 時會自動使用
-curves = run(ink)
-```
-
 其他可用的模組：`line2func.geometry`（求值、分割、轉折線、弧長、外框、最近點）、`line2func.render`（反鋸齒渲染器）、`line2func.fit.fit_polyline`（Schneider 擬合）、`line2func.metrics`（F 分數、chamfer 距離、結構指標）。
 
-### 12. 專案結構與測試
+### 11. 專案結構與測試
 
 ```
 line2func/
@@ -1558,22 +1490,20 @@ line2func/
   baseline.py  fit.py                      # 傳統引擎、Schneider 擬合
   attributes.py  shapes.py  export.py      # 精修、線寬顏色、直線圓弧、匯出
   functions.py                             # 把曲線寫成函數 y = f(x)／x = g(y)（--form function）
-  residual.py  outline.py  fill.py         # 第二遍描線、粗筆畫外框、Desmos 用的圈線
+  residual.py  outline.py  fill.py         # 第二遍描線、粗筆畫外框、Desmos 用的填色曲線
   budget.py  optimize.py  quality.py       # 指定曲線數量、渲染後比對、品質檢查
   decisions.py  decision_features.py      # 描線決策的評分介面、候選特徵
   decision_model.py  data/                # 學習式評分器（numpy）與附帶的權重
   labels.py  decisions_data.py  train_decisions.py   # 標準答案標籤與神諭、訓練資料、訓練
   geometry.py  curves.py  render.py        # 幾何核心、資料結構、渲染器
-  synth.py  metrics.py  eval.py  blindtest.py        # 合成資料、指標、評估、盲測
-  train.py  model/                         # 網路、資料、損失函數、分塊推論
-configs/        # 訓練設定檔
+  synth.py  metrics.py  eval.py            # 合成資料、指標、評估
 docs/           # details.md（本說明）、third_party.md（第三方程式碼與權重的授權）
 tests/          # pytest 測試；tests/pyodide/：WebAssembly 測試用的 Pyodide
 .github/workflows/pages.yml   # 測試、建置並發布線上版網頁
 ```
 
 ```bash
-python -m pytest            # 約 390 個測試；沒有 PyTorch 時略過模型測試，沒有 Node.js 時略過檢視器 JS 檢查
+python -m pytest            # 約 430 個測試；沒有 PyTorch 會略過需要它的測試，沒有 Node.js 會略過檢視器的 JS 檢查
 npm ci --prefix tests/pyodide && LINE2FUNC_PYODIDE=1 python -m pytest tests/test_pyodide.py   # 在 WebAssembly 中
 ```
 
@@ -1588,22 +1518,20 @@ python -m line2func.website --out _site --serve    # 並在 http://127.0.0.1:800
 
 產生的資料夾（`out/`、`runs/`、`data/`、`_site/`、`.venv/`）已列在 `.gitignore`。
 
-### 13. 現況與路線圖
+### 12. 現況與路線圖
 
-這是 1.0 版。建議使用傳統引擎；神經網路引擎是實驗功能。
+這是 1.2 版。
 
 - [x] 幾何核心與渲染器
 - [x] 傳統引擎；SVG、Desmos、LaTeX 匯出；檢視器；`demo` 與 `serve`
-- [x] 合成資料產生器；單曲線與多曲線神經網路模型；整張圖推論
+- [x] 有標準答案的合成資料產生器，以及評估工具
 - [x] 照片用的預訓練線稿模型（Informative Drawings，MIT；下載時檢查 SHA-256）
 - [x] 直線與圓弧的具名算式、曲線精修、線寬與顏色
 - [x] 網頁版（`python -m line2func`），繁體中文與英文介面
 - [x] 第二遍描線、粗筆畫改為填滿的外框、渲染後比對（`--optimize`）
 - [x] 學習式決策（預設；`--decisions rules` 改用角度規則）
-- [x] 粗重睫毛等實心區域，並加上 Desmos 用的圈線；預設最多 5,000 條曲線；淺色與極淡的線
+- [x] 粗重睫毛、陰影等填滿的區域，每一塊都量測自己有多深並照那個濃淡畫出來（實心用圈線、陰影用排線，Desmos 裡也分得出深淺）；預設最多 5,000 條曲線；淺色與極淡的線
 - [x] 函數模式：每條曲線切成 `y = f(x)`／`x = g(y)` 的顯函數（`--form function`）
 - [x] 單一畫面的網頁版，三種顯示方式；斷成點和虛線的線會保留；去雜訊強度拖動條（`--denoise`）
 - [x] 淡線靈敏度（`--faint-sensitivity`）
 - [x] 線上版網頁：line2func 在瀏覽器裡執行（Pyodide），以 GitHub Pages 發布
-- [ ] 真實線稿的盲測（工具已完成，需要人工評分者）
-- [ ] 選用：以這些線條風格重新訓練神經網路引擎，並在真實線稿上微調

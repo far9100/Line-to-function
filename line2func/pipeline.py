@@ -7,8 +7,8 @@ The bracketed stages are optional. ``outline`` turns solid areas such
 as heavy eyelashes (:func:`line2func.baseline.solid_areas`, while tracing) and
 thick or wedge-shaped strokes (:mod:`line2func.outline`) into filled outlines,
 ``residual`` traces the ink the first pass left uncovered
-(:mod:`line2func.residual`) and ``fill`` adds rings inside the filled areas so
-that they look filled in Desmos too (:mod:`line2func.fill`); these three are
+(:mod:`line2func.residual`) and ``fill`` draws each filled area at its own tone so
+that it looks filled in Desmos too (:mod:`line2func.fill`); these three are
 on by default. ``count`` runs when a curve count is asked for (below), and
 ``optimize`` refines every curve by render-and-compare
 (:mod:`line2func.optimize`; it needs PyTorch and is off unless asked for).
@@ -153,7 +153,6 @@ def choose_upscale(ink: np.ndarray, upscale, threshold: float | None = None) -> 
 def trace(
     rgb: np.ndarray,
     lineart_method: str = "none",
-    vectorize=None,
     fit_tolerance: float = 1.0,
     threshold: float | None = None,
     refine: bool = True,
@@ -174,8 +173,6 @@ def trace(
 ) -> tuple[CurveSet, np.ndarray]:
     """Trace an RGB image; returns ``(curves in original pixels, ink map at original size)``.
 
-    ``vectorize(ink, fit_tolerance=...)`` replaces the baseline engine (e.g. the
-    neural engine from :func:`line2func.model.infer.load_vectorizer`).
     ``ink`` is a ready ink map of ``rgb`` (for example a line-art preview the user
     has already seen): extraction is skipped, and when the drawing is traced at a
     higher resolution that ink map itself is enlarged, so exactly the previewed
@@ -248,16 +245,13 @@ def trace(
     def traced(tolerance: float) -> CurveSet:
         tol = tolerance * factor  # keep the tolerance in original pixels
         step("vectorize")
-        if vectorize is None:
-            first = dict(faint, very_faint_lines=faint.get("very_faint_lines", True) and lineart_method == "none")
-            options = dict(fit_tolerance=tol, threshold=thr, reference_threshold=reference,
-                           decisions=decisions, solid_ratio=SOLID_RATIO if outline else None,
-                           join_widths=join, denoise=strength, **first)
-            options.update(baseline_options or {})  # an experiment's overrides win over the defaults
-            params = baseline.BaselineParams(**options)
-            curves = baseline.vectorize(work_ink, params)
-        else:
-            curves = vectorize(work_ink, fit_tolerance=tol)
+        first = dict(faint, very_faint_lines=faint.get("very_faint_lines", True) and lineart_method == "none")
+        options = dict(fit_tolerance=tol, threshold=thr, reference_threshold=reference,
+                       decisions=decisions, solid_ratio=SOLID_RATIO if outline else None,
+                       join_widths=join, denoise=strength, **first)
+        options.update(baseline_options or {})  # an experiment's overrides win over the defaults
+        params = baseline.BaselineParams(**options)
+        curves = baseline.vectorize(work_ink, params, rgb=work_rgb)
         if refine:
             step("refine")
             attributes.refine(curves, work_ink)
@@ -284,7 +278,7 @@ def trace(
                 attributes.measure(extra, work_ink, work_rgb)
                 curves.curves.extend(extra.curves)
         if fill:
-            # rings inside the filled areas, so that they look filled in Desmos too (line2func.fill)
+            # rings and hatching inside the filled areas, at each area's own tone (line2func.fill)
             from line2func.fill import add_fill
 
             step("fill")

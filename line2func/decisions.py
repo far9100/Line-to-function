@@ -12,8 +12,9 @@ scorer (:mod:`line2func.decision_model`), decide:
 
 :class:`Scorer` states the rules as scores, and solvers turn the scores into
 decisions: :func:`greedy_pairs`, :func:`exact_matching` and
-:func:`pick_peaks`. Other scorers, a learned one or an oracle that knows the
-ground truth, override the scores. The candidate generation and the solvers
+:func:`pick_peaks`. Other scorers override the scores: :class:`WideGapRules` and
+:class:`ImprovedRules` widen the candidates without learning anything, and a
+learned one or an oracle that knows the ground truth replace the scores outright. The candidate generation and the solvers
 stay the same.
 
 With the rules the engine's output is pinned bit for bit by golden digests
@@ -214,11 +215,63 @@ class Scorer:
 RULES = Scorer()
 
 
+class WideGapRules(Scorer):
+    """The angle rules, looking 1.5x farther for the other end of a broken line ("r2-gaps").
+
+    The rule's gap radius (``max_gap_widths``, 4 line widths) is shorter than most breaks
+    on real line art - on the synthetic ``thin`` subset it closes 0.086 of them against
+    the learned scorer's 0.975 - and the learned scorer's own gain there comes largely
+    from :data:`WIDE_LIMITS` widening the candidates rather than from its weights. This
+    is that widening alone: the same 35 deg angle gate, applied when the candidates are
+    made, so a candidate the rule would have rejected on angle never appears. Nothing is
+    learned, and no features are needed.
+    """
+
+    limits = Limits(gap_radius_scale=1.5)
+
+    def gap_scores(self, cands):
+        # every candidate here already passed the rule's angle gate; the radius is the change
+        return np.array([-c.cost for c in cands], dtype=np.float64)
+
+
+class ImprovedRules(WideGapRules):
+    """R2: the angle rules with wider candidates and one geometric check (no learning).
+
+    Shallow crossings are looked for up to 2.5x farther apart, but two junctions
+    whose paired arms are offset by more than 1.5 line widths are two T's, not
+    one crossing. Gaps are searched 1.5x farther with the same 35 deg gate.
+    """
+
+    needs_features = True
+    limits = Limits(gap_radius_scale=1.5, crossing_len_scale=2.5)
+
+    def begin(self, ctx) -> None:
+        self.ctx = ctx
+
+    def crossing(self, cands):
+        if not cands:
+            return []
+        from line2func.decision_features import CROSSING, crossing_features
+
+        x = crossing_features(cands, self.ctx)
+        l1, l2 = CROSSING.index("lateral_1"), CROSSING.index("lateral_2")
+        return [bool(c.rule and max(row[l1], row[l2]) <= 1.5) for c, row in zip(cands, x)]
+
+
 def load_scorer(name: str | None) -> Scorer:
-    """The scorer called ``name``: ``None`` or "rules" (the angle rules), "learned" (the bundled
-    weights) or the path to a ``decisions.npz`` (:mod:`line2func.decision_model`)."""
+    """The scorer called ``name``.
+
+    ``None`` or "rules" is the angle rules; "r2-gaps" and "r2" are the rules with wider
+    candidates and no learning (:class:`WideGapRules`, :class:`ImprovedRules`); "learned"
+    is the bundled weights and any other string is the path to a ``decisions.npz``
+    (:mod:`line2func.decision_model`).
+    """
     if name in (None, "rules"):
         return RULES
+    if name == "r2-gaps":
+        return WideGapRules()
+    if name == "r2":
+        return ImprovedRules()
     from line2func.decision_model import load
 
     return load(name)

@@ -25,7 +25,8 @@ import numpy as np
 from line2func.curves import Curve, CurveSet
 from line2func.functions import FUNCTION_TOLERANCE, attach, curve_functions
 from line2func.geometry import flip_y, to_power
-from line2func.render import render_overlay, save_png
+from line2func.render import FILLED_TAGS, is_solid, render_overlay, save_png
+
 
 DESMOS_CURVE_LIMIT = 5000  # the most curves line2func makes for Desmos by default (demo); more gets a warning
 
@@ -57,6 +58,20 @@ def stroke_color(mode: str, stroke: int, seed: int = 0) -> str:
     if mode == "palette":
         return PALETTE[stroke % len(PALETTE)]
     return f"hsl({_hue(seed, stroke % RANDOM_BUCKETS)} 70% 45%)"
+
+
+def fill_color(mode: str, stroke: int, seed: int, color: str | None, tone: float | None, dark: float,
+               default: str = BW_COLOR) -> str:
+    """The fill for a filled area, mirrored in ``viewer/viewer.js`` (see ``tests/test_viewer_assets.py``).
+
+    A shadow - a filled area lighter than the drawing's dark ink - keeps the gray
+    measured inside it whatever line color is chosen, because the fill says how
+    dark the area is, not which stroke it belongs to. A solid area follows the
+    chosen line color, as filled areas always have.
+    """
+    if color and (mode == "measured" or not is_solid(tone, dark)):
+        return color
+    return default if mode == "measured" else stroke_color(mode, stroke, seed)
 
 
 def _hue(seed: int, bucket: int) -> int:
@@ -215,9 +230,18 @@ def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000
         f"<g fill=\"none\" stroke={quoteattr(color)} stroke-width=\"{_svg_num(line_width)}\" "
         'stroke-linecap="round" stroke-linejoin="round">',
     ]
-    for stroke, pieces in curves.strokes().items():
+    groups = curves.strokes()
+    dark = float(curves.meta.get("ink_dark") or 0.0)
+
+    def under_the_lines(stroke: int) -> int:
+        # a filled area is painted first, or its fill covers the lines drawn over it. sorted() is
+        # stable, so strokes keep their order within each of the two groups
+        return 0 if any(t in c.tags for c in groups[stroke] for t in FILLED_TAGS) else 1
+
+    for stroke in sorted(groups, key=under_the_lines):
+        pieces = groups[stroke]
         if any("fill" in c.tags for c in pieces):
-            continue  # rings that make a filled area look filled in Desmos; here the area is filled itself
+            continue  # rings and hatching that fill an area in Desmos; here the area is filled itself
         d = []
         prev_end = None
         for c in pieces:
@@ -228,22 +252,32 @@ def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000
             prev_end = p[3]
         tags = sorted({t for c in pieces for t in c.tags})
         attrs = f' class="{" ".join(tags)}"' if tags else ""
+        tones = [c.tone for c in pieces if c.tone is not None]
+        # a filled area lighter than the drawing's dark ink is a shadow: fill it at its own tone,
+        # but do not draw its edge, which is where the tone fades out rather than a line anyone drew
+        area_tone = float(np.median(tones)) if tones else None
+        shade = area_tone is not None and not is_solid(area_tone, dark)
         picked = stroke_color(color_mode, stroke, seed) if chosen else None
         if measured:
             widths = [c.width for c in pieces if c.width is not None]
             colors = [c.color for c in pieces if c.color is not None]
             if widths and not even:  # "uniform": the <g> above already carries the one width
                 attrs += f' stroke-width="{_svg_num(float(np.median(widths)))}"'
-            if colors and not chosen:  # a chosen color mode replaces the ink color, not the width
+            if colors and not chosen and not shade:  # a chosen color mode replaces the ink color
                 attrs += f" stroke={quoteattr(max(set(colors), key=colors.count))}"
-        if picked is not None:
+        if picked is not None and not shade:
             attrs += f" stroke={quoteattr(picked)}"
+        if shade:
+            attrs += ' stroke="none"'
         if "outline" in tags or "fill_outline" in tags:
-            # a closed outline of a thick or filled shape: fill it with its ink color
-            fill_colors = [c.color for c in pieces if c.color] if measured and not chosen else []
-            fill = max(set(fill_colors), key=fill_colors.count) if fill_colors else (picked or color)
+            # a closed outline of a thick or filled shape: fill it with the color measured
+            # inside it (line2func.baseline.area_tones), so a shadow is the gray it really is
+            inked = [c.color for c in pieces if c.color] if measured else []
+            modal = max(set(inked), key=inked.count) if inked else None
+            fill = fill_color(color_mode, stroke, seed, modal, area_tone, dark, default=picked or color)
             attrs += f" fill={quoteattr(fill)} fill-rule=\"evenodd\""
             d.append("Z")
+
         parts.append(f'<path id="stroke-{stroke}"{attrs} d="{"".join(d)}"/>')
     parts += ["</g>", "</svg>"]
     return "\n".join(parts) + "\n"

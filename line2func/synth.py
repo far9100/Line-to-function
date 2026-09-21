@@ -1,6 +1,6 @@
 """Synthetic line art with exact ground truth.
 
-Everything the vectorizers are trained and tested on is generated here, so no
+Everything the tracer is tested on is generated here, so no
 dataset download or human labeling is needed.
 
 * :func:`make_scene` draws a page of random smooth strokes and degrades it

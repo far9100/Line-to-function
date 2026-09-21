@@ -1,6 +1,6 @@
 """Trace an image and write every output format.
 
-    python -m line2func.demo drawing.png --lineart none --vectorizer baseline --out out/
+    python -m line2func.demo drawing.png --lineart none --out out/
 """
 
 from __future__ import annotations
@@ -22,9 +22,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="line extraction: none (input is line art), canny, xdog, or the pretrained "
                         "informative / informative-coarse network (needs PyTorch and "
                         "'python -m line2func.weights fetch informative') (default: none)")
-    p.add_argument("--vectorizer", choices=("baseline", "model"), default="baseline",
-                   help="tracing engine (default: baseline)")
-    p.add_argument("--ckpt", type=Path, help="checkpoint for --vectorizer model")
     p.add_argument("--out", type=Path, default=Path("out"), help="output folder (default: out/)")
     p.add_argument("--tolerance", type=float, default=None,
                    help="trace to this max curve fitting error in pixels (e.g. 1.0) instead of making a set "
@@ -113,18 +110,6 @@ def main(argv: list[str] | None = None) -> int:
         curve_count = args.curves
     else:
         curve_count = None if args.tolerance is not None else DESMOS_CURVE_LIMIT
-    model_run = None
-    if args.vectorizer == "model":
-        if args.ckpt is None or not args.ckpt.is_file():
-            print("error: --vectorizer model needs --ckpt pointing to a trained multi-curve checkpoint "
-                  "(e.g. runs/m3/best.pt); the neural engine is experimental", file=sys.stderr)
-            return 2
-        try:
-            from line2func.model.infer import load_vectorizer
-        except ImportError:
-            print("error: --vectorizer model needs PyTorch (pip install -e .[train])", file=sys.stderr)
-            return 2
-        model_run = load_vectorizer(str(args.ckpt))
     if args.optimize:
         try:
             import torch  # noqa: F401
@@ -137,13 +122,12 @@ def main(argv: list[str] | None = None) -> int:
     curves, ink = pipeline.trace(
         rgb,
         lineart_method=args.lineart,
-        vectorize=model_run if args.vectorizer == "model" else None,
         fit_tolerance=args.tolerance if args.tolerance is not None else 1.0,
         threshold=args.threshold,
         refine=not args.no_refine,
         upscale=args.upscale if args.upscale == "auto" else int(args.upscale),
         shape_tolerance=args.shape_tolerance,
-        faint_lines=not args.no_faint and args.vectorizer == "baseline",
+        faint_lines=not args.no_faint,
         residual=not args.no_residual,
         outline=not args.no_outline,
         fill=not args.no_fill,
@@ -159,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     curves.meta.update(
         source=args.image.name,
         lineart=args.lineart,
-        vectorizer=args.vectorizer,
+        vectorizer="baseline",
         refined=not args.no_refine,
         named=form == "named",
         form=form,

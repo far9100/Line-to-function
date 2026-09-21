@@ -24,6 +24,7 @@ const viewer = createViewer({
   spacer: $("#spacer"), detail: $("#detail"), stats: $("#stats"), fit: $("#fit"),
   originalOnly: $("#original-only"), viewMode: $("#view-mode"), bgAlpha: $("#bg-alpha"),
   lineColor: $("#line-color"), colorReroll: $("#color-reroll"), lineWidth: $("#line-width"),
+  convertBar: $("#convert-bar"), listToggleLabel: $("#list-toggle-label"),
   onLineColor: (choice) => {
     S.lineColor = choice.mode; S.colorSeed = choice.seed; S.lineWidth = choice.width;
     saveOptions();
@@ -176,6 +177,7 @@ async function startApp(info) {
   S.mode = "app";
   S.info = info;
   document.documentElement.dataset.mode = "app";
+  document.documentElement.dataset.view = "empty"; // before restoreSession() awaits: no flash of result chrome
   viewer.setDesmosWarning(false); // the result banner says it
   useOptions(info.settings?.options);
   initLang(info.settings?.lang);
@@ -192,6 +194,7 @@ function startWeb(info) {
   S.mode = "web";
   S.info = info;
   document.documentElement.dataset.mode = "web";
+  document.documentElement.dataset.view = "empty";
   viewer.setDesmosWarning(false); // the result banner says it
   useOptions(readLocal("line2func.options", true));
   S.engine = createEngine(info.engine, { onJob, onStatus: renderEngine });
@@ -417,9 +420,20 @@ async function openFile(file) {
   }
 }
 
+// On a phone the equation list starts collapsed to its header row, so the drawing gets the screen;
+// the button is display:none on a desktop, where the list is always open.
+function toggleList() {
+  const aside = $("#list-toggle").closest("aside");
+  const open = !aside.hasAttribute("data-open");
+  aside.toggleAttribute("data-open", open);
+  $("#list-toggle").setAttribute("aria-expanded", String(open));
+  if (open) viewer.refreshList(); // it was display:none, so it has no rows yet
+}
+
 // ---------- the page's three states: the drop zone, an image to convert, a result ----------
 function setView(view) {
   S.view = view;
+  document.documentElement.dataset.view = view; // the layout's three states, for index.html's media queries
   $("#empty").hidden = view !== "empty";
   $("#convert-bar").hidden = view !== "preview";
   $("#clear").hidden = view === "empty";
@@ -441,8 +455,7 @@ function showPreview() {
   S.result = null; S.copyArmed = false;
   setView("preview");
   renderConvert();
-  // fitted above the convert bar (it floats 16 px above the bottom)
-  viewer.preview(previewURL(S.image.image_id), S.image.width, S.image.height, $("#convert-bar").offsetHeight + 24);
+  viewer.preview(previewURL(S.image.image_id), S.image.width, S.image.height);
   $("#convert").focus();
 }
 
@@ -588,6 +601,7 @@ const DOWNLOAD_NAMES = { "curves.json": "{stem}.json", "out.svg": "{stem}.svg", 
                          "equations.tex": "{stem}.tex", zip: "{stem}-line2func.zip" };
 
 function setupResult() {
+  $("#list-toggle").addEventListener("click", toggleList);
   for (const button of document.querySelectorAll("[data-file]")) button.addEventListener("click", () => download(button.dataset.file));
   $("#copy-all").addEventListener("click", copyAll);
   viewer.setLineColor(S.lineColor, S.colorSeed); // the selects start on whatever the viewer is drawing

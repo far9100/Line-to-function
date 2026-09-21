@@ -17,7 +17,8 @@ from line2func import app as app_mod
 from line2func import pipeline, serve
 from line2func.curves import Curve, CurveSet
 from line2func.export import (DESMOS_CURVE_LIMIT, LINE_COLOR_MODES, LINE_WIDTH_MODES, PALETTE,
-                              RANDOM_BUCKETS, desmos_line, stroke_color, to_svg)
+                              RANDOM_BUCKETS, desmos_line, fill_color, stroke_color, to_svg)
+from line2func.render import FILLED_TAGS, SOLID_SHARE
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -125,6 +126,32 @@ def test_viewer_line_colors_match_the_exporter():
                          encoding="utf-8", timeout=60)
     assert out.returncode == 0, out.stderr
     assert out.stdout.splitlines() == [stroke_color(mode, stroke, seed) for mode, seed, stroke in cases]
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
+def test_viewer_area_fills_match_the_exporter():
+    """The same rule must fill a shadow on the page and in the SVG, or a download would not match."""
+    cases = [(mode, seed, stroke, color, tone, dark)
+             for mode in ("measured", "bw", "palette", "random")
+             for seed in (0, 12345)
+             for stroke in (0, 7, 64, 999)
+             for color in (None, "#a9a9a9", "#222222")
+             for tone, dark in ((None, 0.6), (0.25, 0.6), (0.48, 0.6), (0.6, 0.6), (1.0, 1.0), (0.3, 0.0))]
+    script = (f"import {{ fillColor }} from {json.dumps((serve.VIEWER_DIR / 'viewer.js').as_uri())};\n"
+              f"for (const [m, seed, s, c, tone, dark] of {json.dumps(cases)})\n"
+              f"  console.log(fillColor(m, s, seed, c, tone, dark));\n")
+    out = subprocess.run([NODE, "--input-type=module", "-"], input=script, capture_output=True, text=True,
+                         encoding="utf-8", timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.splitlines() == [fill_color(mode, stroke, seed, color, tone, dark)
+                                       for mode, seed, stroke, color, tone, dark in cases]
+
+
+def test_the_page_and_the_exporter_agree_on_the_solid_rule():
+    source = (serve.VIEWER_DIR / "viewer.js").read_text(encoding="utf-8")
+    assert float(re.search(r"SOLID_SHARE = ([\d.]+)", source).group(1)) == SOLID_SHARE
+    tags = json.loads(re.search(r"FILLED_TAGS = (\[[^\]]*\])", source).group(1).replace("'", '"'))
+    assert tags == list(FILLED_TAGS)
 
 
 def test_the_page_and_the_exporter_agree_on_the_color_modes():

@@ -46,8 +46,8 @@ python -m venv .venv
 pip install -e .
 ```
 
-Photos (the pretrained line-art network) and the neural engine also need
-PyTorch; install a build for your GPU first, e.g.
+Photos (the pretrained line-art network) also need PyTorch; install a build
+for your GPU first, e.g.
 `pip install torch --index-url https://download.pytorch.org/whl/cu130` for an
 NVIDIA RTX 50-series card (CPU only: `pip install torch`), then
 `pip install -e ".[train,dev]"`.
@@ -119,8 +119,8 @@ Photos need line extraction first: `--lineart informative` (after
 ### More
 
 [docs/details.md](docs/details.md) is the full manual: every output and
-option, tips with measurements, the neural engine, evaluation, using
-line2func from Python, and the project layout.
+option, tips with measurements, evaluation, using line2func from Python, and
+the project layout.
 
 ### License
 
@@ -156,7 +156,7 @@ python -m venv .venv
 pip install -e .
 ```
 
-照片（預訓練線稿模型）和神經網路引擎還需要 PyTorch：先安裝符合你 GPU 的版本，例如 NVIDIA RTX 50 系列用 `pip install torch --index-url https://download.pytorch.org/whl/cu130`（只用 CPU：`pip install torch`），再執行 `pip install -e ".[train,dev]"`。
+照片（預訓練線稿模型）還需要 PyTorch：先安裝符合你 GPU 的版本，例如 NVIDIA RTX 50 系列用 `pip install torch --index-url https://download.pytorch.org/whl/cu130`（只用 CPU：`pip install torch`），再執行 `pip install -e ".[train,dev]"`。
 
 ### 用瀏覽器
 
@@ -209,7 +209,7 @@ python -m line2func.serve out/                                    # 在瀏覽器
 
 ### 更多說明
 
-[docs/details.md](docs/details.md#繁體中文) 是完整說明：所有輸出與選項、附實測數據的訣竅、神經網路引擎、評估方式、在 Python 中使用，以及專案結構。
+[docs/details.md](docs/details.md#繁體中文) 是完整說明：所有輸出與選項、附實測數據的訣竅、評估方式、在 Python 中使用，以及專案結構。
 
 ### 授權
 

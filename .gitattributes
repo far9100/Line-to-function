@@ -4,5 +4,4 @@
 *.png binary
 *.webp binary
 *.jpg binary
-*.pt binary
 *.pth binary

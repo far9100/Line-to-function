@@ -37,8 +37,8 @@ from scipy.spatial import cKDTree
 
 from line2func import baseline, lineart
 from line2func.curves import CurveSet
-from line2func.decision_features import CROSSING, Recorder, _r_in, _window, corner_peaks, crossing_features
-from line2func.decisions import RULE_LIMITS, WIDE_LIMITS, Limits, Scorer
+from line2func.decision_features import Recorder, _r_in, _window, corner_peaks
+from line2func.decisions import RULE_LIMITS, WIDE_LIMITS, ImprovedRules, Limits, Scorer
 from line2func.metrics import _arc, _stroke_polylines, _stroke_widths, gt_corners
 
 POS, NEG, AMB = 1, 0, -1
@@ -380,32 +380,6 @@ class OracleScorer(Scorer):
                     if q in at and key[at[q]] < 1000.0:
                         key[at[q]] = -1.0
         return key, threshold
-
-
-class ImprovedRules(Scorer):
-    """R2: the angle rules with wider candidates and one geometric check (no learning).
-
-    Shallow crossings are looked for up to 2.5x farther apart, but two junctions
-    whose paired arms are offset by more than 1.5 line widths are two T's, not
-    one crossing. Gaps are searched 1.5x farther with the same 35 deg gate.
-    """
-
-    needs_features = True
-    limits = Limits(gap_radius_scale=1.5, crossing_len_scale=2.5)
-
-    def begin(self, ctx) -> None:
-        self.ctx = ctx
-
-    def crossing(self, cands):
-        if not cands:
-            return []
-        x = crossing_features(cands, self.ctx)
-        l1, l2 = CROSSING.index("lateral_1"), CROSSING.index("lateral_2")
-        return [bool(c.rule and max(row[l1], row[l2]) <= 1.5) for c, row in zip(cands, x)]
-
-    def gap_scores(self, cands):
-        # the angle gate was applied when the candidates were made; the wider radius is the change
-        return np.array([-c.cost for c in cands], dtype=np.float64)
 
 
 def make_scorer(variant: str, gt: CurveSet | None = None) -> Scorer:

@@ -6,6 +6,9 @@ recorded before the change:
 
     python tests/golden.py --write      # record (only when a change is *meant* to alter output)
 
+Recording from a checkout without the (gitignored) real test drawing keeps that
+drawing's recorded digests rather than dropping them; see :func:`recorded_real`.
+
 ``tests/test_golden.py`` recomputes and compares them. A digest is the SHA-256
 of the result's JSON (full float precision) or of the image bytes.
 """
@@ -120,6 +123,24 @@ def baseline_digests() -> dict[str, str]:
     return out
 
 
+def recorded_real() -> dict[str, str]:
+    """The ``real*`` digests already on file, if any.
+
+    :func:`real_digests` needs an image that is deliberately not in the repo
+    (third-party art, see ``.gitignore``), and returns nothing without it. A
+    ``--write`` from such a checkout would then drop those keys from the file,
+    and nothing would say so: ``test_golden`` tolerates missing ``real*`` keys
+    and skips the real-drawing case when it cannot recompute them. Carrying the
+    recorded values forward instead keeps the coverage for whoever does have the
+    image - and if the change really did alter that output, they get a plain
+    failure telling them to re-record, rather than a silently shorter file.
+    """
+    if not BASELINE_FILE.is_file():
+        return {}
+    old = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
+    return {k: v for k, v in old.items() if k.startswith("real")}
+
+
 def real_digests() -> dict[str, str]:
     """The first real drawing at 1x and 2x (optional: skipped when the image is not present)."""
     if not REAL_DRAWING.is_file():
@@ -153,7 +174,12 @@ def main() -> int:
         print(__doc__)
         return 1
     DATA.mkdir(exist_ok=True)
-    base = {"_env": environment(), **baseline_digests(), **real_digests()}
+    real = real_digests()
+    if not real:
+        real = recorded_real()  # the drawing is not here: keep what is on file (see recorded_real)
+        if real:
+            print(f"note: {REAL_DRAWING.name} is not in this checkout; kept its recorded digests")
+    base = {"_env": environment(), **baseline_digests(), **real}
     BASELINE_FILE.write_text(json.dumps(base, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     syn = {"_env": environment(), **synth_digests()}
     SYNTH_FILE.write_text(json.dumps(syn, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")

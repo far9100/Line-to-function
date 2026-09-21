@@ -225,6 +225,18 @@ def render_overlay(
 
 
 FILLED_TAGS = ("outline", "fill_outline")
+SOLID_SHARE = 0.8  # of the drawing's dark ink (meta["ink_dark"]): a filled area this dark is solid
+
+
+def is_solid(tone: float | None, dark: float) -> bool:
+    """Whether a filled area of this tone counts as solid ink rather than as a shadow.
+
+    Judged against the drawing's own dark ink, not against black: a light pencil
+    drawing has no black in it, and its lines are still drawn at full darkness
+    everywhere they are drawn. An area with no measured tone counts as solid, so
+    anything traced before tones were measured looks the way it always did.
+    """
+    return tone is None or dark <= 0.0 or tone >= SOLID_SHARE * dark
 
 
 def stroke_loops(curves, tags: tuple[str, ...] = FILLED_TAGS) -> list[np.ndarray]:
@@ -300,8 +312,40 @@ def filled_area(curves, width: int, height: int, supersample: int = 4) -> np.nda
     return cov
 
 
-def render_coverage(curves, width: int, height: int, line_width=2.0) -> np.ndarray:
-    """Coverage of a whole result: outline strokes filled, all other curves as lines."""
+def fill_share(curves, width: int, height: int, dark: float) -> np.ndarray:
+    """How much of ``dark`` each filled area is drawn at: 0 outside one, ``tone / dark`` inside.
+
+    A filled area is put on the paper at its own measured tone, not at the
+    drawing's dark ink, so a shadow filled at its own gray has to be rendered -
+    and judged - as that gray. Areas with no measured tone give 0, and the
+    caller then leaves them at full coverage, the way they were drawn before
+    tones were measured.
+    """
+    items = curves.curves if isinstance(curves, CurveSet) else list(curves)
+    out = np.zeros((height, width), dtype=np.float32)
+    if not (dark > 0.0):
+        return out
+    groups: dict[int, list[Curve]] = {}
+    for c in items:
+        if isinstance(c, Curve) and c.tone is not None and any(t in c.tags for t in FILLED_TAGS):
+            groups.setdefault(c.stroke, []).append(c)
+    for pieces in groups.values():
+        loops = stroke_loops(pieces, FILLED_TAGS)
+        if not loops:
+            continue
+        share = min(1.0, float(np.median([c.tone for c in pieces])) / dark)
+        painted = fill_loops(loops, width, height, supersample=1, union=True) > 0.5
+        np.maximum(out, share * painted, out=out)
+    return out
+
+
+def render_coverage(curves, width: int, height: int, line_width=2.0, fill_share=None) -> np.ndarray:
+    """Coverage of a whole result: outline strokes filled, all other curves as lines.
+
+    ``fill_share`` (see :func:`fill_share`) dims each filled area to the share of
+    the drawing's dark ink it is really drawn at, so a shadow counts as the gray
+    it is. Lines drawn over an area keep their own coverage.
+    """
     items = curves.curves if isinstance(curves, CurveSet) else list(curves)
     widths = _widths(line_width, len(items)) if len(items) else np.zeros((0, 2))
     lines = [(c, w) for c, w in zip(items, widths)
@@ -310,7 +354,10 @@ def render_coverage(curves, width: int, height: int, line_width=2.0) -> np.ndarr
     if lines:
         cov = rasterize([c for c, _ in lines], width, height, line_width=np.array([w for _, w in lines]))
     if stroke_loops(items):
-        cov = np.maximum(cov, filled_area(items, width, height))
+        area = filled_area(items, width, height)
+        if fill_share is not None:
+            area = area * np.where(fill_share > 0, fill_share, 1.0)
+        cov = np.maximum(cov, area)
     return cov
 
 

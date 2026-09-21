@@ -36,3 +36,28 @@ def test_real_drawing_output_is_unchanged():
 
 def test_synthetic_data_is_unchanged():
     _check(_recorded(golden.SYNTH_FILE), golden.synth_digests())
+
+
+def test_recording_without_the_real_drawing_keeps_its_digests(tmp_path, monkeypatch):
+    """Re-recording used to drop them silently, and no test said so: this one does."""
+    recorded = {"_env": golden.environment(), "line": "abc", "real1_1x": "deadbeef", "real1_2x": "cafe"}
+    path = tmp_path / "baseline_digests.json"
+    path.write_text(json.dumps(recorded), encoding="utf-8")
+    monkeypatch.setattr(golden, "BASELINE_FILE", path)
+    monkeypatch.setattr(golden, "SYNTH_FILE", tmp_path / "synth_digests.json")
+    monkeypatch.setattr(golden, "DATA", tmp_path)
+    monkeypatch.setattr(golden, "baseline_digests", lambda: {"line": "xyz"})
+    monkeypatch.setattr(golden, "synth_digests", dict)
+    monkeypatch.setattr(golden, "real_digests", dict)  # as if the drawing were not in this checkout
+
+    monkeypatch.setattr(golden.sys, "argv", ["golden.py", "--write"])
+    assert golden.main() == 0
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["line"] == "xyz"  # what could be recomputed is rewritten
+    assert written["real1_1x"] == "deadbeef" and written["real1_2x"] == "cafe"  # the rest is kept
+
+    # and when the drawing *is* there, its fresh digests win
+    monkeypatch.setattr(golden, "real_digests", lambda: {"real1_1x": "new"})
+    assert golden.main() == 0
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["real1_1x"] == "new" and "real1_2x" not in written

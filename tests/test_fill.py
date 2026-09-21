@@ -58,7 +58,7 @@ def test_a_heavy_lash_is_a_solid_area_but_close_lines_are_not():
     assert not any("fill_outline" in c.tags for c in plain)
 
 
-def test_rings_make_a_filled_area_look_filled_in_desmos():
+def test_rings_make_a_solid_area_look_filled_in_desmos():
     wedge = _wedge(20, 140, 50, 12.0, 2.0)
     line = Curve(g.line([10, 95], [150, 95]), stroke=1)
     cs = CurveSet(W, H, _loop(wedge, "outline", 0) + [line], meta={"line_width": 2.0})
@@ -79,6 +79,55 @@ def test_rings_make_a_filled_area_look_filled_in_desmos():
     assert to_svg(cs).count("<path") == 2
     attributes.measure(cs, fill_loops([wedge], W, H))
     assert all(c.width is None for c in rings)
+
+
+def _dense(x0, y0, x1, y1, step=2.0):
+    """A rectangle with points along its edges, so fitting it back gives the rectangle, not a blob."""
+    def edge(a, b, n):
+        return np.c_[np.linspace(a[0], b[0], n, endpoint=False), np.linspace(a[1], b[1], n, endpoint=False)]
+    nx, ny = max(2, int((x1 - x0) / step)), max(2, int((y1 - y0) / step))
+    return np.vstack([edge((x0, y0), (x1, y0), nx), edge((x1, y0), (x1, y1), ny),
+                      edge((x1, y1), (x0, y1), nx), edge((x0, y1), (x0, y0), ny)])
+
+
+def test_a_shadow_is_hatched_by_its_tone_and_a_solid_area_still_gets_rings():
+    """In Desmos every line is equally dark, so a lighter area must be drawn less densely."""
+    # thin enough that the 8 rings of a solid area reach its middle (see add_fill's max_rings)
+    box = _dense(20, 30, 130, 52)
+    area = fill_loops([box], W, H) > 0.5
+
+    def inked(tone):
+        cs = CurveSet(W, H, _loop(box, "fill_outline", 0), meta={"line_width": 2.0, "ink_dark": 1.0})
+        for c in cs.curves:
+            c.tone = tone
+        assert add_fill(cs, spacing=1.5) > 0
+        props = [c for c in cs if "fill" in c.tags]
+        assert all(c.tone == tone for c in props)  # each prop knows which area it fills
+        pts = _points(props)
+        assert area[pts[:, 1].astype(int), pts[:, 0].astype(int)].mean() > 0.9  # inside the area
+        # drawn the way Desmos draws it: every curve 2.5 px wide, the whole drawing on screen
+        drawn = rasterize(props, W, H, line_width=2.5) > 0.5
+        return float((drawn & area).sum() / area.sum())
+
+    solid, half, light = inked(1.0), inked(0.5), inked(0.25)
+    assert solid > 0.9  # as dark as the drawing's dark ink: rings, and the area reads solid
+    assert 0.15 < light < 0.45  # a quarter as dark: hatched about a quarter as densely
+    assert light < half < solid  # darker areas are drawn denser
+
+
+def test_a_shadow_keeps_its_measured_gray_in_every_line_color():
+    """The fill says how dark an area is, so a chosen line color must not replace it."""
+    box = _dense(20, 20, 130, 85)
+    cs = CurveSet(W, H, _loop(box, "fill_outline", 0), meta={"line_width": 2.0, "ink_dark": 1.0})
+    for c in cs.curves:
+        c.tone, c.color = 0.25, "#bfbfbf"
+    for mode in ("measured", "bw", "palette", "random"):
+        svg = to_svg(cs, color_mode=mode)
+        assert 'fill="#bfbfbf"' in svg and 'stroke="none"' in svg
+    for c in cs.curves:  # a solid area follows the chosen color, as it always has
+        c.tone = 1.0
+    assert 'fill="#bfbfbf"' in to_svg(cs, color_mode="measured")
+    assert 'fill="#bfbfbf"' not in to_svg(cs, color_mode="palette")
 
 
 def test_no_rings_without_filled_areas():
