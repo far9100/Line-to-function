@@ -1,7 +1,5 @@
 * text=auto eol=lf
 
-*.npz binary
 *.png binary
 *.webp binary
 *.jpg binary
-*.pth binary

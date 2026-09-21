@@ -42,7 +42,7 @@ pip install -e .
 This installs `numpy`, `pillow` and `scipy`, which is all you need to trace line
 art, export, and view the results.
 
-#### Optional: PyTorch (pretrained photo line art, training)
+#### Optional: PyTorch (pretrained photo line art, `--optimize`)
 
 Install a PyTorch build that matches your GPU **first**, then the extras:
 
@@ -698,7 +698,7 @@ close junction pairs are one shallow crossing and where a stroke turns sharply
 enough to split are decided by the angle rules (`line2func/decisions.py`).
 
 There used to be a learned scorer here as well, on by default: five small MLPs
-run with numpy, trained on generated scenes. It was removed in 1.3. It was
+run with numpy, trained on generated scenes. It was removed in 1.2. It was
 better, and the difference could not be seen.
 
 Paired over the 66 drawings of `data/real_v1`, bootstrapped, learned against
@@ -727,8 +727,9 @@ Against that: 24% of the package, a fifth of the tracing time, and 52% of the
 browser download (the zip went 298,548 -> 142,807 bytes when it went).
 
 **Widening the rules instead does not work, and that is measured too.** The
-obvious cheap substitute is to let the rules consider more candidates:
-`--decisions r2` and `r2-gaps` did that, and on synthetic scenes they looked
+obvious cheap substitute is to let the rules consider more candidates: two
+wider variants (`--decisions r2` and `r2-gaps`, removed along with the scorer)
+did that, and on synthetic scenes they looked
 strong (gap closure 0.854 against the rules' 0.774, two thirds of the way to
 the scorer's 0.898). On real drawings they were **worse than plain rules**:
 precision -0.0014 [-0.0022, -0.0007] over the 66 and -0.0009 over the 15. They
@@ -813,6 +814,21 @@ python -m line2func.eval --valset data/val_v1
 ```
 
 Add `--json results.json` to save the numbers, and `--limit N` for a quick run.
+
+Real drawings have no ground truth, so `--realset FOLDER` judges them against
+their own ink instead (`line2func.quality`), and `--compare` puts two such runs
+side by side as the median per-drawing difference with a bootstrap interval:
+
+```bash
+python -m line2func.eval --realset path/to/drawings --json runs/a.json
+python -m line2func.eval --realset path/to/drawings --set local_trim=false --json runs/b.json
+python -m line2func.eval --compare runs/b.json runs/a.json
+```
+
+The 66 drawings and the 15 held-out JPEGs that the measurements in this manual
+were taken on are third-party line art. They are kept outside the repository
+and are not published with it, so `data/real_v1` below names where they were,
+not a folder you will find in a checkout. `--realset` takes any folder.
 
 ### 10. Using line2func from Python
 
@@ -954,7 +970,7 @@ pip install -e .
 
 這會安裝 `numpy`、`pillow` 和 `scipy`，描線稿、匯出和檢視結果只需要這些。
 
-#### 選用：PyTorch（照片用的預訓練線稿模型、訓練）
+#### 選用：PyTorch（照片用的預訓練線稿模型、`--optimize`）
 
 **先**安裝符合你 GPU 的 PyTorch，再安裝額外套件：
 
@@ -1368,7 +1384,7 @@ python -m line2func.demo IMAGE [options]
 
 筆畫在接點怎麼延續、哪些斷口其實是同一條線、哪些相鄰的交叉點是同一個淺角交叉、哪裡轉得夠急要切開 —— 這些都由角度規則決定（`line2func/decisions.py`）。
 
-這裡曾經還有一個預設開啟的學習式評分器：五個用 numpy 跑的小型 MLP，在生成場景上訓練。它在 1.3 被移除。它確實比較好，而且那個差別看不出來。
+這裡曾經還有一個預設開啟的學習式評分器：五個用 numpy 跑的小型 MLP，在生成場景上訓練。它在 1.2 被移除。它確實比較好，而且那個差別看不出來。
 
 在 `data/real_v1` 的 66 張上做配對比較（bootstrap），學習式對上它取代的規則：
 
@@ -1385,7 +1401,7 @@ python -m line2func.demo IMAGE [options]
 
 代價則是：包裡 24% 的程式碼、五分之一的描圖時間，以及 52% 的瀏覽器下載（移除後 zip 從 298,548 降到 142,807 bytes）。
 
-**把規則放寬來代替也行不通，這一樣量過。** 最顯然的便宜替代方案是讓規則多考慮一些候選：`--decisions r2` 和 `r2-gaps` 就是這麼做的，在合成場景上看起來很強（斷線補齊 0.854 對規則的 0.774，已經走了三分之二到評分器的 0.898）。但在真實線稿上它們**比純規則還差**：66 張上 precision −0.0014 [−0.0022, −0.0007]，15 張上 −0.0009。它們多畫了 5.1% 的曲線長度，把真正的斷點和不存在的斷點一起接起來，而後者的代價大於前者的收穫。所以移除評分器等於回到規則，而不是回到放寬版的規則。
+**把規則放寬來代替也行不通，這一樣量過。** 最顯然的便宜替代方案是讓規則多考慮一些候選：兩個放寬版本（`--decisions r2` 和 `r2-gaps`，已隨評分器一起移除）就是這麼做的，在合成場景上看起來很強（斷線補齊 0.854 對規則的 0.774，已經走了三分之二到評分器的 0.898）。但在真實線稿上它們**比純規則還差**：66 張上 precision −0.0014 [−0.0022, −0.0007]，15 張上 −0.0009。它們多畫了 5.1% 的曲線長度，把真正的斷點和不存在的斷點一起接起來，而後者的代價大於前者的收穫。所以移除評分器等於回到規則，而不是回到放寬版的規則。
 
 評分器贏的那些合成數字也適用同樣的警告：專案量過它們不會轉移。斷線補齊 0.774 → 0.898、轉角 precision 0.525 → 0.624 在生成的頁面上是真的，但沒有到達輸出。
 
@@ -1449,6 +1465,19 @@ python -m line2func.eval --valset data/val_v1
 ```
 
 加上 `--json results.json` 可以儲存數據，`--limit N` 可以快速跑少量場景。
+
+真實線稿沒有標準答案，所以 `--realset 資料夾` 改用線稿自己的墨來評判（`line2func.quality`），
+`--compare` 則把兩次結果並排比較，報告每張圖差異的中位數與 bootstrap 區間：
+
+```bash
+python -m line2func.eval --realset path/to/drawings --json runs/a.json
+python -m line2func.eval --realset path/to/drawings --set local_trim=false --json runs/b.json
+python -m line2func.eval --compare runs/b.json runs/a.json
+```
+
+本手冊中的測量所用的 66 張線稿與 15 張 held-out JPEG 都是第三方線稿作品，保存在儲存庫之外，
+也不隨專案發布。因此下文提到的 `data/real_v1` 指的是它們當初的位置，而不是 checkout 裡找得到的
+資料夾；`--realset` 可以指向任何資料夾。
 
 ### 10. 在 Python 中使用
 

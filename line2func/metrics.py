@@ -9,9 +9,6 @@
 * :func:`structure_scores` - crossing continuity, gap closure, fragments per
   stroke and curve count ratio: whether the *strokes* are right, not just the
   pixels.
-* :func:`decision_counts` / :func:`decision_scores` - the tracer's decisions
-  against the ground truth: BCubed stroke precision and recall, wrong joins,
-  T-junctions, corners (for the decision scorers).
 """
 
 from __future__ import annotations

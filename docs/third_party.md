@@ -5,10 +5,8 @@ pretrained weights are **never bundled**: `python -m line2func.weights fetch NAM
 them into `$LINE2FUNC_HOME` (default `~/.cache/line2func`) and rejects any file
 whose SHA-256 differs from the value pinned in `line2func/weights.py`.
 
-The one bundled weights file, `line2func/data/decisions_v1.npz` (the learned
-decision scorer, 150 KB), was trained by this project with
-`line2func.train_decisions`. Its training data is line2func's own synthetic
-generator (`line2func.synth`), so it contains no third-party data or code.
+Nothing here is bundled: line2func ships no weights of its own and no trained
+model of any kind. The two files below are downloaded on request.
 
 ## Pretrained weights
 

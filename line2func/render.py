@@ -7,8 +7,8 @@ centerline, ``r`` = half the line width). Coverage is
 so a straight line of width ``w`` puts about ``w`` units of ink in each pixel
 column it crosses. Overlapping strokes take the maximum coverage, not the sum.
 
-The renderer is used to draw ``overlay.png`` and to synthesize training images,
-so it is exact about geometry (pixel centers at ``+0.5``, see
+The renderer is used to draw ``overlay.png`` and to judge a tracing against its
+source, so it is exact about geometry (pixel centers at ``+0.5``, see
 :mod:`line2func.geometry`) and supports a different width per curve.
 :func:`filled_area` fills the outlines of filled strokes (``outline``,
 ``fill_outline``); the quality check, the second pass and render-and-compare

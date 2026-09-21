@@ -40,7 +40,7 @@ line2func = "line2func.app:main"  # the app: same as python -m line2func
 include = ["line2func*"]
 
 [tool.setuptools.package-data]
-line2func = ["viewer/*"]  # the app's page; the learned decision scorer's weights
+line2func = ["viewer/*"]  # the app's page
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

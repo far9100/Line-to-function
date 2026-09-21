@@ -8,8 +8,8 @@ dist/
 .venv/
 venv/
 
-# generated at the repository root: demo output, training runs, synthetic datasets, the online page
-# (anchored with "/": line2func/data/ holds the bundled scorer, tests/data/ the golden digests)
+# generated at the repository root: demo output, evaluation reports, synthetic datasets, the online page
+# (anchored with "/" so that tests/data/, the golden digests, stays tracked)
 /out/
 /runs/
 /data/

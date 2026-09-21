@@ -2,15 +2,15 @@
 
     python -m line2func.synth valset --out data/val_v1           # once: write the standard set
     python -m line2func.eval --valset data/val_v1                    # the baseline engine
-    python -m line2func.eval --realset data/real_v1 --json runs/real_a.json      # real drawings, no ground truth
-    python -m line2func.eval --realset data/real_v1 --set local_trim=false --json runs/real_b.json
+    python -m line2func.eval --realset path/to/drawings --json runs/real_a.json  # real drawings, no ground truth
+    python -m line2func.eval --realset path/to/drawings --set local_trim=false --json runs/real_b.json
     python -m line2func.eval --compare runs/real_b.json runs/real_a.json         # paired, with intervals
 
 Scene evaluation reports the metrics of docs/details.md's Evaluation section per
-subset (clean, hard, hard2, thin): F_GT@2, crossing continuity, gap closure,
-fragments per stroke, curve count ratio, length ratio and CPU seconds per
-megapixel, plus the decision metrics and an F sweep over tolerances (in
-thousandths of the long edge, so it is comparable across resolutions).
+subset (clean, hard): F_GT@2, crossing continuity, gap closure, fragments per
+stroke, curve count ratio, length ratio and CPU seconds per megapixel, plus an
+F sweep over tolerances (in thousandths of the long edge, so it is comparable
+across resolutions).
 
 ``--realset`` judges real drawings, which have no ground truth, against their
 own ink (:mod:`line2func.quality`), traced at a fixed tolerance with no curve
