@@ -33,18 +33,30 @@ PYODIDE_VERSION = "314.0.7"  # = tests/pyodide/package.json (tests check it)
 PYODIDE_URL = f"https://cdn.jsdelivr.net/pyodide/v{PYODIDE_VERSION}/full/"
 PACKAGES = ("numpy", "scipy", "pillow")  # what line2func.web needs from Pyodide
 PACKAGE_DIR = Path(__file__).parent
+# Modules the browser never imports, left out of the ZIP below. worker.js imports
+# line2func.web and line2func.quality and nothing else: app/serve/browser/website are the
+# local server, __main__/demo/eval/synth are commands, and lineart_model/optimize/weights
+# belong to the two PyTorch features - Pyodide has no torch, so shipping those three could
+# only ever turn one import error into another. lineart.extract still reaches lineart_model
+# and pipeline.trace still reaches optimize, but only for a model lineart method and for
+# optimize=True, and web.py can produce neither (tests/test_website.py checks that these
+# two stay the only way out). A list of what to leave out rather than what to keep, so a
+# module added later is merely shipped when it need not be, never missing when it is needed.
+NOT_IN_BROWSER = frozenset({"__main__", "app", "browser", "demo", "eval", "serve", "synth",
+                            "website", "lineart_model", "optimize", "weights"})
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".json": "application/json; charset=utf-8", ".zip": "application/zip", "": "application/json; charset=utf-8"}
 
 
 def package_zip() -> bytes:
-    """The line2func package as the browser installs it: its modules, no viewer.
+    """The line2func package as the browser installs it: the modules it imports, no viewer.
 
-    The same files always give the same bytes (sorted, fixed dates), so the
-    name built from its hash only changes with the code.
+    :data:`NOT_IN_BROWSER` is left out. The same files always give the same
+    bytes (sorted, fixed dates), so the name built from its hash only changes
+    with the code.
     """
     files = sorted(p for p in PACKAGE_DIR.rglob("*") if p.is_file() and "__pycache__" not in p.parts
-                   and p.suffix == ".py")
+                   and p.suffix == ".py" and p.stem not in NOT_IN_BROWSER)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in files:

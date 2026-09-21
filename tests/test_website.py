@@ -1,5 +1,6 @@
 """The online page's build (python -m line2func.website): the page, its api/info and line2func as a ZIP."""
 
+import ast
 import io
 import json
 import os
@@ -51,7 +52,37 @@ def test_the_package_zip(site):
     assert names == sorted(names) and all(n.startswith("line2func/") for n in names)
     assert {"line2func/__init__.py", "line2func/web.py", "line2func/jobs.py"} <= set(names)
     assert not [n for n in names if "__pycache__" in n or "/viewer/" in n or not n.endswith(".py")]
+    assert not [n for n in names if Path(n).stem in website.NOT_IN_BROWSER]  # the browser imports none of these
     assert website.package_zip() == data  # the same files give the same bytes, and the same name
+
+
+def _intra_package_imports(pkg: Path, stem: str) -> set[str]:
+    """Every line2func module ``stem`` imports, from inside a function as well as at the top."""
+    tree = ast.parse((pkg / f"{stem}.py").read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("line2func"):
+            parts = node.module.split(".")
+            found |= {parts[1]} if len(parts) > 1 else {a.name for a in node.names}
+        elif isinstance(node, ast.Import):
+            found |= {a.name.split(".")[1] for a in node.names
+                      if a.name.startswith("line2func.") and len(a.name.split(".")) > 1}
+    return found & {p.stem for p in pkg.glob("*.py")}
+
+
+def test_nothing_shipped_reaches_for_what_is_left_out():
+    """A new import from a shipped module into a dropped one must fail here, not in someone's browser."""
+    pkg = Path(website.__file__).parent
+    shipped = {p.stem for p in pkg.glob("*.py")} - website.NOT_IN_BROWSER
+    referenced = set().union(*(_intra_package_imports(pkg, m) for m in shipped))
+    # The only two ways out, both lazy and neither reachable online: lineart.extract imports
+    # lineart_model for a model method, and web.py pins the method to "none"; pipeline.trace
+    # imports optimize for optimize=True, which neither jobs.py nor web.py can set. Both of
+    # them import torch at module scope, which Pyodide does not have, so even reaching one
+    # could not work. Widen this set only with the same kind of argument.
+    assert referenced - shipped == {"lineart_model", "optimize"}
+    assert "importlib" not in "".join(                     # nothing loads a module by name
+        (pkg / f"{m}.py").read_text(encoding="utf-8") for m in shipped)
 
 
 def test_a_build_replaces_only_an_earlier_build(tmp_path, site):
