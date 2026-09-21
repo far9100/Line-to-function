@@ -161,7 +161,6 @@ def test_restyled_writes_either_output_in_the_pages_line_style():
     assert jobs.RESTYLED == ("out.svg", "desmos.js")
     svg = jobs.restyled(raw, "out.svg", "palette", "0", "measured").decode("utf-8")
     assert svg.startswith("<?xml") and "#e6194b" in svg
-    assert jobs.restyled_svg(raw, "palette", "0", "measured").decode("utf-8") == svg  # the same by its old name
     js = jobs.restyled(raw, "desmos.js", "palette", "0", "measured").decode("utf-8")
     assert f"var {DESMOS_JS_VAR} = [" in js and '"color":"#e6194b"' in js
     # nothing is traced again: both come from the curves.json alone

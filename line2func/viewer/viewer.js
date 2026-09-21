@@ -600,5 +600,5 @@ export function createViewer(el) {
   }
 
   return { load, preview, setLoading, fail, unload, rerender, setDesmosWarning, fit, handleKey, debug,
-           setLineColor, lineColorState, setLineWidth, refreshList: renderList, curveCount: () => curves.length };
+           setLineColor, lineColorState, setLineWidth, refreshList: renderList };
 }

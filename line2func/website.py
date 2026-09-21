@@ -38,13 +38,13 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
 
 
 def package_zip() -> bytes:
-    """The line2func package as the browser installs it: its modules and bundled data, no viewer.
+    """The line2func package as the browser installs it: its modules, no viewer.
 
     The same files always give the same bytes (sorted, fixed dates), so the
     name built from its hash only changes with the code.
     """
     files = sorted(p for p in PACKAGE_DIR.rglob("*") if p.is_file() and "__pycache__" not in p.parts
-                   and (p.suffix == ".py" or (p.parent.name == "data" and p.suffix == ".npz")))
+                   and p.suffix == ".py")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in files:

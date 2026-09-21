@@ -53,7 +53,6 @@ stages. The web app uses this for its progress display and its Cancel button.
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 
 import numpy as np

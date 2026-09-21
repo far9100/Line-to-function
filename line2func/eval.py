@@ -49,6 +49,8 @@ from line2func.synth import load_scene_dir
 
 IMAGE_TYPES = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")  # the drawings --realset reads
 REAL_SEED = 2_000_011  # the bootstrap's resampling, so a comparison is reproducible
+
+
 def _subsets(valset: Path) -> dict[str, Path]:
     if any(valset.glob("*.json")):
         return {valset.name: valset}
@@ -58,20 +60,15 @@ def _subsets(valset: Path) -> dict[str, Path]:
     return subs
 
 
-def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pass_gt: bool = False,
-                repeat: int = 1) -> dict[str, dict]:
-    """Evaluation metrics per subset of a scene set; ``vectorize(ink) -> CurveSet`` (default: baseline).
+def eval_scenes(valset: str | Path, limit: int | None = None, repeat: int = 1) -> dict[str, dict]:
+    """Evaluation metrics per subset of a scene set, as the baseline engine traces it.
 
     With ``repeat`` above 1 every scene is traced that many times and the
     subset's time is the median of the runs, with ``seconds_spread`` saying how
     far apart they were. One timing of a 100-scene subset is not a measurement:
     a gate whose margin is under a percent can be turned over by whatever else
     the machine is doing, which has happened here.
-
-    With ``pass_gt`` the engine is called as ``vectorize(ink, gt)`` (oracle
-    experiments).
     """
-    vectorize = vectorize or baseline.vectorize
     results = {}
     for name, folder in _subsets(Path(valset)).items():
         scenes = load_scene_dir(folder)[:limit]
@@ -88,7 +85,7 @@ def eval_scenes(valset: str | Path, limit: int | None = None, vectorize=None, pa
             ink = lineart.extract(png, "none")
             for k in range(len(runs)):
                 t = time.perf_counter()
-                pred = vectorize(ink, gt) if pass_gt else vectorize(ink)
+                pred = baseline.vectorize(ink)
                 runs[k] += time.perf_counter() - t
             megapixels += gt.width * gt.height / 1e6
             f.append(f_score(pred, gt)["f"])
@@ -307,8 +304,6 @@ def _print_compare(result: dict) -> None:
           f"    is how many drawings a difference the size of that row's median would take.")
 
 
-
-
 def _print_scenes(results: dict) -> None:
     cols = [("f_gt2", "F_GT@2"), ("crossing_continuity", "cross cont."), ("gap_closure", "gap closure"),
             ("fragments_per_stroke", "frag/stroke"), ("curve_ratio", "curve ratio"),
@@ -316,8 +311,6 @@ def _print_scenes(results: dict) -> None:
     print(f"{'subset':<8}{'scenes':>7}" + "".join(f"{h:>13}" for _, h in cols))
     for name, r in results.items():
         print(f"{name:<8}{r['scenes']:>7}" + "".join(f"{r[k]:>13.3f}" for k, _ in cols))
-
-
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -350,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         from line2func.jobs import finite
 
+        args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(finite(results), indent=1), encoding="utf-8", newline="\n")
     return 0
 

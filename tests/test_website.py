@@ -50,7 +50,7 @@ def test_the_package_zip(site):
         names = zf.namelist()
     assert names == sorted(names) and all(n.startswith("line2func/") for n in names)
     assert {"line2func/__init__.py", "line2func/web.py", "line2func/jobs.py"} <= set(names)
-    assert not [n for n in names if "__pycache__" in n or "/viewer/" in n or not n.endswith((".py", ".npz"))]
+    assert not [n for n in names if "__pycache__" in n or "/viewer/" in n or not n.endswith(".py")]
     assert website.package_zip() == data  # the same files give the same bytes, and the same name
 
 

@@ -8,8 +8,8 @@ dataset download or human labeling is needed.
   ground truth keeps every stroke whole, including the
   parts erased to make gaps, and records the gaps so gap closing can be scored.
 * :func:`single_curve_sample` and :func:`multi_curve_sample` draw patches.
-* ``python -m line2func.synth ...`` writes scene sets (validation sets
-  ``--version 1``, ``2`` and ``tune``) and preview sheets.
+* ``python -m line2func.synth ...`` writes scene sets (the validation set
+  ``--version 1``) and preview sheets.
 
 Images are grayscale uint8, dark lines on light paper. Coordinates follow
 :mod:`line2func.geometry` (pixels, y down).
@@ -538,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {args.count} {args.kind} scenes to {args.out}")
     elif args.cmd == "valset":
         # fixed seeds: the sets must be identical on every machine
-        out = args.out or Path({"1": "data/val_v1", "2": "data/val_v2", "tune": "data/tune_v1"}[args.version])
+        out = args.out or Path("data/val_v1")
         for kind, seed in VALSETS[args.version]:
             write_scenes(out / kind, kind, args.count, args.size, seed)
         kinds = " + ".join(kind for kind, _ in VALSETS[args.version])

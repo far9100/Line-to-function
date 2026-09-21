@@ -125,11 +125,6 @@ def restyled(curves_json: bytes, name: str, color_mode: str, seed="0", width_mod
     return write(curves, color_mode=color_mode, seed=number, width_mode=width_mode).encode("utf-8")
 
 
-def restyled_svg(curves_json: bytes, color_mode: str, seed="0", width_mode: str = "measured") -> bytes:
-    """A job's ``out.svg`` again in the page's line style: :func:`restyled` for ``out.svg``."""
-    return restyled(curves_json, "out.svg", color_mode, seed, width_mode)
-
-
 def zip_files(files: dict[str, bytes]) -> bytes:
     """All of a job's files in one ZIP."""
     buf = io.BytesIO()
