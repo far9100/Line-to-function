@@ -97,12 +97,15 @@ export function createViewer(el) {
   // toolbar can appear after the first fit)
   let followFit = false;
   let mode = "original", originalOnly = false; // the chosen display; a mode whose image is missing shows "lines"
-  let lineColor = "palette", colorSeed = 0; // the chosen line color (LINE_COLOR_MODES) and the random mode's seed
+  let lineColor = "bw", colorSeed = 0; // the chosen line color (LINE_COLOR_MODES) and the random mode's seed
   let lineWidthMode = "measured"; // LINE_WIDTH_MODES: each stroke's own width, or one width for all
   let widthGroups = null; // paths grouped by (color bucket, rounded stroke width), built when first drawn
 
   let docWidth = 2; // the result's own line width (meta.line_width), the one "uniform" uses
-  const bg = { images: {}, alpha: { original: 0.35, missed: 0.9 } }; // images: original, quality
+  // alpha: how strongly the background shows through, per mode. The original starts at half, so the
+  // curves and the drawing under them are equally readable; the missed-detail map starts nearly solid,
+  // because its marks are what you came to look at. index.html's #bg-alpha carries the same start.
+  const bg = { images: {}, alpha: { original: 0.5, missed: 0.9 } }; // images: original, quality
   const pointers = new Map();
   let drag = null, pinch = null;
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();

@@ -99,10 +99,13 @@ The page opens in a new tab of your default browser. Then:
 2. The drawing appears in place. Choose how to write the lines, as
    **functions** `y = f(x)`, `x = g(y)` (section 5) or as **parametric
    equations** `x(t), y(t)`, and how strongly noise is removed (**Remove
-   noise**, strength 0-100, 50 by default: lower keeps more detail, higher cleans
-   noisy scans; section 8) and how light a line may be (**Faint lines**, 0-100,
-   50 by default: higher keeps lighter strands of hair and background), and
-   click **Convert**. It is traced like `demo`
+   noise**, strength 0-100: lower keeps more detail, higher cleans noisy scans;
+   section 8) and how light a line may be (**Faint lines**, 0-100: higher keeps
+   lighter strands of hair and background), and click **Convert**. The page
+   starts on parametric equations and filters nothing - **Remove noise** off
+   with its slider at 0, **Faint lines** at 100 - so a first run shows every
+   line it found and the sliders are there to take some away; `demo` keeps its
+   own defaults of 50 for both. It is traced like `demo`
    traces it: up to 5,000 curves, with the quality check (images larger than
    2048 px are shrunk first). A progress panel shows each step, and **Cancel**
    stops at the next step.
@@ -241,9 +244,9 @@ python -m line2func.serve out/ --no-browser    # just print the URL
 | Browse all equations | scroll the list on the right; click a row to jump to the curve |
 | Next / previous curve | `↓` / `↑`; `Esc` deselects |
 | Copy an equation | select a curve, then **Copy for Desmos** (parametric), **Copy named** (for lines/arcs) or **Copy functions** (results made with `--form function`) |
-| Display | **Lines only**, **Lines + original**, or **Lines + missed detail** (after a quality check: the curves in gray, missed lines red, missed faint ink orange, curves without ink blue), with the background's opacity slider |
+| Display | **Lines only**, **Lines + original** (where it starts, the original at 50% opacity), or **Lines + missed detail** (after a quality check: the curves in gray, missed lines red, missed faint ink orange, curves without ink blue, the map at 90%), with the background's opacity slider |
 | The original alone | **Original**: shows only the original image |
-| Line color | **Black & white**, **Colors** (eight hues by stroke, the default) or **Random colors**, with **Re-roll** for a fresh set of random hues. A downloaded SVG uses the same colors and thickness; the other files and the ZIP are unchanged. Over **Lines + missed detail** the curves stay gray so its marks still stand out |
+| Line color | **Black & white** (where it starts), **Colors** (eight hues by stroke) or **Random colors**, with **Re-roll** for a fresh set of random hues. A downloaded SVG uses the same colors and thickness; the other files and the ZIP are unchanged. Over **Lines + missed detail** the curves stay gray so its marks still stand out |
 | Line width | **Measured width** (the default: every stroke as thick as the ink it was traced from) or **Uniform width** (one thickness, the result's own `line_width`, for every line). The canvas draws the measured widths too, so it shows what the SVG will contain; a thin stroke is never drawn narrower than 0.75 screen pixels, so it stays visible when zoomed out |
 | Download | **SVG**, **JSON**, **Desmos**, **LaTeX** buttons (and **ZIP** with `python -m line2func`) |
 | All equations at once | **Copy all for Desmos**, then paste into the first expression box |
@@ -544,7 +547,8 @@ when the paper is clean (its pixel noise, measured on the blank paper, below
 `--denoise` (in the web page: **Remove noise** and its slider) sets how strictly
 specks and short faint pieces are dropped: 50 is the default described above, 0
 keeps them all, and 100 doubles the limits and no longer joins the pieces of
-broken lines. Unticking **Remove noise** is 0. On drawing 4 and on 100 synthetic
+broken lines. Unticking **Remove noise** is 0, which is where the page starts.
+On drawing 4 and on 100 synthetic
 noisy scans (noise, specks, JPEG):
 
 | Strength | Drawing 4: faint strokes kept | Drawing 4: missed ink | Noisy scans: curve length on true lines (worst scan) |
@@ -572,7 +576,8 @@ width grew from 1.7 to 2.4 px at a threshold of 0.08, and the eyes became
 zigzag outlines).
 
 `--faint-sensitivity` (in the web page: **Faint lines**) loosens those tests
-together: 50 is as tuned, 100 needs less than half the contrast (0.12 instead
+together: 50 is as tuned and the page starts at 100, which needs less than
+half the contrast (0.12 instead
 of 0.3 of the threshold), looks closer to dark lines, and lets very faint lines
 be shorter (6 line widths instead of 15), a little wider and branch more (one
 junction per 5 line widths instead of 17). Below 50 faint strokes need more
@@ -1022,7 +1027,7 @@ python -m line2func          # 或直接打：line2func（執行過 pip install 
 會在預設瀏覽器開一個新分頁。接著：
 
 1. **把線稿拖進頁面**。也可以按〔選擇檔案…〕，或按 Ctrl+V 貼上。支援 PNG、JPEG、WebP、BMP、TIFF、GIF，最大 64 MB。手機拍的照片會自動轉正。
-2. 圖片會出現在原處。選擇線段的寫法：**函數** `y = f(x)`、`x = g(y)`（見第 5 節）或**參數方程式** `x(t)`、`y(t)`，以及去雜訊的強度（〔去雜訊〕，0–100，預設 50：調低保留更多細節，有雜訊的掃描圖可以調高；見第 8 節）與〔淡線〕靈敏度（0–100，預設 50：調高保留更淡的頭髮和背景線），再按〔確認 ▶〕。描線方式和 `demo` 相同：最多 5,000 條曲線，並做品質檢查（超過 2048 px 的圖會先縮小）。處理時會顯示目前的步驟，按〔取消〕會在下一個步驟停下。
+2. 圖片會出現在原處。選擇線段的寫法：**函數** `y = f(x)`、`x = g(y)`（見第 5 節）或**參數方程式** `x(t)`、`y(t)`，以及去雜訊的強度（〔去雜訊〕，0–100：調低保留更多細節，有雜訊的掃描圖可以調高；見第 8 節）與〔淡線〕靈敏度（0–100：調高保留更淡的頭髮和背景線），再按〔確認 ▶〕。頁面一開始選的是參數方程式，而且什麼都不過濾——〔去雜訊〕關閉、拖動條在 0，〔淡線〕100——所以第一次描線會畫出找到的每一條線，拖動條是用來減的；`demo` 自己的預設值兩者都是 50。描線方式和 `demo` 相同：最多 5,000 條曲線，並做品質檢查（超過 2048 px 的圖會先縮小）。處理時會顯示目前的步驟，按〔取消〕會在下一個步驟停下。
 3. 結果會在同一頁的檢視器中開啟（見第 4 節）。可以下載 SVG、JSON、Desmos、LaTeX，或把全部打包成 ZIP，也可以〔全部複製到 Desmos〕。
 4. 上方的〔清除圖片〕會清掉目前的圖，接著就能拖入下一張；隨時直接拖入新圖片也可以。
 
@@ -1125,8 +1130,10 @@ python -m line2func.serve out/ --no-browser    # 只印出網址，不開瀏覽�
 | 瀏覽所有算式 | 捲動右側清單；點一列就會跳到該曲線 |
 | 上一條／下一條 | `↑`／`↓`；`Esc` 取消選取 |
 | 複製算式 | 選取曲線後按〔複製到 Desmos〕（參數式），直線與圓弧可按〔複製具名算式〕，`--form function` 的結果可按〔複製函數〕 |
-| 顯示方式 | 〔只顯示線段〕〔線段＋原圖〕或〔線段＋遺漏線段〕（做過品質檢查後：曲線改為灰色，漏掉的線紅色、漏掉的淡線橘色、沒有墨跡的曲線藍色），以及背景的透明度滑桿 |
+| 顯示方式 | 〔只顯示線段〕、〔線段＋原圖〕（一開始就是這個，原圖透明度 50%）或〔線段＋遺漏線段〕（做過品質檢查後：曲線改為灰色，漏掉的線紅色、漏掉的淡線橘色、沒有墨跡的曲線藍色，該圖透明度 90%），以及背景的透明度滑桿 |
 | 只看原圖 | 〔原圖〕：只顯示原圖 |
+| 線條顏色 | 〔黑白〕（一開始就是這個）、〔彩色〕（依筆畫分成八種色相）或〔隨機顏色〕，〔重新隨機〕可換一組隨機色相。下載的 SVG 會套用同樣的顏色與粗細，其他檔案和 ZIP 不受影響。在〔線段＋遺漏線段〕下曲線一律維持灰色，這樣標記才看得出來 |
+| 線條粗細 | 〔實際粗細〕（一開始就是這個：每一筆畫和它描到的墨跡一樣粗）或〔統一線寬〕（全部用結果自己的 `line_width`）。畫布也用實際粗細繪製，所以看到的就是 SVG 會有的內容；細的筆畫在畫面上不會細於 0.75 px，縮小時仍然看得見 |
 | 下載 | 〔SVG〕〔JSON〕〔Desmos〕〔LaTeX〕按鈕（用 `python -m line2func` 時還有〔ZIP〕） |
 | 一次複製全部算式 | 〔全部複製到 Desmos〕，再貼到 Desmos 的第一個算式欄 |
 | 語言 | 右上角的〔中文｜EN〕 |
@@ -1313,7 +1320,7 @@ python -m line2func.demo IMAGE [options]
 
 #### 去雜訊的強度：`--denoise`
 
-`--denoise`（網頁版是〔去雜訊〕與它的拖動條）決定小雜點和短的淡線片段丟得多嚴格：50 是上面說明的預設值，0 全部保留，100 則把各項門檻加倍，而且不再把斷線的片段合起來判斷。取消勾選〔去雜訊〕等於 0。在圖 4 和 100 張有雜訊的合成掃描圖（雜訊、雜點、JPEG）上：
+`--denoise`（網頁版是〔去雜訊〕與它的拖動條）決定小雜點和短的淡線片段丟得多嚴格：50 是上面說明的預設值，0 全部保留，100 則把各項門檻加倍，而且不再把斷線的片段合起來判斷。取消勾選〔去雜訊〕等於 0，網頁版一開始就是取消勾選的。在圖 4 和 100 張有雜訊的合成掃描圖（雜訊、雜點、JPEG）上：
 
 | 強度 | 圖 4：淡線保留率 | 圖 4：漏掉的墨跡 | 雜訊掃描圖：曲線落在真實線條上的比例（最差一張） |
 |---|---|---|---|
@@ -1329,7 +1336,7 @@ python -m line2func.demo IMAGE [options]
 
 頭髮和背景的淺色線條常常比墨跡門檻還淡。描線器仍然會用它們和周圍紙面的對比找出來（淡線），更淡的則看形狀（極淡的線：長、細、很少分岔）。頭髮常常互相交叉，又緊貼著較深的髮絲，所以許多淺色髮絲過不了這些檢查；若改成調低墨跡門檻，相鄰的髮絲會黏成一團（下面這張圖在門檻 0.08 時線寬從 1.7 變成 2.4 px，眼睛也變成鋸齒狀的外框）。
 
-`--faint-sensitivity`（網頁版是〔淡線〕）一起放寬這些檢查：50 是調校好的預設，100 只需要不到一半的對比（門檻的 0.12 而不是 0.3）、更靠近深色線也會找，極淡的線可以更短（6 個線寬而不是 15）、稍寬、分岔更多（每 5 個線寬一個交叉點，而不是 17）。低於 50 時淡線需要更高的對比；0 只描門檻以上的墨跡。容許誤差 1.0：
+`--faint-sensitivity`（網頁版是〔淡線〕，一開始是 100）一起放寬這些檢查：50 是調校好的預設，100 只需要不到一半的對比（門檻的 0.12 而不是 0.3）、更靠近深色線也會找，極淡的線可以更短（6 個線寬而不是 15）、稍寬、分岔更多（每 5 個線寬一個交叉點，而不是 17）。低於 50 時淡線需要更高的對比；0 只描門檻以上的墨跡。容許誤差 1.0：
 
 | 圖 | 50 時漏掉的墨跡 | 100 時 | 100 時曲線落在墨跡上的比例（含淡墨） | 線寬 50／100 |
 |---|---|---|---|---|

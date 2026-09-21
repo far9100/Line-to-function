@@ -46,8 +46,8 @@ python -m venv .venv
 pip install -e .
 ```
 
-Photos (the pretrained line-art network) also need PyTorch; install a build
-for your GPU first, e.g.
+Photos (the pretrained line-art network) and `--optimize` both need PyTorch;
+install a build for your GPU first, e.g.
 `pip install torch --index-url https://download.pytorch.org/whl/cu130` for an
 NVIDIA RTX 50-series card (CPU only: `pip install torch`), then
 `pip install -e ".[torch,dev]"`.
@@ -55,7 +55,7 @@ NVIDIA RTX 50-series card (CPU only: `pip install torch`), then
 ### Use it in the browser
 
 ```bash
-python -m line2func
+python -m line2func        # or just: line2func
 ```
 
 The page opens in a new tab of your default browser.
@@ -63,10 +63,12 @@ The page opens in a new tab of your default browser.
 1. **Drop a line drawing** onto the page, click **Choose a file…**, or paste
    with Ctrl+V.
 2. Choose how the lines are written, as **functions** or as **parametric
-   equations**, how strongly noise is removed (**Remove noise**, 0-100; 50
-   is the default, lower keeps more detail) and how light a line may be
-   (**Faint lines**, 0-100; higher keeps lighter strands of hair and
-   background). Click **Convert**.
+   equations**, how strongly noise is removed (**Remove noise**, 0-100) and
+   how light a line may be (**Faint lines**, 0-100; higher keeps lighter
+   strands of hair and background). The page starts on parametric equations
+   and filters nothing - noise removal off, **Faint lines** at 100 - so a
+   first run shows every line it found; the command line uses 50 for both.
+   Click **Convert**.
 3. The result opens in the same page. Hover or click a curve to see its
    equations. Show the lines alone, over the original, or with the missed
    detail highlighted. Download SVG, JSON, Desmos, LaTeX or a ZIP, or click
@@ -99,8 +101,8 @@ python -m line2func.serve out/                                    # look at the 
 | `--denoise 0..100` | How strongly specks and short faint pieces are dropped (default 50) |
 | `--faint-sensitivity 0..100` | How light a line may be and still be traced (default 50; higher keeps lighter strands) |
 | `--threshold 0..1` | Ink threshold: lower it if faint lines are missed |
-| `--lineart METHOD` | For photos: `informative`, `canny` or `xdog` |
-| `--quality` | Also judge the result: `quality.png` marks missed detail |
+| `--lineart METHOD` | For photos: `informative` or `informative-coarse` (the pretrained network, fine or coarse lines), `canny` or `xdog` |
+| `--quality` | Also judge the result: `quality.json` holds the scores, `quality.png` marks missed detail |
 
 `python -m line2func.demo --help` lists every option.
 
@@ -164,18 +166,18 @@ python -m venv .venv
 pip install -e .
 ```
 
-照片（預訓練線稿模型）還需要 PyTorch：先安裝符合你 GPU 的版本，例如 NVIDIA RTX 50 系列用 `pip install torch --index-url https://download.pytorch.org/whl/cu130`（只用 CPU：`pip install torch`），再執行 `pip install -e ".[torch,dev]"`。
+照片（預訓練線稿模型）與 `--optimize` 還需要 PyTorch：先安裝符合你 GPU 的版本，例如 NVIDIA RTX 50 系列用 `pip install torch --index-url https://download.pytorch.org/whl/cu130`（只用 CPU：`pip install torch`），再執行 `pip install -e ".[torch,dev]"`。
 
 ### 用瀏覽器
 
 ```bash
-python -m line2func
+python -m line2func        # 安裝後也可以直接打 line2func
 ```
 
 會在預設瀏覽器開一個新分頁。
 
 1. **把線稿拖進頁面**，或按〔選擇檔案…〕，或按 Ctrl+V 貼上。
-2. 選擇線段寫成**函數**或**參數方程式**、去雜訊的強度（〔去雜訊〕，0–100；預設 50，調低保留更多細節），以及多淡的線也算線條（〔淡線〕，0–100；調高會保留更淡的頭髮與背景線），再按〔確認 ▶〕。
+2. 選擇線段寫成**函數**或**參數方程式**、去雜訊的強度（〔去雜訊〕，0–100），以及多淡的線也算線條（〔淡線〕，0–100；調高會保留更淡的頭髮與背景線）。頁面一開始選的是參數方程式，而且什麼都不過濾——〔去雜訊〕關閉、〔淡線〕100——所以第一次描線會畫出找到的每一條線；指令列兩者的預設值則是 50。再按〔確認 ▶〕。
 3. 結果會在同一頁開啟。滑過或點擊曲線可以看它的算式；可以只顯示線段、疊在原圖上，或標出遺漏的線段；也可以下載 SVG、JSON、Desmos、LaTeX 或 ZIP，或按〔全部複製到 Desmos〕。
 4. 〔清除圖片〕會重新開始。在終端機按 Ctrl+C，或按頁面上的〔結束〕，就會結束程式。
 
@@ -204,8 +206,8 @@ python -m line2func.serve out/                                    # 在瀏覽器
 | `--denoise 0..100` | 小雜點和短的淡線片段丟掉的強度（預設 50） |
 | `--faint-sensitivity 0..100` | 多淡的線也算線條（預設 50；調高保留更淡的線） |
 | `--threshold 0..1` | 墨跡門檻：淡的線被漏掉時調低 |
-| `--lineart 方法` | 照片用：`informative`、`canny` 或 `xdog` |
-| `--quality` | 另外評估結果：`quality.png` 會標出遺漏的細節 |
+| `--lineart 方法` | 照片用：`informative` 或 `informative-coarse`（預訓練網路，細線或粗線）、`canny` 或 `xdog` |
+| `--quality` | 另外評估結果：`quality.json` 記錄分數，`quality.png` 會標出遺漏的細節 |
 
 `python -m line2func.demo --help` 會列出所有選項。
 

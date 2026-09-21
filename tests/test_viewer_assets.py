@@ -52,10 +52,31 @@ def test_the_viewer_and_the_exporter_share_the_desmos_limit():
     assert int(re.search(r"export const DESMOS_LIMIT = (\d+);", source).group(1)) == DESMOS_CURVE_LIMIT
 
 
-def test_the_page_and_the_pipeline_share_the_default_noise_filter_strength():
+def test_the_page_starts_where_it_says_it_does():
+    """app.js START: the page's own starting options, deliberately not the pipeline's.
+
+    The page starts by filtering nothing - noise removal off with its slider at 0, the
+    faint-line sensitivity at its top - so a first conversion shows every line that was
+    found. The command line keeps 50 for both, and the sliders' tooltips say so.
+    """
     source = (serve.VIEWER_DIR / "app.js").read_text(encoding="utf-8")
-    assert float(re.search(r"const DENOISE = (\d+);", source).group(1)) == pipeline.DENOISE
-    assert float(re.search(r"const FAINT = (\d+);", source).group(1)) == pipeline.FAINT_SENSITIVITY
+    start = re.search(r"const START = \{(.*?)\n\};", source, re.S).group(1)
+    for field, value in (("form", '"parametric"'), ("denoiseOn", "false"), ("denoise", "0"),
+                         ("faint", "100"), ("lineColor", '"bw"'), ("lineWidth", '"measured"')):
+        assert re.search(rf"\b{field}: {re.escape(value)},", start), field
+    assert pipeline.DENOISE == 50 and pipeline.FAINT_SENSITIVITY == 50
+    strings = json.loads((serve.VIEWER_DIR / "i18n.json").read_text(encoding="utf-8"))
+    for key in ("convert.denoiseHint", "convert.faintHint"):
+        assert "50" in strings["en"][key] and "50" in strings["zh-TW"][key]  # the command line's value
+
+
+def test_the_background_slider_starts_where_the_viewer_draws():
+    """#bg-alpha's markup and viewer.js's own starting alpha are one value in two files."""
+    html = serve.VIEWER.read_text(encoding="utf-8")
+    markup = int(re.search(r'id="bg-alpha"[^>]*\bvalue="(\d+)"', html).group(1))
+    source = (serve.VIEWER_DIR / "viewer.js").read_text(encoding="utf-8")
+    drawn = float(re.search(r"alpha: \{ original: ([\d.]+),", source).group(1))
+    assert markup / 100 == drawn == 0.5
 
 
 def test_the_package_ships_every_asset():

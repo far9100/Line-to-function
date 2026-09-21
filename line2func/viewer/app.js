@@ -33,11 +33,19 @@ const viewer = createViewer({
 
 const FORMS = ["function", "parametric"]; // how the lines are written (line2func.export)
 const LINE_COLORS = ["bw", "palette", "random"]; // = line2func.viewer.viewer LINE_COLOR_MODES
-const LINE_COLOR = "palette"; // the colors the viewer has always drawn; "measured" is the SVG's own
 const LINE_WIDTHS = ["measured", "uniform"]; // = line2func.export.LINE_WIDTH_MODES
-const LINE_WIDTH = "measured"; // what the SVG has always written: each stroke as thick as its ink
-const DENOISE = 50; // = line2func.pipeline.DENOISE, the noise filters' default strength (tests check it)
-const FAINT = 50; // = line2func.pipeline.FAINT_SENSITIVITY, the faint-line sensitivity's default (tests check it)
+// Where the page starts, until the visitor changes something: the choice is saved and used from then on
+// (useOptions). These are the page's own values, not the command line's - pipeline.DENOISE and
+// pipeline.FAINT_SENSITIVITY are both 50, while the page starts by filtering nothing at all, so a first
+// conversion shows every line that was found and the sliders are there to take some away.
+// tests/test_viewer_assets.py pins them.
+const START = {
+  form: "parametric",            // x(t), y(t): one expression per curve
+  denoiseOn: false, denoise: 0,  // nothing dropped as noise, the slider at its left end
+  faint: 100,                    // the lightest lines still traced
+  lineColor: "bw",               // black on paper, like the drawing (= viewer.js's own starting color)
+  lineWidth: "measured",         // what the SVG writes: every stroke as thick as its ink
+};
 // the stages in the order they run (the online engine's start, pipeline.trace, app.run_job) -> the step shown,
 // and typical cost
 const STEP_OF = { load_engine: "prepare", resize: "prepare", load_model: "prepare", lineart: "prepare", upscale: "prepare",
@@ -50,9 +58,10 @@ const NEVER = ["load_model", "optimize"]; // stages the page's conversions do no
 const S = {
   mode: "boot", info: null, gone: false, engine: null,
   view: "empty", // empty (the drop zone), preview (an image to convert) or result
-  image: null, form: "function", denoise: DENOISE, denoiseOn: true, faint: FAINT, jobs: new Map(),
-  lineColor: LINE_COLOR, colorSeed: 0, // the chosen line color; colorSeed only matters for "random"
-  lineWidth: LINE_WIDTH, // the chosen line thickness (LINE_WIDTHS)
+  image: null, form: START.form, denoise: START.denoise, denoiseOn: START.denoiseOn, faint: START.faint,
+  jobs: new Map(),
+  lineColor: START.lineColor, colorSeed: 0, // the chosen line color; colorSeed only matters for "random"
+  lineWidth: START.lineWidth, // the chosen line thickness (LINE_WIDTHS)
   trace: null, result: null, ticket: 0, copyArmed: false,
 };
 const converts = () => S.mode === "app" || S.mode === "web"; // the page can open and convert images
