@@ -903,7 +903,7 @@ Generated folders (`out/`, `runs/`, `data/`, `_site/`, `.venv/`) are git-ignored
 
 ### 12. Status and roadmap
 
-This is version 1.3.
+This is version 1.2.
 
 - [x] Geometry core and renderer
 - [x] Baseline engine; SVG, Desmos and LaTeX export; viewer; `demo` and `serve`
@@ -1530,7 +1530,7 @@ python -m line2func.website --out _site --serve    # 並在 http://127.0.0.1:800
 
 ### 12. 現況與路線圖
 
-這是 1.3 版。
+這是 1.2 版。
 
 - [x] 幾何核心與渲染器
 - [x] 傳統引擎；SVG、Desmos、LaTeX 匯出；檢視器；`demo` 與 `serve`
