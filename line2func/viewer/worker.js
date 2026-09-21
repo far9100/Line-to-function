@@ -3,7 +3,8 @@
 //   page -> worker  {type: "init", pyodide, package, packages}   Pyodide's folder URL, line2func's zip, packages
 //                   {type: "open", id, key, name, data}          read an image file (data: its bytes)
 //                   {type: "trace", id, key, name, data, params} trace it (params: the job's JSON)
-//                   {type: "svg", id, curves, color, seed, width}  write out.svg again in another line style
+//                   {type: "svg", id, curves, name, color, seed, width}  write out.svg or desmos.js again
+//                                                                        in another line style
 //   worker -> page  {type: "status", step} while starting; {type: "ready", protocol, version, heap} or
 //                   {type: "failed", detail}; {type: "stage", id, stage} during a trace;
 //                   {type: "answer", id, answer, preview | files + zip | svg, heap}, or {type: "crashed", id, detail}
@@ -18,7 +19,7 @@ self.onmessage = ({ data: m }) => {
   else if (m.type === "trace") {
     const progress = (stage) => self.postMessage({ type: "stage", id: m.id, stage }); // called from Python
     call(m.id, () => web.trace(m.data, m.name, m.params, progress, m.key));
-  } else if (m.type === "svg") call(m.id, () => web.export_svg(m.curves, m.color, m.seed, m.width));
+  } else if (m.type === "svg") call(m.id, () => web.export_svg(m.curves, m.color, m.seed, m.width, m.name));
 };
 
 async function init({ pyodide, package: pkg, packages }) {

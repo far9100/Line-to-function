@@ -88,16 +88,18 @@ def trace(data, name: str, params: str, progress: Callable[[str], None] | None =
         gc.collect()
 
 
-def export_svg(curves, color_mode: str = "measured", seed=0, width_mode: str = "measured") -> dict:
-    """Write ``out.svg`` again in a chosen line style, as the servers do for ``?color=&width=``.
+def export_svg(curves, color_mode: str = "measured", seed=0, width_mode: str = "measured",
+               name: str = "out.svg") -> dict:
+    """Write a styled output again in a chosen line style, as the servers do for ``?color=&width=``.
 
-    ``curves`` is the result's own ``curves.json`` (a JavaScript ``Uint8Array``
+    ``name`` is one of :data:`line2func.jobs.RESTYLED` (``out.svg`` or ``desmos.js``)
+    and ``curves`` is the result's own ``curves.json`` (a JavaScript ``Uint8Array``
     or bytes), so nothing is traced again. Returns ``{"answer": JSON text,
     "svg": bytes or None}``; the answer is ``{"ok": true}`` or ``{"error": {...}}``.
     """
     try:
         raw = curves.to_bytes() if hasattr(curves, "to_bytes") else bytes(curves)
-        svg = jobs.restyled_svg(raw, color_mode, seed, width_mode)
+        svg = jobs.restyled(raw, name, color_mode, seed, width_mode)
     except Exception as exc:  # noqa: BLE001 - every failure becomes an error answer
         return {"answer": _answer(_error(exc)), "svg": None}
     return {"answer": _answer({"ok": True}), "svg": svg}

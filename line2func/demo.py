@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
           f"{curves.num_strokes} strokes, {elapsed:.2f} s ({elapsed / max(megapixels, 1e-9):.2f} s/MP); "
           f"{n_shapes} recognized as lines or arcs{' (named in exports)' if form == 'named' else ''}{as_functions}"
           + (f" [{', '.join(extras)}]" if extras else ""))
-    for key in ("curves", "svg", "desmos", "latex", "overlay"):
+    for key in ("curves", "svg", "desmos", "desmos_js", "latex", "overlay"):
         print(f"  {paths[key]}")
     if count and count["after"] < count["target"] and args.curves is not None:
         print(f"note: traced finely, the drawing gives {count['after']} curves, fewer than {count['target']}; "

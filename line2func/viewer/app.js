@@ -598,7 +598,9 @@ function renderElapsed() {
 
 // ---------- result ----------
 const DOWNLOAD_NAMES = { "curves.json": "{stem}.json", "out.svg": "{stem}.svg", "desmos.txt": "{stem}-desmos.txt",
-                         "equations.tex": "{stem}.tex", zip: "{stem}-line2func.zip" };
+                         "desmos.js": "{stem}-desmos.js", "equations.tex": "{stem}.tex",
+                         zip: "{stem}-line2func.zip" };
+const STYLED_FILES = ["out.svg", "desmos.js"]; // = line2func.jobs.RESTYLED: written again in the page's line style
 
 function setupResult() {
   $("#list-toggle").addEventListener("click", toggleList);
@@ -608,11 +610,11 @@ function setupResult() {
   viewer.setLineWidth(S.lineWidth);
 }
 
-// The SVG the local server sends is re-styled to match the page, through the query it takes. The online
-// engine's files are blob: URLs made when the trace finished, so no query reaches it; download() asks the
-// engine itself for a styled SVG instead.
+// The styled files the local server sends are re-styled to match the page, through the query it takes. The
+// online engine's files are blob: URLs made when the trace finished, so no query reaches it; download() asks
+// the engine itself for a styled file instead.
 function colored(url, file) {
-  if (file !== "out.svg" || S.mode === "web") return url;
+  if (!STYLED_FILES.includes(file) || S.mode === "web") return url;
   return `${url}?color=${encodeURIComponent(S.lineColor)}&seed=${S.colorSeed >>> 0}`
        + `&width=${encodeURIComponent(S.lineWidth)}`;
 }
@@ -666,13 +668,13 @@ async function download(file) {
   if (!result) return;
   const name = DOWNLOAD_NAMES[file].replace("{stem}", stemOf(result.name));
   let url = colored(result.url(file), file);
-  if (file === "out.svg" && S.mode === "web" && result.snap) {
-    // online: the engine writes the SVG again in the style the page shows (no server to ask, nothing re-traced)
+  if (STYLED_FILES.includes(file) && S.mode === "web" && result.snap) {
+    // online: the engine writes the file again in the style the page shows (no server to ask, nothing re-traced)
     try {
-      url = (await S.engine.styledSVG(result.snap.job_id,
-                                      { color: S.lineColor, seed: S.colorSeed, width: S.lineWidth })) || url;
+      url = (await S.engine.styledFile(result.snap.job_id, file,
+                                       { color: S.lineColor, seed: S.colorSeed, width: S.lineWidth })) || url;
     } catch (err) {
-      toast(errorText(err), "error"); // the unstyled SVG is still there to download
+      toast(errorText(err), "error"); // the unstyled file is still there to download
     }
   }
   if (S.mode === "app" && window.showSaveFilePicker) {

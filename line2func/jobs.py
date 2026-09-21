@@ -29,7 +29,7 @@ from PIL import Image
 from line2func import lineart, pipeline
 from line2func.curves import CurveSet
 from line2func.export import (DESMOS_CURVE_LIMIT, FORMS, LINE_COLOR_MODES, LINE_WIDTH_MODES,
-                              output_texts, to_svg)
+                              output_texts, to_desmos_js, to_svg)
 from line2func.functions import attach
 
 PREVIEW_SIDE = 2048  # images sent to the page for display
@@ -97,13 +97,19 @@ def stem(name: str) -> str:
     return stem.strip() or "image"
 
 
-def restyled_svg(curves_json: bytes, color_mode: str, seed="0", width_mode: str = "measured") -> bytes:
-    """A job's ``out.svg`` again, with the line color and thickness the page is showing.
+RESTYLED = ("out.svg", "desmos.js")  # the outputs that carry a line style, so a download can match the page
 
-    Re-exports from the job's own ``curves.json``, so nothing is traced twice and
-    the colors come from :func:`line2func.export.stroke_color` - the same ones the
-    viewer draws. Raises :class:`ApiError` for an unknown mode or a bad seed.
+
+def restyled(curves_json: bytes, name: str, color_mode: str, seed="0", width_mode: str = "measured") -> bytes:
+    """A job's ``name`` again, with the line color and thickness the page is showing.
+
+    ``name`` is one of :data:`RESTYLED`. Re-exports from the job's own
+    ``curves.json``, so nothing is traced twice and the colors come from
+    :func:`line2func.export.stroke_color` - the same ones the viewer draws.
+    Raises :class:`ApiError` for an unknown name or mode, or a bad seed.
     """
+    if name not in RESTYLED:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="file")
     if color_mode not in LINE_COLOR_MODES:
         raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="color")
     if width_mode not in LINE_WIDTH_MODES:
@@ -115,7 +121,13 @@ def restyled_svg(curves_json: bytes, color_mode: str, seed="0", width_mode: str 
     if not 0 <= number <= 0xFFFFFFFF:
         raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="seed")
     curves = CurveSet.from_dict(json.loads(curves_json.decode("utf-8")))
-    return to_svg(curves, color_mode=color_mode, seed=number, width_mode=width_mode).encode("utf-8")
+    write = to_svg if name == "out.svg" else to_desmos_js
+    return write(curves, color_mode=color_mode, seed=number, width_mode=width_mode).encode("utf-8")
+
+
+def restyled_svg(curves_json: bytes, color_mode: str, seed="0", width_mode: str = "measured") -> bytes:
+    """A job's ``out.svg`` again in the page's line style: :func:`restyled` for ``out.svg``."""
+    return restyled(curves_json, "out.svg", color_mode, seed, width_mode)
 
 
 def zip_files(files: dict[str, bytes]) -> bytes:

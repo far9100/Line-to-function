@@ -144,6 +144,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
   out\curves.json
   out\out.svg
   out\desmos.txt
+  out\desmos.js
   out\equations.tex
   out\overlay.png
 ```
@@ -161,6 +162,7 @@ light lines on a dark background are detected and inverted automatically.
 | `curves.json` | Every curve: 4 control points, stroke id, confidence, measured width and color, its recognized shape (line/arc) if any, and with `--form function` its functions |
 | `out.svg` | Vector version; each stroke in its measured width and color. Opens in browsers, Inkscape, Illustrator |
 | `desmos.txt` | One Desmos expression per line: parametric, named (`--form named`) or functions (`--form function`), section 5 |
+| `desmos.js` | The same expressions, each carrying its measured line width and color, for the Desmos API, section 5 |
 | `equations.tex` | The same equations as a LaTeX `align*` block |
 | `overlay.png` | The curves drawn over the original, one color per stroke, for a quick check |
 | `source.png` | A copy of the input (shown behind the curves in the viewer) |
@@ -282,6 +284,48 @@ Numbers never use scientific notation, because Desmos would read `1e-5` as
 (`--curves N` for another count); a drawing that needs fewer keeps all of its
 finely traced curves. Above 5,000 line2func warns you. If Desmos gets slow on
 your computer, ask for fewer, e.g. `--curves 2000`.
+
+#### Colors and line widths: `desmos.js`
+
+A pasted expression is drawn by Desmos as a line of one fixed width and one
+color, so `desmos.txt` can only say how dark an area is by how densely it is
+drawn (section 4, *Shadows, heavy eyelashes and other filled areas*). The
+Desmos API takes a `color` and a `lineWidth` per expression, and `desmos.js` is
+the same expressions written with them - the width and color measured along
+each stroke, and for the curves inside a filled area, the area's own gray.
+
+Its math is byte for byte what `desmos.txt` holds; only the styling is added.
+It is a JavaScript file that ends in a `setExpressions` call, so:
+
+- in a page that embeds the [Desmos API](https://www.desmos.com/api), run it or
+  call `calculator.setExpressions(LINE2FUNC)` yourself;
+- with a calculator open, pasting the whole file into the browser console does
+  the same, where the page exposes a calculator to it. Desmos does not document
+  that, so it may or may not work for you - the API route always does.
+
+The curves inside an area are drawn as wide as they are *spaced*, so they meet
+instead of leaving paper between them and the area comes out a solid patch of
+its measured gray. The spacing already says the tone once; drawing them at
+their own spacing takes it back out, and the color says it instead. Measured
+against the two JPEG drawings used through this page, as the local average
+tone over a 12 px window, against the shaded part of the original:
+
+| | mean abs. tone error | more than 0.05 too dark |
+|---|---|---|
+| lineArt (11), `desmos.txt` | 0.176 | 79.6% |
+| lineArt (11), `desmos.js` | **0.052** | **3.2%** |
+| lineArt (9), `desmos.txt` | 0.164 | 77.4% |
+| lineArt (9), `desmos.js` | **0.041** | **6.3%** |
+
+Two caveats. `lineWidth` is in screen pixels while the widths are measured in
+image pixels, so they read as measured with the drawing at its own size on
+screen, and thicken or thin as you zoom. And what is left of the error is now
+mostly on the light side: a stroke measured thinner than 0.5 px is drawn at
+0.5 px so it does not disappear, but a faint JPEG line drawn thin and pale is
+fainter than the original.
+
+The page's own line color and width choices apply to this file too, so what you
+download is what the page is showing.
 
 #### Functions instead of parametric curves: `--form function`
 
@@ -977,6 +1021,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
   out\curves.json
   out\out.svg
   out\desmos.txt
+  out\desmos.js
   out\equations.tex
   out\overlay.png
 ```
@@ -992,6 +1037,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 | `curves.json` | 每條曲線的 4 個控制點、所屬筆畫、信心值、量測到的線寬與顏色、辨識出的形狀（直線／圓弧，若有），以及 `--form function` 時的函數 |
 | `out.svg` | 向量圖，每一筆畫使用量測到的線寬與顏色；可用瀏覽器、Inkscape、Illustrator 開啟 |
 | `desmos.txt` | 每行一個 Desmos 算式：參數式、具名式（`--form named`）或函數（`--form function`），見第 5 節 |
+| `desmos.js` | 同樣的算式，每一條都帶著量到的線寬與顏色，給 Desmos API 用，見第 5 節 |
 | `equations.tex` | 同樣的算式，寫成 LaTeX `align*` 區塊 |
 | `overlay.png` | 曲線疊在原圖上，每一筆畫一種顏色，方便快速檢查 |
 | `source.png` | 輸入圖的副本（在檢視器中顯示在曲線後方） |
@@ -1079,6 +1125,28 @@ y=0.5000x+5.00\left\{10.00\le x\le 90.00\right\}
 數字一律不用科學記號，因為 Desmos 會把 `1e-5` 讀成 `1·e − 5`。四捨五入讓任何一點的位置最多偏移約 0.02 px。
 
 **預設最多 5,000 條曲線。** `demo` 最多產生 5,000 條曲線（用 `--curves N` 指定其他數量）；需要的曲線比這少的圖，會保留細緻描線的全部曲線。超過 5,000 條時 line2func 會提出警告。如果在你的電腦上 Desmos 變慢，可以指定少一點，例如 `--curves 2000`。
+
+#### 顏色與線寬：`desmos.js`
+
+貼進算式列的算式，Desmos 一律用同一種線寬、同一種顏色畫，所以 `desmos.txt` 只能靠「畫得多密」來表達一塊區域有多深（見第 4 節〈陰影、粗睫毛與其他色塊〉）。Desmos API 則可以逐條算式指定 `color` 和 `lineWidth`，`desmos.js` 就是把同樣的算式配上這兩項寫出來 —— 每一筆畫量到的線寬與顏色，而色塊內部的曲線，用的是那塊區域自己的灰階。
+
+裡面的數學和 `desmos.txt` 逐位元相同，只是多了樣式。它是一個 JavaScript 檔，結尾是一次 `setExpressions` 呼叫，所以：
+
+- 在嵌入 [Desmos API](https://www.desmos.com/api) 的網頁裡，執行它，或自己呼叫 `calculator.setExpressions(LINE2FUNC)`；
+- 開著計算機時，把整個檔案貼進瀏覽器主控台也是同一件事 —— 前提是那個頁面有把計算機物件露出來。Desmos 沒有把這件事寫進文件，所以不保證在你那邊可用；走 API 那條路則一定可以。
+
+色塊內部的曲線，線寬會等於它們的**間距**，所以彼此相接、中間不留白紙，整塊區域就成為一片它量到的灰。間距本身已經表達過一次深淺了；把線寬設成間距等於把這層表達抵銷掉，改由顏色來說。用本頁一直在用的兩張 JPEG 線稿量測（以 12 px 視窗的區域平均色調，對照原圖有陰影的部分）：
+
+| | 平均色調誤差 | 比原圖深超過 0.05 的比例 |
+|---|---|---|
+| lineArt (11)，`desmos.txt` | 0.176 | 79.6% |
+| lineArt (11)，`desmos.js` | **0.052** | **3.2%** |
+| lineArt (9)，`desmos.txt` | 0.164 | 77.4% |
+| lineArt (9)，`desmos.js` | **0.041** | **6.3%** |
+
+兩點要注意。`lineWidth` 的單位是螢幕像素，而線寬是在圖片像素上量的，所以只有當圖以原尺寸顯示時兩者才吻合，縮放時線會跟著變粗或變細。另外，剩下的誤差現在多半偏淡：量到比 0.5 px 更細的筆畫會用 0.5 px 畫，免得整條消失，但一條又細又淡的 JPEG 線這樣畫出來，仍比原圖淡一些。
+
+頁面上選的線條顏色與線寬也會套用到這個檔案，所以下載到的就是頁面正在顯示的樣子。
 
 #### 用函數代替參數式：`--form function`
 

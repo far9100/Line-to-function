@@ -46,7 +46,7 @@ class FakeWorker {
                    answer: JSON.stringify({ summary: { curves: 2 }, params: { method: "none", scale: 1 } }),
                    files: { "curves.json": new TextEncoder().encode('{"curves": []}'), "desmos.txt": new Uint8Array([120]) } });
     } else if (m.type === "svg") {
-      const svg = `<svg data-style="${m.color}|${m.seed}|${m.width}"/>`;
+      const svg = `<svg data-style="${m.name}|${m.color}|${m.seed}|${m.width}"/>`;
       this.reply({ type: "answer", id: m.id, heap: 1, answer: JSON.stringify({ ok: true }),
                    svg: new TextEncoder().encode(svg) });
     } // "hang": never answers
@@ -117,7 +117,8 @@ const out = {};
   out.crash = { last: snaps.at(-1), workers: FakeWorker.created.length, unknown: await engine.trace({ image_id: "nope" }).catch((e) => e.code) };
 }
 
-// styledSVG: the SVG written again in the page's line style, cached per style and dropped with the result
+// styledFile: out.svg / desmos.js written again in the page's line style, cached per file and style
+// and dropped with the result
 {
   FakeWorker.created = [];
   FakeWorker.behaviour.trace = "answer";
@@ -128,15 +129,18 @@ const out = {};
   await settle();
   const worker = FakeWorker.created[FakeWorker.created.length - 1];
   const style = { color: "bw", seed: 0, width: "uniform" };
-  const first = await engine.styledSVG(job.job_id, style);
-  const again = await engine.styledSVG(job.job_id, style); // the same style must not ask the worker twice
-  const other = await engine.styledSVG(job.job_id, { color: "random", seed: 7, width: "measured" });
+  const first = await engine.styledFile(job.job_id, "out.svg", style);
+  const again = await engine.styledFile(job.job_id, "out.svg", style); // the same style must not ask twice
+  const other = await engine.styledFile(job.job_id, "out.svg", { color: "random", seed: 7, width: "measured" });
+  // the same style of another file is a different answer, so the cache must not hand back the SVG
+  const js = await engine.styledFile(job.job_id, "desmos.js", style);
   out.styled = {
     isBlob: first.startsWith("blob:"), cached: first === again, differs: first !== other,
     asked: worker.received.filter((t) => t === "svg").length,
     body: await (await fetch(first)).text(),
     otherBody: await (await fetch(other)).text(),
-    unknownJob: await engine.styledSVG("nope", style),
+    jsBody: await (await fetch(js)).text(),
+    unknownJob: await engine.styledFile("nope", "out.svg", style),
   };
 }
 

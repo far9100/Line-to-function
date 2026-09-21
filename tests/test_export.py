@@ -8,15 +8,20 @@ import pytest
 from line2func import geometry as g
 from line2func.curves import Curve, CurveSet
 from line2func.export import (
+    DESMOS_JS_VAR,
+    DESMOS_MIN_WIDTH,
+    desmos_color,
     desmos_line,
     format_number,
     math_coefficients,
     output_texts,
     to_desmos,
+    to_desmos_js,
     to_latex,
     to_svg,
     write_outputs,
 )
+from line2func.fill import spacing_for
 
 ARCH_MATH = np.array([[-40.0, 20.0], [60.0, -270.0], [60.0, 250.0], [10.0, 10.0]])
 PLAN_LINE = r"\left(-40.00t^{3}+60.00t^{2}+60.00t+10.00,\ 20.00t^{3}-270.00t^{2}+250.00t+10.00\right)"
@@ -115,13 +120,89 @@ def test_svg_never_fills_anything():
     assert solid.get("d").endswith("Z") and solid.get("stroke") == "#333333"
 
 
+# ---------- the styled Desmos output (desmos.js) ----------
+
+
+def js_items(text):
+    """The expression list of a desmos.js, as Python objects."""
+    return json.loads("[" + text.split("= [\n", 1)[1].split("\n];", 1)[0] + "]")
+
+
+def shaded_set():
+    """A plain stroke, the outline of a light area and of a dark one, and a curve inside each."""
+    return CurveSet(
+        100, 80,
+        [
+            Curve(g.line([10, 10], [50, 10]), stroke=0, width=3.0, color="#222222"),
+            Curve(g.line([70, 70], [90, 70]), stroke=1, tags=("fill_outline",), tone=0.40, color="#999999"),
+            Curve(g.line([72, 72], [88, 72]), stroke=2, tags=("fill",), tone=0.40),
+            Curve(g.line([20, 40], [40, 40]), stroke=3, tags=("fill_outline",), tone=0.80, color="#333333"),
+            Curve(g.line([22, 42], [38, 42]), stroke=4, tags=("fill",), tone=0.80),
+        ],
+        meta={"line_width": 2.5, "ink_dark": 0.8},
+    )
+
+
+def test_desmos_js_writes_the_same_expressions_as_desmos_txt():
+    """The two Desmos outputs differ only in the styling: the math in them is the same."""
+    cs = shaded_set()
+    items = js_items(to_desmos_js(cs))
+    assert [i["latex"] for i in items] == to_desmos(cs).splitlines()
+    assert [i["id"] for i in items] == [f"l2f{i}" for i in range(len(items))]
+    text = to_desmos_js(cs)
+    assert f"var {DESMOS_JS_VAR} = [" in text and f"Calc.setExpressions({DESMOS_JS_VAR});" in text
+
+
+def test_desmos_js_carries_the_measured_width_and_color():
+    """What desmos.txt can only say by drawing densely, desmos.js says with a color and a width."""
+    by_stroke = {c.stroke: i for c, i in zip(shaded_set(), js_items(to_desmos_js(shaded_set())))}
+    assert by_stroke[0]["color"] == "#222222" and by_stroke[0]["lineWidth"] == 3.0
+    # an outline has ink on one side only, so no width of its own: the drawing's line width
+    assert by_stroke[1]["color"] == "#999999" and by_stroke[1]["lineWidth"] == 2.5
+    # a curve inside an area is drawn as wide as it is spaced, so the area comes out a solid
+    # patch of its own gray instead of showing paper between the curves
+    for stroke, tone in ((2, 0.40), (4, 0.80)):
+        assert by_stroke[stroke]["lineWidth"] == round(spacing_for(tone, 0.8), 2)
+        assert by_stroke[stroke]["color"] == "#" + f"{round(255 * (1 - tone)):02x}" * 3
+    assert by_stroke[2]["color"] != by_stroke[4]["color"]  # the light area is lighter than the dark one
+
+
+def test_desmos_js_only_ever_writes_hex_colors():
+    """The API takes hex; the page's own modes also speak #rgb and hsl()."""
+    cs = shaded_set()
+    for mode in ("measured", "bw", "palette", "random"):
+        colors = [i["color"] for i in js_items(to_desmos_js(cs, color_mode=mode, seed=7))]
+        assert all(re.fullmatch(r"#[0-9a-f]{6}", c) for c in colors), colors
+    assert desmos_color("#000") == "#000000" and desmos_color("#e6194b") == "#e6194b"
+    assert desmos_color("hsl(0 70% 45%)") == "#c32222" and desmos_color("hsl(120 70% 45%)") == "#22c322"
+    with pytest.raises(ValueError):
+        desmos_color("rebeccapurple")
+
+
+def test_desmos_js_never_writes_a_line_too_thin_to_see():
+    cs = CurveSet(100, 80, [Curve(g.line([10, 10], [50, 10]), stroke=0, width=0.09)],
+                  meta={"line_width": 2.5})
+    assert js_items(to_desmos_js(cs))[0]["lineWidth"] == DESMOS_MIN_WIDTH
+
+
+def test_desmos_js_takes_the_pages_line_style():
+    cs = shaded_set()
+    uniform = js_items(to_desmos_js(cs, width_mode="uniform"))
+    assert {i["lineWidth"] for i in uniform} == {2.5}
+    assert {i["color"] for i in js_items(to_desmos_js(cs, color_mode="bw"))} == {"#000000"}
+    with pytest.raises(ValueError):
+        to_desmos_js(cs, color_mode="nope")
+    with pytest.raises(ValueError):
+        to_desmos_js(cs, width_mode="nope")
+
+
 def test_write_outputs(tmp_path):
     cs = arch_set()
     img = np.full((100, 120), 255, np.uint8)
     paths = write_outputs(cs, tmp_path / "out", source_image=img)
-    for key in ("curves", "svg", "desmos", "latex", "overlay", "source"):
+    for key in ("curves", "svg", "desmos", "desmos_js", "latex", "overlay", "source"):
         assert paths[key].is_file()
-    for key in ("curves", "svg", "desmos", "latex"):
+    for key in ("curves", "svg", "desmos", "desmos_js", "latex"):
         assert b"\r" not in paths[key].read_bytes()  # LF only, on every OS
     assert paths["desmos"].read_bytes() == (PLAN_LINE + "\n").encode()
     assert CurveSet.load_json(paths["curves"]).curves[0].ctrl.shape == (4, 2)
@@ -131,7 +212,8 @@ def test_output_texts_match_the_written_files(tmp_path):
     cs = arch_set()
     texts = output_texts(cs, named=True)
     paths = write_outputs(cs, tmp_path, named=True)
-    names = {"curves": "curves.json", "svg": "out.svg", "desmos": "desmos.txt", "latex": "equations.tex"}
+    names = {"curves": "curves.json", "svg": "out.svg", "desmos": "desmos.txt",
+             "desmos_js": "desmos.js", "latex": "equations.tex"}
     assert set(texts) == set(names.values())
     for key, name in names.items():
         assert paths[key].read_bytes() == texts[name].encode("utf-8")

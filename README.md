@@ -85,6 +85,7 @@ python -m line2func.serve out/                                    # look at the 
 | Output | Contents |
 |---|---|
 | `desmos.txt` | One Desmos equation per line |
+| `desmos.js` | The same equations carrying each line's measured width and color, for the Desmos API |
 | `equations.tex` | The same equations for LaTeX |
 | `out.svg` | The drawing as a vector image |
 | `curves.json` | Every curve: control points, stroke, width and color |
@@ -108,6 +109,12 @@ Open `desmos.txt`, select all and copy. Click the first expression box in
 [Desmos](https://www.desmos.com/calculator) and paste: every line becomes one
 expression. line2func makes at most 5,000 curves; if Desmos gets slow on your
 computer, ask for fewer, e.g. `--curves 2000`.
+
+Pasted that way, Desmos draws every expression as a line of one width and one
+color, so a shadow can only be shown by how densely it is drawn. `desmos.js`
+holds the same equations with the measured width and color on each of them, for
+a page that embeds the [Desmos API](https://www.desmos.com/api); shadows then
+come out the gray they are. See [docs/details.md](docs/details.md), section 5.
 
 ### Good inputs
 
@@ -182,6 +189,7 @@ python -m line2func.serve out/                                    # 在瀏覽器
 | 輸出檔 | 內容 |
 |---|---|
 | `desmos.txt` | 每行一個 Desmos 算式 |
+| `desmos.js` | 同樣的算式，每一條都帶著量到的線寬與顏色，給 Desmos API 用 |
 | `equations.tex` | 同樣的算式，給 LaTeX 用 |
 | `out.svg` | 向量圖 |
 | `curves.json` | 每條曲線的控制點、所屬筆畫、線寬與顏色 |
@@ -202,6 +210,8 @@ python -m line2func.serve out/                                    # 在瀏覽器
 ### 貼進 Desmos
 
 打開 `desmos.txt`，全選並複製，點 [Desmos](https://www.desmos.com/calculator) 的第一個算式欄並貼上，每一行會成為一個算式。line2func 最多產生 5,000 條曲線；如果在你的電腦上 Desmos 變慢，可以指定少一點，例如 `--curves 2000`。
+
+這樣貼上時，Desmos 會把每條算式都用同一種線寬、同一種顏色畫，所以陰影只能靠「畫得多密」來表現。`desmos.js` 是同樣的算式，但每一條都帶著量到的線寬與顏色，給嵌入 [Desmos API](https://www.desmos.com/api) 的網頁用；這樣陰影就會是它本來的灰。詳見 [docs/details.md](docs/details.md) 第 5 節。
 
 ### 適合的輸入
 

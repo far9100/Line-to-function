@@ -79,7 +79,7 @@ class _VisibleText(HTMLParser):
     """Text nodes of the page body that are not covered by a data-i18n attribute."""
 
     SKIP = {"script", "style", "title"}
-    OK = {"line2func", "中文", "EN", "SVG", "JSON", "Desmos", "LaTeX", "ZIP", "−", "+", "2×"}
+    OK = {"line2func", "中文", "EN", "SVG", "JSON", "Desmos", "Desmos JS", "LaTeX", "ZIP", "−", "+", "2×"}
 
     def __init__(self):
         super().__init__()

@@ -120,9 +120,33 @@ def _functions(c: Curve, height: float, tolerance: float) -> list[str]:
     return c.functions if c.functions is not None else curve_functions(c.ctrl, height, tolerance)[0]
 
 
+def expressions(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, form: str | None = None,
+                function_tolerance: float = FUNCTION_TOLERANCE):
+    """Yield ``(curve, latex)`` for every expression, in the ``form`` of :func:`to_desmos`.
+
+    One pair per expression, not per curve: as functions a curve becomes one
+    pair per piece of ``y = f(x)`` / ``x = g(y)``, all sharing the same curve.
+    """
+    from line2func.shapes import named_latex
+
+    form = _form(named, form)
+    for c in curves:
+        if form == "function":
+            for eq in _functions(c, curves.height, function_tolerance):
+                yield c, eq
+        elif form == "named" and c.shape is not None:
+            yield c, named_latex(c.shape, curves.height)
+        else:
+            yield c, desmos_line(c.ctrl, curves.height, decimals)
+
+
 def to_desmos(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, form: str | None = None,
               function_tolerance: float = FUNCTION_TOLERANCE) -> str:
     """All curves, one Desmos expression per line.
+
+    Plain LaTeX with no styling: pasted into the expression list, Desmos draws
+    every one of them as a line of the same width and color. :func:`to_desmos_js`
+    is the same expressions carrying the width and color measured from the drawing.
 
     ``form`` (:data:`FORMS`) picks how each curve is written: "parametric" (the
     default), "named" (the same as ``named=True``: curves recognized as lines or
@@ -131,18 +155,7 @@ def to_desmos(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, f
     ``x = g(y)``: its ``Curve.functions``, or made within ``function_tolerance``
     px, see :mod:`line2func.functions`).
     """
-    from line2func.shapes import named_latex
-
-    form = _form(named, form)
-    out = []
-    for c in curves:
-        if form == "function":
-            out.extend(_functions(c, curves.height, function_tolerance))
-        elif form == "named" and c.shape is not None:
-            out.append(named_latex(c.shape, curves.height))
-        else:
-            out.append(desmos_line(c.ctrl, curves.height, decimals))
-    return "".join(line + "\n" for line in out)
+    return "".join(eq + "\n" for _, eq in expressions(curves, decimals, named, form, function_tolerance))
 
 
 def to_latex(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, form: str | None = None,
@@ -175,6 +188,119 @@ def to_latex(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, fo
     lines += [row + (r" \\" if i < len(rows) - 1 else "") for i, row in enumerate(rows)]
     lines.append(r"\end{align*}")
     return "\n".join(lines) + "\n"
+
+
+# ---------- styled Desmos output (desmos.js) ----------
+#
+# Desmos draws a pasted expression as a line of one fixed width and color, so desmos.txt
+# can only show how dark an area is by how densely it is drawn (line2func.fill). The API,
+# though, takes a color and a lineWidth per expression, so the same curves can carry the
+# width and color measured from the drawing instead - a light shadow comes out light
+# because it is drawn light, not because it is drawn sparsely.
+
+DESMOS_JS_VAR = "LINE2FUNC"  # the name the styled output binds its expression list to
+DESMOS_MIN_WIDTH = 0.5  # px: thinner than this a Desmos line all but disappears, and a faint
+# stroke measured at 0.09 px would be dropped from the drawing rather than drawn faintly
+
+
+def tone_color(tone: float) -> str:
+    """The gray a filled area of darkness ``tone`` is drawn in (ink is ``1 - gray``)."""
+    v = int(round(255.0 * (1.0 - min(max(float(tone), 0.0), 1.0))))
+    return f"#{v:02x}{v:02x}{v:02x}"
+
+
+def desmos_color(css: str) -> str:
+    """``css`` as the ``#rrggbb`` Desmos wants: the API takes hex only, while the page
+    and the SVG also take ``#rgb`` and the ``hsl()`` of the random color mode."""
+    if css.startswith("#"):
+        body = css[1:]
+        return "#" + ("".join(ch * 2 for ch in body) if len(body) == 3 else body)
+    if css.startswith("hsl("):
+        h, s, lum = (float(p.rstrip("%")) for p in css[4:-1].replace(",", " ").split())
+        s, lum = s / 100.0, lum / 100.0
+        c = (1.0 - abs(2.0 * lum - 1.0)) * s
+        x = c * (1.0 - abs((h / 60.0) % 2.0 - 1.0))
+        rgb = [(c, x, 0.0), (x, c, 0.0), (0.0, c, x), (0.0, x, c), (x, 0.0, c), (c, 0.0, x)][int(h // 60) % 6]
+        return "#" + "".join(f"{int(round(255.0 * (v + lum - c / 2.0))):02x}" for v in rgb)
+    raise ValueError(f"cannot write {css!r} as a Desmos hex color")
+
+
+def desmos_style(c: Curve, line_width: float, dark: float) -> tuple[str, float]:
+    """The ``(color, lineWidth)`` that one curve is drawn with in the styled output.
+
+    A curve inside a filled area (``fill``, :mod:`line2func.fill`) is drawn as wide
+    as it is spaced, so the curves of an area meet instead of leaving paper between
+    them, and the area comes out a solid patch of its own measured color. That is
+    what lets the styled output show a tone exactly rather than approximate it by
+    density: the spacing already says the tone once, and drawing the curves at their
+    own spacing takes it back out, leaving the color to say it.
+
+    Everything else keeps the width and color measured along it (``Curve.width`` /
+    ``Curve.color``), falling back to the drawing's line width, and to the area tone
+    where no color was measured - the outline of a filled area has ink on one side
+    only, so it has no width of its own (:mod:`line2func.attributes`).
+    """
+    from line2func.fill import FILL_TAG, spacing_for
+
+    color = c.color
+    if color is None:
+        color = tone_color(c.tone) if c.tone is not None else BW_COLOR
+    if FILL_TAG in c.tags:
+        width = spacing_for(c.tone, dark)
+    else:
+        width = float(c.width) if c.width is not None else line_width
+    return desmos_color(color), round(max(width, DESMOS_MIN_WIDTH), 2)
+
+
+def to_desmos_js(curves: CurveSet, decimals: int = DECIMALS, named: bool = False, form: str | None = None,
+                 function_tolerance: float = FUNCTION_TOLERANCE, line_width: float | None = None,
+                 color_mode: str = LINE_COLOR_DEFAULT, seed: int = 0,
+                 width_mode: str = LINE_WIDTH_DEFAULT) -> str:
+    """The same expressions as :func:`to_desmos`, each carrying a color and a line width.
+
+    A JavaScript file: it binds the expressions to :data:`DESMOS_JS_VAR` and hands them
+    to ``setExpressions``, so it runs in a page that embeds the Desmos API, and in the
+    browser console with a calculator open where the page exposes one. ``form`` and
+    ``function_tolerance`` are as in :func:`to_desmos`; ``color_mode``, ``seed`` and
+    ``width_mode`` override the measured color and width exactly as in :func:`to_svg`,
+    so a downloaded file matches what the page is showing.
+    """
+    if color_mode not in LINE_COLOR_MODES:
+        raise ValueError(f"unknown line color mode {color_mode!r}; choose from {', '.join(LINE_COLOR_MODES)}")
+    if width_mode not in LINE_WIDTH_MODES:
+        raise ValueError(f"unknown line width mode {width_mode!r}; choose from {', '.join(LINE_WIDTH_MODES)}")
+    if line_width is None:
+        line_width = float(curves.meta.get("line_width") or 2.0)
+    dark = float(curves.meta.get("ink_dark") or 0.0)
+    even = width_mode == "uniform"
+    chosen = color_mode != "measured"
+    rows = []
+    for i, (c, eq) in enumerate(expressions(curves, decimals, named, form, function_tolerance)):
+        color, width = desmos_style(c, line_width, dark)
+        if chosen:
+            color = desmos_color(stroke_color(color_mode, c.stroke, seed))
+        if even:
+            width = round(max(float(line_width), DESMOS_MIN_WIDTH), 2)
+        rows.append(" " + json.dumps({"id": f"l2f{i}", "latex": eq, "color": color, "lineWidth": width},
+                                     ensure_ascii=False, separators=(",", ":")))
+    head = [
+        f"// line2func: {len(rows)} expressions, {len(curves)} curves, {curves.num_strokes} strokes, "
+        f"image {curves.width}x{curves.height}, y axis up, 0 <= t <= 1",
+        "// Every expression carries the line width and color measured from the drawing, so a shadow",
+        "// shows as the gray it is rather than as solid ink.",
+        "//",
+        "// In a page that embeds the Desmos API (https://www.desmos.com/api):",
+        f"//     calculator.setExpressions({DESMOS_JS_VAR});",
+        "// With a calculator open, pasting this whole file into the browser console does the same,",
+        "// where the page exposes one. Widths are in pixels, so they read as measured with the",
+        "// drawing at its own size on screen.",
+    ]
+    tail = [
+        f'if (typeof Calc !== "undefined") Calc.setExpressions({DESMOS_JS_VAR});',
+        f'else if (typeof calculator !== "undefined") calculator.setExpressions({DESMOS_JS_VAR});',
+    ]
+    body = f"var {DESMOS_JS_VAR} = [\n" + ",\n".join(rows) + "\n];"
+    return "\n".join(head + [body] + tail) + "\n"
 
 
 def _svg_num(v: float) -> str:
@@ -253,7 +379,12 @@ def to_svg(curves: CurveSet, line_width: float | None = None, color: str = "#000
 
 def output_texts(curves: CurveSet, named: bool = False, form: str | None = None,
                  function_tolerance: float = FUNCTION_TOLERANCE) -> dict[str, str]:
-    """The text outputs by file name: ``curves.json``, ``out.svg``, ``desmos.txt`` and ``equations.tex``.
+    """The text outputs by file name: ``curves.json``, ``out.svg``, ``desmos.txt``,
+    ``desmos.js`` and ``equations.tex``.
+
+    There are two Desmos outputs, the same expressions written twice: ``desmos.txt``
+    is plain LaTeX to paste into the expression list, and ``desmos.js`` carries the
+    measured line width and color on each one (:func:`to_desmos_js`).
 
     ``named`` and ``form`` as in :func:`to_desmos`. As functions, curves without
     ``Curve.functions`` get them first (:func:`line2func.functions.attach`), so
@@ -266,20 +397,22 @@ def output_texts(curves: CurveSet, named: bool = False, form: str | None = None,
         "curves.json": json.dumps(curves.to_dict(), indent=1),
         "out.svg": to_svg(curves),
         "desmos.txt": to_desmos(curves, form=form, function_tolerance=function_tolerance),
+        "desmos.js": to_desmos_js(curves, form=form, function_tolerance=function_tolerance),
         "equations.tex": to_latex(curves, form=form, function_tolerance=function_tolerance),
     }
 
 
 def write_outputs(curves: CurveSet, out_dir: str | Path, source_image=None, named: bool = False,
                   form: str | None = None, function_tolerance: float = FUNCTION_TOLERANCE) -> dict[str, Path]:
-    """Write ``curves.json``, ``out.svg``, ``desmos.txt``, ``equations.tex`` and,
-    when ``source_image`` is given, ``overlay.png`` and ``source.png``.
+    """Write ``curves.json``, ``out.svg``, ``desmos.txt``, ``desmos.js``, ``equations.tex``
+    and, when ``source_image`` is given, ``overlay.png`` and ``source.png``.
     ``named`` and ``form`` pick how the equations are written (:func:`to_desmos`)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     texts = output_texts(curves, named=named, form=form, function_tolerance=function_tolerance)
     paths = {}
-    for key, name in (("curves", "curves.json"), ("svg", "out.svg"), ("desmos", "desmos.txt"), ("latex", "equations.tex")):
+    for key, name in (("curves", "curves.json"), ("svg", "out.svg"), ("desmos", "desmos.txt"),
+                      ("desmos_js", "desmos.js"), ("latex", "equations.tex")):
         paths[key] = out / name
         # newline="\n": identical bytes on every OS (no CRLF on Windows)
         paths[key].write_text(texts[name], encoding="utf-8", newline="\n")

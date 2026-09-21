@@ -11,7 +11,7 @@ from PIL import Image
 from line2func import geometry as g
 from line2func import jobs, pipeline
 from line2func.curves import Curve, CurveSet
-from line2func.export import output_texts
+from line2func.export import DESMOS_JS_VAR, output_texts
 from line2func.render import render_lineart
 
 LIMITS = jobs.Limits(max_pixels=50_000_000, store_side=4096, auto_side=2048, max_work_pixels=12_000_000,
@@ -112,7 +112,8 @@ def test_run_trace_makes_the_files_and_summary():
          **jobs.trace_options({"form": "function", "curves": 5000, "quality": True}, (160, 120), 1.0, 4_000_000)}
     stages = []
     files, summary = jobs.run_trace(rgb, "drawing.png", p, stages.append, started=0.0)
-    assert sorted(files) == ["curves.json", "desmos.txt", "equations.tex", "out.svg", "quality.json", "quality.png"]
+    assert sorted(files) == ["curves.json", "desmos.js", "desmos.txt", "equations.tex", "out.svg",
+                             "quality.json", "quality.png"]
     assert stages[0] == "lineart" and "vectorize" in stages and stages[-2:] == ["export", "quality"]
     doc = json.loads(files["curves.json"])
     assert doc["meta"]["source"] == "drawing.png" and doc["meta"]["form"] == "function"
@@ -148,3 +149,27 @@ def test_names():
     assert jobs.clean_name("C:\\Users\\me\\draw\x00ing.png") == "drawing.png"
     assert jobs.clean_name("") == "image"
     assert jobs.stem("測試 圖.png") == "測試 圖" and jobs.stem(".png") == ".png" and jobs.stem("a.b.c") == "a.b"
+
+
+def test_restyled_writes_either_output_in_the_pages_line_style():
+    """A download has to match what the page is showing, for both files that carry a line style."""
+    cs = CurveSet(100, 80,
+                  [Curve(g.line([10, 10], [50, 10]), stroke=0, width=3.0, color="#222222"),
+                   Curve(g.line([20, 40], [40, 40]), stroke=1, tags=("fill",), tone=0.8)],
+                  meta={"line_width": 2.5, "ink_dark": 0.8})
+    raw = json.dumps(cs.to_dict()).encode("utf-8")
+    assert jobs.RESTYLED == ("out.svg", "desmos.js")
+    svg = jobs.restyled(raw, "out.svg", "palette", "0", "measured").decode("utf-8")
+    assert svg.startswith("<?xml") and "#e6194b" in svg
+    assert jobs.restyled_svg(raw, "palette", "0", "measured").decode("utf-8") == svg  # the same by its old name
+    js = jobs.restyled(raw, "desmos.js", "palette", "0", "measured").decode("utf-8")
+    assert f"var {DESMOS_JS_VAR} = [" in js and '"color":"#e6194b"' in js
+    # nothing is traced again: both come from the curves.json alone
+    even = jobs.restyled(raw, "desmos.js", "measured", "0", "uniform").decode("utf-8")
+    assert even.count('"lineWidth":2.5') == 2
+    for bad, field in ((("equations.tex", "measured", "0", "measured"), "file"),
+                       (("out.svg", "nope", "0", "measured"), "color"),
+                       (("out.svg", "measured", "0", "nope"), "width"),
+                       (("out.svg", "measured", "huge", "measured"), "seed"),
+                       (("out.svg", "measured", "-1", "measured"), "seed")):
+        assert _code(lambda a=bad: jobs.restyled(raw, *a)) == (400, "bad_params", field)

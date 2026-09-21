@@ -36,9 +36,10 @@ Routes (errors are ``{"error": {"code", "detail", "field"}}``; the page translat
                                           -> snapshot
     GET  /api/jobs/<id>                   job snapshot (state, stage, summary, files)
     POST /api/jobs/<id>/cancel            cancel (a running job stops at its next stage)
-    GET  /api/jobs/<id>/data/<file>       curves.json, out.svg, desmos.txt, equations.tex, lineart.png,
+    GET  /api/jobs/<id>/data/<file>       curves.json, out.svg, desmos.txt, desmos.js, equations.tex, lineart.png,
                                           quality.json, quality.png  (?download: as an attachment;
-                                          out.svg also takes ?color=&seed=&width=, the line style the page shows)
+                                          out.svg and desmos.js also take ?color=&seed=&width=, the
+                                          line style the page shows)
     GET  /api/jobs/<id>/zip               all of them
     POST /api/settings                    {lang, options}, kept in $LINE2FUNC_HOME/app-settings.json
     POST /api/shutdown                    end the program
@@ -93,6 +94,7 @@ DOWNLOAD_NAMES = {
     "curves.json": "{stem}.json",
     "out.svg": "{stem}.svg",
     "desmos.txt": "{stem}-desmos.txt",
+    "desmos.js": "{stem}-desmos.js",
     "equations.tex": "{stem}.tex",
     "lineart.png": "{stem}-lineart.png",
     "quality.json": "{stem}-quality.json",
@@ -592,10 +594,10 @@ class Handler(BaseHandler):
                 raise ApiError(HTTPStatus.NOT_FOUND, "not_found")
             body = job.files[name]
             headers = {"Cache-Control": IMMUTABLE}
-            if name == "out.svg" and ("color" in query or "width" in query):
+            if name in jobs.RESTYLED and ("color" in query or "width" in query):
                 # the page styles the lines itself; re-export so a download matches what it shows
-                body = jobs.restyled_svg(job.files["curves.json"], query.get("color", ["measured"])[0],
-                                         query.get("seed", ["0"])[0], query.get("width", ["measured"])[0])
+                body = jobs.restyled(job.files["curves.json"], name, query.get("color", ["measured"])[0],
+                                     query.get("seed", ["0"])[0], query.get("width", ["measured"])[0])
                 headers["Cache-Control"] = "no-store"  # the style depends on the query, not only on the job id
             if "download" in query:
                 headers["Content-Disposition"] = _disposition(DOWNLOAD_NAMES[name].format(stem=stem))

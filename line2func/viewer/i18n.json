@@ -89,7 +89,8 @@
   "result.saved": "Saved {name}",
   "dl.svgTitle": "Vector image (SVG), each stroke in its measured width and color",
   "dl.jsonTitle": "All curves with control points, widths and colors (curves.json)",
-  "dl.desmosTitle": "One Desmos expression per line (desmos.txt)",
+  "dl.desmosTitle": "One Desmos expression per line, to paste into the expression list (desmos.txt)",
+  "dl.desmosJsTitle": "The same expressions carrying each line's measured width and color, for the Desmos API (desmos.js)",
   "dl.latexTitle": "The equations as a LaTeX align* block",
   "dl.zipTitle": "Everything above in one ZIP file",
 
@@ -244,7 +245,8 @@
   "result.saved": "已儲存 {name}",
   "dl.svgTitle": "向量圖（SVG），每一筆畫使用量到的線寬與顏色",
   "dl.jsonTitle": "所有曲線的控制點、線寬與顏色（curves.json）",
-  "dl.desmosTitle": "每行一個 Desmos 算式（desmos.txt）",
+  "dl.desmosTitle": "每行一個 Desmos 算式，可直接貼進算式列（desmos.txt）",
+  "dl.desmosJsTitle": "同樣的算式，每一條都帶著量到的線寬與顏色，給 Desmos API 用（desmos.js）",
   "dl.latexTitle": "算式寫成 LaTeX align* 區塊",
   "dl.zipTitle": "以上全部打包成一個 ZIP 檔",
 

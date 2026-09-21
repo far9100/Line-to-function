@@ -10,7 +10,8 @@ export const PROTOCOL = 2; // = worker.js PROTOCOL
 const RECYCLE_BYTES = 1 << 30; // after a trace, a worker with more memory than this is replaced
 const KEEP_RESULTS = 2; // results whose files stay available
 const TYPES = { "curves.json": "application/json", "out.svg": "image/svg+xml", "desmos.txt": "text/plain;charset=utf-8",
-                "equations.tex": "text/plain;charset=utf-8", "quality.json": "application/json", "quality.png": "image/png",
+                "desmos.js": "text/javascript;charset=utf-8", "equations.tex": "text/plain;charset=utf-8",
+                "quality.json": "application/json", "quality.png": "image/png",
                 "lineart.png": "image/png", zip: "application/zip" };
 
 // config: api/info's "engine" ({pyodide, package, packages, build}). onJob(snapshot) is called on every change
@@ -200,20 +201,20 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
     return results.get(jobId)?.[name] || "";
   }
 
-  // out.svg written again with the line style the page is showing, as the local server's
+  // out.svg or desmos.js written again with the line style the page is showing, as the local server's
   // ?color=&seed=&width= does. The curves come from the result's own curves.json, so nothing is traced
   // again. Resolves with a blob: URL (kept until the result is forgotten), or "" if it cannot be made.
-  async function styledSVG(jobId, { color = "measured", seed = 0, width = "measured" } = {}) {
-    const key = `${color}|${seed >>> 0}|${width}`;
+  async function styledFile(jobId, name, { color = "measured", seed = 0, width = "measured" } = {}) {
+    const key = `${name}|${color}|${seed >>> 0}|${width}`;
     const have = styled.get(jobId)?.[key];
     if (have) return have;
     const source = results.get(jobId)?.["curves.json"];
     if (!source) return "";
     const curves = new Uint8Array(await (await fetch(source)).arrayBuffer());
-    const m = await request({ type: "svg", curves, color, seed: seed >>> 0, width });
+    const m = await request({ type: "svg", curves, name, color, seed: seed >>> 0, width });
     const answer = JSON.parse(m.answer);
     if (answer.error) throw error(answer.error.code, answer.error);
-    const url = URL.createObjectURL(new Blob([m.svg], { type: TYPES["out.svg"] }));
+    const url = URL.createObjectURL(new Blob([m.svg], { type: TYPES[name] }));
     if (!styled.has(jobId)) styled.set(jobId, {});
     styled.get(jobId)[key] = url;
     return url;
@@ -227,5 +228,5 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
     jobs.delete(jobId);
   }
 
-  return { start, status, open, trace, cancel, previewURL, fileURL, styledSVG };
+  return { start, status, open, trace, cancel, previewURL, fileURL, styledFile };
 }

@@ -16,8 +16,9 @@ import pytest
 from line2func import app as app_mod
 from line2func import pipeline, serve
 from line2func.curves import Curve, CurveSet
+from line2func import geometry as g
 from line2func.export import (DESMOS_CURVE_LIMIT, LINE_COLOR_MODES, LINE_WIDTH_MODES, PALETTE,
-                              RANDOM_BUCKETS, desmos_line, stroke_color, to_svg)
+                              RANDOM_BUCKETS, desmos_line, stroke_color, to_desmos_js, to_svg)
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -96,6 +97,26 @@ def test_javascript_parses(name):
     out = subprocess.run([NODE, "--input-type=module", "--check", "-"], input=source, capture_output=True,
                          text=True, encoding="utf-8", timeout=60)
     assert out.returncode == 0, out.stderr
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
+@pytest.mark.parametrize("curves", [
+    [Curve(g.line([10, 10], [50, 10]), stroke=0, width=3.0, color="#222222"),
+     Curve(g.line([20, 40], [40, 40]), stroke=1, tags=("fill",), tone=0.8)],
+    [],  # a drawing with no lines in it still has to write a file that runs
+])
+def test_the_desmos_javascript_runs(curves):
+    """desmos.js is a program, not a listing: it has to parse and hand Desmos its expressions."""
+    cs = CurveSet(100, 80, curves, meta={"line_width": 2.5, "ink_dark": 0.8})
+    # stand in for the calculator, and report back what setExpressions was given
+    script = ("globalThis.Calc = { setExpressions: (e) => console.log(JSON.stringify(e)) };\n"
+              + to_desmos_js(cs))
+    out = subprocess.run([NODE, "--input-type=module", "-"], input=script, capture_output=True,
+                         text=True, encoding="utf-8", timeout=60)
+    assert out.returncode == 0, out.stderr
+    given = json.loads(out.stdout)
+    assert len(given) == len(curves)
+    assert all(set(e) == {"id", "latex", "color", "lineWidth"} for e in given)
 
 
 @pytest.mark.skipif(NODE is None, reason="Node.js is not installed")

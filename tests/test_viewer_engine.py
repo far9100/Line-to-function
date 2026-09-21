@@ -57,11 +57,13 @@ def test_old_engine_files_say_the_page_is_out_of_date(run):
     assert r["failed"] == "bad_token" and r["status"]["state"] == "failed" and r["status"]["code"] == "bad_token"
 
 
-def test_the_engine_writes_the_svg_again_in_the_pages_line_style(run):
+def test_the_engine_writes_the_styled_files_again_in_the_pages_line_style(run):
     """Online there is no server to ask for ?color=&width=: the engine asks its own worker instead."""
     r = run["styled"]
     assert r["isBlob"] and r["cached"] and r["differs"]
-    assert r["asked"] == 2  # two distinct styles, and the repeat came from the cache
-    assert r["body"] == '<svg data-style="bw|0|uniform"/>'
-    assert r["otherBody"] == '<svg data-style="random|7|measured"/>'
+    assert r["asked"] == 3  # two distinct styles and the other file; the repeat came from the cache
+    assert r["body"] == '<svg data-style="out.svg|bw|0|uniform"/>'
+    assert r["otherBody"] == '<svg data-style="out.svg|random|7|measured"/>'
+    # the cache is keyed by file as well as style, so desmos.js in the SVG's style is its own answer
+    assert r["jsBody"] == '<svg data-style="desmos.js|bw|0|uniform"/>'
     assert r["unknownJob"] == ""  # a result the engine no longer has is not an error

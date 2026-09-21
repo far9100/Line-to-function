@@ -58,7 +58,8 @@ def test_the_engine_traces_in_webassembly(tmp_path):
     assert r["stages"][0] == "resize" and r["stages"][-2:] == ["export", "quality"]
     assert "error" not in r["answer"], r["answer"]
     summary = r["answer"]["summary"]
-    assert sorted(r["files"]) == ["curves.json", "desmos.txt", "equations.tex", "out.svg", "quality.json", "quality.png"]
+    assert sorted(r["files"]) == ["curves.json", "desmos.js", "desmos.txt", "equations.tex", "out.svg",
+                                  "quality.json", "quality.png"]
     # the same drawing in CPython: WebAssembly's floating point may move a curve or two, not the result
     native = json.loads(web.trace(image.read_bytes(), "drawing.webp", json.dumps(PAGE), key="n")["answer"])["summary"]
     assert summary["curves"] == pytest.approx(native["curves"], abs=max(2, 0.05 * native["curves"]))

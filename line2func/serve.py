@@ -40,6 +40,7 @@ DATA_FILES = {
     "curves.json": "application/json; charset=utf-8",
     "out.svg": "image/svg+xml",
     "desmos.txt": "text/plain; charset=utf-8",
+    "desmos.js": "text/javascript; charset=utf-8",
     "equations.tex": "text/plain; charset=utf-8",
     "overlay.png": "image/png",
     "source.png": "image/png",
@@ -153,16 +154,17 @@ def make_handler(data_dir: Path):
                         extra["Content-Disposition"] = f'attachment; filename="{name}"'
                     body = path.read_bytes()
                     curves = data_dir / "curves.json"
-                    if name == "out.svg" and ("color" in query or "width" in query) and curves.is_file():
+                    if ("color" in query or "width" in query) and curves.is_file():
                         # the page styles the lines itself; re-export so a download matches what it shows
-                        from line2func.jobs import ApiError, restyled_svg
+                        from line2func.jobs import RESTYLED, ApiError, restyled
 
-                        try:
-                            body = restyled_svg(curves.read_bytes(), query.get("color", ["measured"])[0],
+                        if name in RESTYLED:  # the others have no line style, and ignore the query
+                            try:
+                                body = restyled(curves.read_bytes(), name, query.get("color", ["measured"])[0],
                                                 query.get("seed", ["0"])[0], query.get("width", ["measured"])[0])
-                        except ApiError:
-                            self.send_status(HTTPStatus.BAD_REQUEST)
-                            return
+                            except ApiError:
+                                self.send_status(HTTPStatus.BAD_REQUEST)
+                                return
                     self.send_body(body, DATA_FILES[name], headers=extra)
                     return
             self.send_status(HTTPStatus.NOT_FOUND)

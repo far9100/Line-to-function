@@ -125,7 +125,7 @@ def test_line_art_is_traced_like_the_pipeline(client):
     snap = client.run(image_id=img["image_id"], kind="trace", method="none", scale=1.0)
     assert snap["state"] == "done", snap
     assert snap["summary"]["strokes"] == 2 and snap["summary"]["warnings"] == []
-    assert snap["files"] == ["curves.json", "desmos.txt", "equations.tex", "out.svg"]
+    assert snap["files"] == ["curves.json", "desmos.js", "desmos.txt", "equations.tex", "out.svg"]
     _, _, body = client.call("GET", f"/api/jobs/{snap['job_id']}/data/curves.json")
     doc = json.loads(body)
     expected, _ = pipeline.trace(np.repeat(_drawing()[:, :, None], 3, axis=2))
@@ -164,7 +164,7 @@ def test_downloads_zip_and_unicode_names(client):
     assert status == 200 and headers["Content-Type"] == "application/zip"
     assert quote("測試 圖-line2func.zip", safe="") in headers["Content-Disposition"]
     with zipfile.ZipFile(io.BytesIO(body)) as zf:
-        assert sorted(zf.namelist()) == ["curves.json", "desmos.txt", "equations.tex", "out.svg"]
+        assert sorted(zf.namelist()) == ["curves.json", "desmos.js", "desmos.txt", "equations.tex", "out.svg"]
     assert client.call("GET", f"/api/jobs/{jid}/data/overlay.png")[0] == 404
 
 
