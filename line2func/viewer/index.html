@@ -151,6 +151,7 @@
      is display:none !important, which beats it, so hiding the line takes the whole row out. */
   .slider-line { display: contents; }
   .sliders label.inline { justify-content: flex-end; }  /* every label ends at the track; only one has a checkbox */
+  #shade-line label { grid-column: 1 / -1; justify-content: flex-start; }  /* a checkbox alone: the whole row */
   #denoise, #faint, #lineart-detail { min-width: 0; }  /* the track stretches to its column, the reading sits beside it */
   #denoise-value, #faint-value, #lineart-detail-value { min-width: 5em; color: var(--muted); font-variant-numeric: tabular-nums; }
   #lineart-method { max-width: 100%; }
@@ -378,6 +379,10 @@
               <label class="inline" for="lineart-detail" data-i18n-title="convert.detailHint"><span data-i18n="convert.detail">Line-art detail</span></label>
               <input type="range" id="lineart-detail" min="0" max="100" step="5" data-i18n-aria-label="convert.detailLabel" data-i18n-title="convert.detailHint" aria-label="Line-art detail">
               <output id="lineart-detail-value" for="lineart-detail"></output>
+            </div>
+            <div class="slider-line" id="shade-line" hidden>
+              <label class="inline" data-i18n-title="convert.shadeHint">
+                <input type="checkbox" id="shade-on"><span data-i18n="convert.shade">Shade dark areas</span></label>
             </div>
             <div class="slider-line">
               <label class="inline" data-i18n-title="convert.denoiseHint">

@@ -62,6 +62,7 @@ from line2func import lineart
 from line2func.baseline import _remove_small, auto_threshold, local_contrast, paper_contrast_ceiling, thin
 from line2func.curves import CurveSet
 from line2func.export import DESMOS_CURVE_LIMIT
+from line2func.fill import SHADE_TAG
 from line2func.metrics import sample_points
 from line2func.render import fill_share, filled_area, render_coverage, stroke_loops
 
@@ -107,6 +108,11 @@ def assess(curves: CurveSet, ink: np.ndarray, threshold: float | None = None, to
     """Quality report (dict) and per-pixel maps for a traced drawing and its ink map."""
     ink = np.asarray(ink, dtype=np.float32)
     h, w = ink.shape
+    # the shading of a picture's tone (line2func.fill.shade_curves) is not a tracing of the ink, and is
+    # not judged as one: against the ink every hatch line would be an invented one
+    if any(SHADE_TAG in c.tags for c in curves.curves):
+        curves = CurveSet(curves.width, curves.height, [c for c in curves.curves if SHADE_TAG not in c.tags],
+                          curves.meta)
     thr = tracer_threshold(ink, threshold)
     line_w = float(curves.meta.get("line_width") or 2.0)
     mask = ink > thr  # the drawing's clearly visible lines

@@ -203,3 +203,36 @@ def test_faint_sensitivity_sets_how_light_a_traced_line_may_be():
     for bad in (-1, 101):
         with pytest.raises(ValueError):
             pipeline.trace(_rgb(img), faint_sensitivity=bad)
+
+
+def test_shading_is_paid_for_out_of_the_curve_count():
+    """--shade draws the picture's tone as hatching, and the lines are merged down to what is left."""
+    from line2func import quality
+    from line2func.fill import SHADE_TAG
+
+    rng = np.random.default_rng(2)
+    rgb = np.full((160, 200, 3), 230, np.uint8)
+    rgb[:, :100] = 40  # a dark half
+    for _ in range(12):  # and some edges to trace in both
+        x, y = rng.integers(10, 150, 2)
+        rgb[y:y + 30, x:x + 40] = rng.integers(60, 200)
+    stages = []
+    plain, _ = pipeline.trace(rgb, lineart_method="flow", curve_count=60)
+    shaded, ink = pipeline.trace(rgb, lineart_method="flow", curve_count=60, shade=True, progress=stages.append)
+    hatch = [c for c in shaded if SHADE_TAG in c.tags]
+    assert plain.meta["shade"] is False and not any(SHADE_TAG in c.tags for c in plain)
+    assert 0 < len(hatch) <= int(pipeline.SHADE_SHARE * 60)
+    assert len(shaded) == 60 == len(plain)
+    assert shaded.meta["shade"] == {"curves": len(hatch), "spacing": shaded.meta["shade"]["spacing"]}
+    assert shaded.meta["curve_count"]["target"] == 60 - len(hatch)
+    assert stages.index("shade") < stages.index("vectorize")  # in the order pipeline.STAGES lists them
+    assert len({c.stroke for c in hatch}) == len(hatch) and min(c.stroke for c in hatch) > max(
+        c.stroke for c in shaded if SHADE_TAG not in c.tags)
+    assert all(c.shape and c.shape["type"] == "line" for c in hatch)  # each a straight line, named as one
+    assert np.mean([c.ctrl[0][0] < 100 for c in hatch]) > 0.7  # mostly on the dark half
+    # the quality check judges the tracing of the ink, and hatching is not that
+    lines_only = type(shaded)(shaded.width, shaded.height, [c for c in shaded if SHADE_TAG not in c.tags], shaded.meta)
+    assert quality.assess(shaded, ink)[0] == quality.assess(lines_only, ink)[0]
+    # without a count, it has a fixed allowance of its own
+    free, _ = pipeline.trace(rgb, lineart_method="flow", shade=True)
+    assert 0 < free.meta["shade"]["curves"] <= pipeline.SHADE_CURVES

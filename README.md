@@ -110,6 +110,7 @@ python -m line2func.serve out/                                    # look at the 
 | `--threshold 0..1` | Ink threshold: lower it if faint lines are missed |
 | `--lineart METHOD` | For photos: `flow` (coherent line drawing; the best one that needs nothing downloaded), `informative` or `informative-coarse` (the pretrained network, fine or coarse lines), `canny` or `xdog` |
 | `--lineart-detail 0..100` | With `--lineart flow`: how much of the picture becomes lines (default 50; lower keeps only the strong edges) |
+| `--shade` | For photos and paintings: also draw how dark the picture is, as hatching that is closer together where it is darker (takes up to 30% of `--curves`) |
 | `--quality` | Also judge the result: `quality.json` holds the scores, `quality.png` marks missed detail |
 
 `python -m line2func.demo --help` lists every option.
@@ -224,6 +225,7 @@ python -m line2func.serve out/                                    # 在瀏覽器
 | `--threshold 0..1` | 墨跡門檻：淡的線被漏掉時調低 |
 | `--lineart 方法` | 照片用：`flow`（連貫線稿，不需下載任何東西，效果最好的一個）、`informative` 或 `informative-coarse`（預訓練網路，細線或粗線）、`canny` 或 `xdog` |
 | `--lineart-detail 0..100` | 搭配 `--lineart flow`：畫面裡有多少東西會變成線條（預設 50；調低只留下明顯的邊緣） |
+| `--shade` | 給照片與繪畫用：把畫面的深淺也畫出來，用排線表示，越深排得越密（最多用掉 `--curves` 的 30%） |
 | `--quality` | 另外評估結果：`quality.json` 記錄分數，`quality.png` 會標出遺漏的細節 |
 
 `python -m line2func.demo --help` 會列出所有選項。

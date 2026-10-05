@@ -90,7 +90,7 @@ LANGS = ("en", "zh-TW")
 IMMUTABLE = "private, max-age=31536000, immutable"  # id-addressed files never change
 OPTION_KEYS = {"method", "lineart_detail", "scale", "tolerance", "threshold", "refine", "named",
                "shape_tolerance", "upscale", "faint", "quality", "form", "denoise", "denoise_on",
-               "faint_sensitivity", "line_color", "color_seed", "line_width"}
+               "faint_sensitivity", "line_color", "color_seed", "line_width", "shade"}
 DOWNLOAD_NAMES = {
     "curves.json": "{stem}.json",
     "out.svg": "{stem}.svg",

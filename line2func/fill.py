@@ -167,3 +167,88 @@ def add_fill(curves: CurveSet, spacing: float = FILL_SPACING, tolerance: float =
                 stroke += 1
     curves.curves.extend(added)
     return len(added)
+
+
+# ---------- the tone of a photo ----------
+SHADE_TAG = "shade"
+SHADE_OCTAVES = 3  # the hatching comes at this many spacings, each twice the one before
+SHADE_SPACINGS = (2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 16.0)  # px: the closest spacing is picked from these
+SHADE_WIDTH = 1.0  # px: the width a hatch line is given, thinner than the lines it shades between
+SHADE_DARK_MIN = 0.5  # a picture with nothing darker than this is not shaded as if its darkest were black
+
+
+def shade_runs(tone: np.ndarray, closest: float, dark: float) -> tuple[np.ndarray, np.ndarray]:
+    """Hatch segments for a tone map, ``closest`` px apart where it is as dark as ``dark``.
+
+    The spacing a tone asks for is ``closest * dark / tone`` - half as dark, twice as far apart, the
+    arithmetic of :func:`spacing_for` - and parallel straight lines cannot change their spacing
+    gradually, so it is rounded to an octave: 45 degree diagonals ``closest`` apart, of which every
+    other one carries on into areas half as dark, and every fourth into areas a quarter as dark
+    (:data:`SHADE_OCTAVES`). Anything lighter than that stays paper. Because the wider sets are
+    subsets of the closer ones, a line that crosses from a shadow into a mid-tone simply continues,
+    and one segment does for both.
+
+    The tone is smoothed over ``closest`` px first: finer than the hatching it is drawn with, a
+    detail could only come out as a scatter of dashes. Returns the endpoints, ``(n, 2, 2)`` as
+    ``[[x0, y0], [x1, y1]]``, and the smoothed tone at the middle of each segment.
+    """
+    t = ndimage.gaussian_filter(tone.astype(np.float32), closest)
+    with np.errstate(divide="ignore"):
+        need = np.rint(np.log2(max(dark, 1e-6) / np.maximum(t, 1e-6)))
+    need = np.maximum(need, 0.0)  # darker than ``dark``: as dense as it gets
+    h, w = t.shape
+    step = closest * math.sqrt(2.0)  # x + y steps by this between hatch lines ``closest`` apart
+    index = np.arange(int((h + w) / step) + 1)
+    octave = np.zeros(len(index), dtype=np.intp)
+    for k in range(1, SHADE_OCTAVES):
+        octave[index % (1 << k) == 0] = k
+    line_at = np.full(h + w, -1, dtype=np.intp)  # which hatch line, if any, a diagonal x + y is
+    line_at[np.minimum(np.rint(index * step).astype(np.intp), h + w - 1)] = index
+    ys, xs = np.mgrid[0:h, 0:w]
+    line = line_at[xs + ys]
+    on = (line >= 0) & (need < SHADE_OCTAVES) & (need <= octave[np.maximum(line, 0)])
+    yy, xx = np.nonzero(on)
+    if not len(xx):
+        return np.zeros((0, 2, 2)), np.zeros(0)
+    dd = xx + yy
+    order = np.lexsort((xx, dd))
+    xx, yy, dd = xx[order], yy[order], dd[order]
+    # a run is a stretch of neighbouring x on one diagonal
+    cut = np.nonzero((np.diff(dd) != 0) | (np.diff(xx) != 1))[0] + 1
+    a, b = np.r_[0, cut], np.r_[cut, len(xx)] - 1
+    keep = (xx[b] - xx[a]) * math.sqrt(2.0) >= max(6.0, 2.0 * closest)  # shorter reads as a speck
+    a, b = a[keep], b[keep]
+    ends = np.stack([np.stack([xx[a], yy[a]], axis=1), np.stack([xx[b], yy[b]], axis=1)], axis=1).astype(np.float64)
+    middle = np.rint(ends.mean(axis=1)).astype(np.intp)
+    return ends, t[middle[:, 1], middle[:, 0]]
+
+
+def photo_tone(rgb: np.ndarray) -> tuple[np.ndarray, float]:
+    """How dark a picture is at each pixel (0 white, 1 black), and the tone its darkest areas have."""
+    tone = 1.0 - (rgb[..., :3].astype(np.float32) / 255.0) @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    return tone, max(float(np.percentile(tone, 99.0)), SHADE_DARK_MIN)
+
+
+def shade_curves(rgb: np.ndarray, budget: int, first_stroke: int = 0) -> tuple[list[Curve], float]:
+    """The tone of ``rgb`` as hatching of at most ``budget`` curves; returns them and the closest spacing.
+
+    The spacing is the tightest of :data:`SHADE_SPACINGS` that fits the budget, so a picture with
+    large dark areas is hatched more openly rather than running out of curves halfway down. Each
+    curve is one straight segment tagged :data:`SHADE_TAG`, carrying the tone it stands for and that
+    tone as its color, so the SVG and ``desmos.js`` draw it in that gray and it reads lighter than the
+    lines it shades between.
+    """
+    from line2func.export import tone_color
+
+    tone, dark = photo_tone(rgb)
+    for closest in SHADE_SPACINGS:
+        ends, tones = shade_runs(tone, closest, dark)
+        if len(ends) <= budget:
+            break
+    else:
+        keep = np.argsort(-np.hypot(*(ends[:, 1] - ends[:, 0]).T))[:budget]  # the longest ones
+        ends, tones = ends[np.sort(keep)], tones[np.sort(keep)]
+    curves = [Curve(_straight(p0 + 0.5, p1 + 0.5), stroke=first_stroke + i, confidence=1.0, tags=(SHADE_TAG,),
+                    width=SHADE_WIDTH, color=tone_color(float(tn)), tone=round(float(tn), 3))
+              for i, ((p0, p1), tn) in enumerate(zip(ends, tones))]
+    return curves, closest

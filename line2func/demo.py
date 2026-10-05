@@ -64,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-outline", action="store_true",
                    help="keep solid areas (heavy eyelashes) and thick or wedge-shaped strokes as centerlines "
                         "instead of filled outlines")
+    p.add_argument("--shade", action="store_true",
+                   help="also draw how dark the picture is, as hatching that is closer together where it is "
+                        "darker (for photos and paintings; it takes up to 40%% of --curves)")
     p.add_argument("--no-fill", action="store_true",
                    help="leave filled areas hollow: only their outline, with no rings or hatching inside")
     p.add_argument("--curves", type=int, default=None, metavar="N",
@@ -135,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         residual=not args.no_residual,
         outline=not args.no_outline,
         fill=not args.no_fill,
+        shade=args.shade,
         optimize=args.optimize,
         curve_count=curve_count,
         denoise=args.denoise,
@@ -172,6 +176,9 @@ def main(argv: list[str] | None = None) -> int:
         extras.append(f"faint-line sensitivity {args.faint_sensitivity:g}")
     if args.lineart != "none" and args.lineart_detail != lineart.DETAIL:
         extras.append(f"line-art detail {args.lineart_detail:g}")
+    if curves.meta.get("shade"):
+        extras.append(f"{curves.meta['shade']['curves']} curves shading the tone, "
+                      f"{curves.meta['shade']['spacing']:g} px apart at the darkest")
     n_residual = sum("residual" in c.tags for c in curves)
     if n_residual:
         extras.append(f"{n_residual} curves from the second pass")

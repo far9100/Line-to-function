@@ -166,6 +166,23 @@ def test_the_previewed_line_art_is_the_one_that_gets_traced():
     assert "lineart" in stages  # a different setting is a different picture
 
 
+def test_the_page_can_ask_for_a_photo_to_be_shaded():
+    data = _photo()
+    asked = {**PAGE, "method": "flow", "scale": 1.0, "quality": False, "curves": 80}
+    stages = []
+    plain = web.trace(data, "p.png", json.dumps(asked), key="p")
+    shaded = web.trace(data, "p.png", json.dumps({**asked, "shade": True}), stages.append, key="p")
+    assert "shade" in stages
+
+    def tagged(answer) -> int:
+        return sum("shade" in c["tags"] for c in json.loads(bytes(answer["files"]["curves.json"]))["curves"])
+
+    assert tagged(plain) == 0 and 0 < tagged(shaded) <= 0.3 * 80
+    assert json.loads(shaded["answer"])["summary"]["curves"] <= 80  # paid for out of the same count
+    bad = json.loads(web.trace(data, "p.png", json.dumps({**asked, "shade": "yes"}), key="p")["answer"])
+    assert bad["error"]["code"] == "bad_params" and bad["error"]["field"] == "shade"
+
+
 def test_the_limits(monkeypatch, local_app):
     assert web.MAX_BYTES <= app_mod.MAX_UPLOAD
     for name in ("max_pixels", "store_side", "auto_side", "max_work_pixels", "quality_max_pixels"):

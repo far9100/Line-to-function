@@ -121,7 +121,9 @@ The page opens in a new tab of your default browser. Then:
 The web page takes photos as well as drawings. A photo is recognized as it is
 opened and the lines in it are found first (`flow`, section 6); the page shows
 you that line art, with **Line-art detail** to adjust it and a pair of chips to
-compare it with the original, and traces it only when you convert. The
+compare it with the original, and traces it only when you convert. **Shade dark
+areas**, if you tick it, also draws how dark the picture is, as hatching
+(section 8). The
 pretrained network and the other options are on the command line (sections 6
 and 7).
 
@@ -539,6 +541,7 @@ python -m line2func.demo IMAGE [options]
 | `--out DIR` | `out` | Output folder |
 | `--lineart {none,canny,xdog,flow,informative,informative-coarse}` | `none` | Line extraction (section 6) |
 | `--lineart-detail 0..100` | `50` | With `--lineart flow`: how much of the picture becomes lines (section 8) |
+| `--shade` | off | For photos and paintings: also draw how dark the picture is, as hatching (section 8) |
 | `--curves N` | `5000` | Make N curves: trace finely, then merge the neighbouring pieces whose merge changes the drawing least (section 8). A drawing that gives fewer keeps all of them |
 | `--tolerance PX` | off | Trace to this max curve-fitting error instead of a number of curves. Larger gives fewer, smoother curves |
 | `--threshold 0..1` | automatic | Ink threshold. Automatic: Otsu's, but for line art at most 0.25 so light strokes stay whole (kept at Otsu's when the paper itself would be traced). Lower it if faint lines are missed, raise it if paper texture is traced |
@@ -761,6 +764,46 @@ rather than strokes. This picture reaches the 5,000-curve limit at 50 already.
 
 **`eps` is the bar on a clean picture; a noisy one raises it by itself.** See
 *What `flow` reads* in section 6.
+
+#### How dark a photo is: `--shade`
+
+Line art says where a picture's edges are. A photo or a painting is mostly
+*tone* - a night sky, a black coat, dark hair - and none of that is an edge.
+`--shade` draws it as well: straight 45 degree hatching, closer together the
+darker the picture is under it. On the web page it is the **Shade dark areas**
+box, shown for a photo and left for you to tick.
+
+- **Spacing is the tone.** A tone asks for a spacing of `closest x dark / tone`
+  - half as dark, twice as far apart - where `dark` is the tone of the
+  picture's darkest 1% (never taken as lighter than 0.5, so a pale picture is
+  not hatched as if its darkest gray were black). Parallel straight lines cannot
+  change their spacing gradually, so it is rounded to one of three: `closest`,
+  twice that and four times that. Anything lighter stays paper. The wider sets
+  are subsets of the closer ones, so a line that runs from a shadow into a
+  mid-tone simply carries on.
+- **It is paid for out of `--curves`.** The hatching may take up to 30% of the
+  count, and `closest` is the tightest of 2.5, 3, 4, 5, 6, 8, 10, 12 and 16 px
+  that fits; the lines are merged down to what is left. Without `--curves` it
+  has 2,000 curves of its own.
+- **Each hatch line is one straight segment**, tagged `shade`, 1 px wide, and
+  carrying the tone it stands for as its colour; the SVG and `desmos.js` draw
+  it in that gray, so it reads lighter than the outlines. The page draws in the
+  line colour you chose, and `desmos.txt` pasted into Desmos is one colour, so
+  there the tone is in the spacing alone. As a function each one is
+  `y = x + c` over a range.
+- **The quality check leaves it out.** It judges how the ink was traced, and
+  hatching traces no ink.
+
+On the 2.07 MP illustration of the table above, with `--curves 5000`:
+
+| share of the count | hatching | closest spacing | lines | lines kept | largest merge error |
+|---|---|---|---|---|---|
+| none | - | - | 5,000 | 99.3% | - |
+| **30%** | **1,445 curves** | **6 px** | **3,555** | **97.5%** | **2.9 px** |
+| 40% | 1,904 curves | 5 px | 3,096 | 91.2% | 6.2 px |
+
+That is why the share is 30%: at 40% the outlines are merged far enough to show
+it. A picture with large dark areas costs its outlines something either way.
 
 #### Shadows, heavy eyelashes and other filled areas
 
@@ -1275,7 +1318,7 @@ python -m line2func          # 或直接打：line2func（執行過 pip install 
 3. 結果會在同一頁的檢視器中開啟（見第 4 節）。可以下載 SVG、JSON、Desmos、LaTeX，或把全部打包成 ZIP，也可以〔全部複製到 Desmos〕。
 4. 上方的〔清除圖片〕會清掉目前的圖，接著就能拖入下一張；隨時直接拖入新圖片也可以。
 
-網頁版線稿和照片都收。照片在開啟時就會被認出來，並先找出裡面的線條（`flow`，見第 6 節）；頁面會把那份線稿顯示出來，可以用〔線稿細節〕調整，也可以用兩個按鈕和原圖來回對照，按下確認才會描線。預訓練網路與其他選項仍在指令列（見第 6、7 節）。
+網頁版線稿和照片都收。照片在開啟時就會被認出來，並先找出裡面的線條（`flow`，見第 6 節）；頁面會把那份線稿顯示出來，可以用〔線稿細節〕調整，也可以用兩個按鈕和原圖來回對照，按下確認才會描線。勾選〔深色處畫上明暗〕會把畫面的深淺也用排線畫出來（見第 8 節）。預訓練網路與其他選項仍在指令列（見第 6、7 節）。
 
 右上角的〔中文｜EN〕可以切換語言，選擇會被記住。在終端機按 Ctrl+C，或按頁面上的〔結束〕，就會結束程式。
 
@@ -1548,6 +1591,7 @@ python -m line2func.demo IMAGE [options]
 | `--out DIR` | `out` | 輸出資料夾 |
 | `--lineart {none,canny,xdog,flow,informative,informative-coarse}` | `none` | 抽線稿方法（見第 6 節） |
 | `--lineart-detail 0..100` | `50` | 搭配 `--lineart flow`：畫面裡有多少東西會變成線條（見第 8 節） |
+| `--shade` | 關閉 | 給照片與繪畫用：把畫面的深淺也用排線畫出來（見第 8 節） |
 | `--curves N` | `5000` | 產生 N 條曲線：先細緻地描線，再合併「合併後對圖影響最小」的相鄰片段（見第 8 節）。曲線本來就比 N 少的圖會全部保留 |
 | `--tolerance PX` | 關閉 | 改用曲線擬合的最大誤差來描線，而不是指定曲線數量。數值越大，曲線越少、越平滑 |
 | `--threshold 0..1` | 自動 | 墨跡門檻。自動：採用 Otsu 門檻，但線稿最高只到 0.25，讓淺色的筆畫保持完整（如果連紙面都會被描出來，就維持 Otsu 門檻）。淡的線被漏掉時調低，紙張紋理被描出來時調高 |
@@ -1670,6 +1714,25 @@ python -m line2func.demo IMAGE [options]
 **曲線預算是花在高端的。** 細節 100 的線比調好的設定多四分之一，也稍微更破碎（每千個骨架像素 22.8 片，對 19.9 片），因為進來的是紋理而不是筆畫。這張圖在 50 就已經撞到 5,000 條上限。
 
 **`eps` 是乾淨圖片上的門檻；有雜訊的圖片會自己把它抬高。** 見第 6 節的〈`flow` 讀的是什麼〉。
+
+#### 照片有多深：`--shade`
+
+線稿說的是一張圖的邊在哪裡。照片或繪畫大部分是**深淺**——夜空、黑外套、深色頭髮——而那些都不是邊。`--shade` 把它也畫出來：45 度的直線排線，底下的畫面越深就排得越密。在網頁上是〔深色處畫上明暗〕這個勾選框，開啟的是照片時才出現，要不要勾由你決定（預設不勾）。
+
+- **間距就是深淺。** 一個色調要的間距是 `最密間距 x dark / 色調`——深度減半，間距加倍——其中 `dark` 是畫面最深的 1% 的色調（最低當作 0.5，所以淡色的圖不會被當成「最深的灰就是黑」來畫）。平行直線無法逐漸改變間距，所以取整到三種：最密、兩倍、四倍。再淡的就留白。較疏的那組線是較密那組的子集，所以從陰影畫進中間調的線會直接延續下去。
+- **它算在 `--curves` 裡。** 排線最多用掉總數的 30%，最密間距從 2.5、3、4、5、6、8、10、12、16 px 裡挑放得下的最密者；輪廓線則合併到剩下的數量。沒有指定 `--curves` 時，排線自己有 2,000 條的額度。
+- **每條排線是一段直線**，標上 `shade`、寬 1 px，並把它代表的色調當成自己的顏色；SVG 與 `desmos.js` 會用那個灰階來畫，所以看起來比輪廓淡。頁面用的是你選的線條顏色，而 `desmos.txt` 貼進 Desmos 時全部是同一個顏色，這兩處的深淺只靠間距表現。寫成函數時每一條都是某個範圍內的 `y = x + c`。
+- **品質檢查不算它。** 品質檢查評的是墨跡描得如何，而排線沒有描任何墨跡。
+
+在上表那張 2.07 MP 的插畫上，`--curves 5000`：
+
+| 佔總數的比例 | 排線 | 最密間距 | 輪廓線 | 線條保留 | 最大合併誤差 |
+|---|---|---|---|---|---|
+| 不畫 | - | - | 5,000 | 99.3% | - |
+| **30%** | **1,445 條** | **6 px** | **3,555** | **97.5%** | **2.9 px** |
+| 40% | 1,904 條 | 5 px | 3,096 | 91.2% | 6.2 px |
+
+所以比例定在 30%：到 40% 時輪廓被合併到看得出來。深色面積大的圖，不管怎麼分，輪廓都要付出一些代價。
 
 #### 陰影、粗重的睫毛與其他填滿的區域
 

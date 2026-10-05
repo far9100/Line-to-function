@@ -52,13 +52,15 @@ const START = {
   lineartDetail: 50,             // how much of a photo becomes lines (= line2func.lineart.DETAIL). Unlike the
                                  // two filters above, this one has no "keep everything" end to start at, so it
                                  // starts where the command line is.
+  shade: false,                  // a photo's tone as hatching is the user's to ask for, as --shade is on the
+                                 // command line: it is paid for out of the outlines' curves
 };
 // the stages in the order they run (the online engine's start, pipeline.trace, app.run_job) -> the step shown,
 // and typical cost
 const STEP_OF = { load_engine: "prepare", resize: "prepare", load_model: "prepare", lineart: "prepare", upscale: "prepare",
-                  vectorize: "trace", refine: "trace", measure: "finish", outline: "finish", residual: "finish",
+                  shade: "prepare", vectorize: "trace", refine: "trace", measure: "finish", outline: "finish", residual: "finish",
                   fill: "finish", count: "finish", optimize: "finish", shapes: "finish", export: "finish", quality: "quality" };
-const WEIGHTS = { load_engine: 12, resize: 1, load_model: 6, lineart: 6, upscale: 3, vectorize: 45, refine: 20, measure: 8,
+const WEIGHTS = { load_engine: 12, resize: 1, load_model: 6, lineart: 6, upscale: 3, shade: 2, vectorize: 45, refine: 20, measure: 8,
                   outline: 5, residual: 8, fill: 3, count: 10, optimize: 10, shapes: 6, export: 3, quality: 14 };
 const NEVER = ["optimize"]; // stages the page never runs; load_model runs only for a model line-art method
 
@@ -66,7 +68,7 @@ const S = {
   mode: "boot", info: null, gone: false, engine: null,
   view: "empty", // empty (the drop zone), preview (an image to convert) or result
   image: null, form: START.form, denoise: START.denoise, denoiseOn: START.denoiseOn, faint: START.faint,
-  method: START.method, lineartDetail: START.lineartDetail,
+  method: START.method, lineartDetail: START.lineartDetail, shade: START.shade,
   preview: null, // the line-art preview: {jobId, snap, url, error}
   previewTicket: 0, // an answer for a superseded ticket is dropped, so dragging the slider cannot race
   jobs: new Map(),
@@ -248,6 +250,7 @@ function useOptions(saved) {
   if (typeof saved.lineart_detail === "number" && saved.lineart_detail >= 0 && saved.lineart_detail <= 100) {
     S.lineartDetail = saved.lineart_detail;
   }
+  if (typeof saved.shade === "boolean") S.shade = saved.shade;
   if (LINE_COLORS.includes(saved.line_color)) S.lineColor = saved.line_color;
   if (LINE_WIDTHS.includes(saved.line_width)) S.lineWidth = saved.line_width;
   if (Number.isInteger(saved.color_seed) && saved.color_seed >= 0 && saved.color_seed <= 0xffffffff) {
@@ -304,6 +307,7 @@ function setupApp() {
   $("#lineart-detail").addEventListener("input", (e) => { S.lineartDetail = Number(e.target.value); renderDetail(); });
   $("#lineart-detail").addEventListener("change", () => { saveOptions(); startLineart(); });
   $("#lineart-again").addEventListener("click", () => startLineart());
+  $("#shade-on").addEventListener("change", (e) => { S.shade = e.target.checked; saveOptions(); });
   for (const radio of document.querySelectorAll("input[name=preview-layer]")) {
     radio.addEventListener("change", () => { if (radio.checked) showLayer(radio.value); });
   }
@@ -314,7 +318,7 @@ function setupApp() {
 
 function saveOptions() {
   const options = { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn, faint_sensitivity: S.faint,
-                    method: S.method, lineart_detail: S.lineartDetail,
+                    method: S.method, lineart_detail: S.lineartDetail, shade: S.shade,
                     line_color: S.lineColor, color_seed: S.colorSeed, line_width: S.lineWidth };
   if (S.mode === "app") api("POST", "api/settings", { options }).catch(() => {});
   else try { localStorage.setItem("line2func.options", JSON.stringify(options)); } catch { /* storage may be blocked */ }
@@ -556,6 +560,8 @@ function renderLineart() {
   const now = lineartState(on, S.preview);
   document.documentElement.dataset.lineart = now.state;
   $("#detail-line").hidden = !on;
+  $("#shade-line").hidden = !on; // tone is what a photo has; a drawing's filled areas are already drawn
+  $("#shade-on").checked = S.shade;
   $("#lineart-compare").hidden = !now.shown;
   $("#lineart-again").hidden = !on;
   $("#convert").disabled = now.convertDisabled;
@@ -662,7 +668,8 @@ function startTrace() {
   // as the command line makes it: up to desmos_limit curves, with the quality check (the server skips that,
   // with a warning, for images that are too large)
   const params = { image_id: img.image_id, kind: "trace", method: resolvedMethod(),
-                   lineart_detail: S.lineartDetail, scale: "auto", form: S.form,
+                   lineart_detail: S.lineartDetail, shade: S.shade && resolvedMethod() !== "none",
+                   scale: "auto", form: S.form,
                    curves: S.info.desmos_limit, quality: true, denoise: S.denoiseOn ? S.denoise : 0,
                    faint_sensitivity: S.faint };
   const checked = img.width * img.height * img.auto_scale ** 2 <= S.info.limits.quality_max_pixels;
@@ -738,7 +745,8 @@ function renderRunning() {
   const waiting = !snap || snap.state === "queued"; // online, nothing waits behind another job
   $("#run-stage").textContent = waiting ? (S.mode === "web" ? "" : t("run.queued")) : stage ? t("stage." + stage, {}, stage) : "";
   // progress: the share of the typical work before the current stage
-  const skipped = [...NEVER, ...(MODEL_METHODS.includes(trace.params.method) ? [] : ["load_model"])];
+  const skipped = [...NEVER, ...(MODEL_METHODS.includes(trace.params.method) ? [] : ["load_model"]),
+                   ...(trace.params.shade ? [] : ["shade"])];
   const order = Object.keys(WEIGHTS).filter((s) => !skipped.includes(s) && (s !== "quality" || trace.checked)
                                                 && (s !== "load_engine" || trace.engine));
   const total = order.reduce((sum, s) => sum + WEIGHTS[s], 0);

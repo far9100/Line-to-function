@@ -72,7 +72,7 @@ def test_the_page_starts_where_it_says_it_does():
     start = re.search(r"const START = \{(.*?)\n\};", source, re.S).group(1)
     for field, value in (("form", '"parametric"'), ("denoiseOn", "false"), ("denoise", "0"),
                          ("faint", "100"), ("lineColor", '"bw"'), ("lineWidth", '"measured"'),
-                         ("method", '"auto"'), ("lineartDetail", "50")):
+                         ("method", '"auto"'), ("lineartDetail", "50"), ("shade", "false")):
         assert re.search(rf"\b{field}: {re.escape(value)},", start), field
     assert pipeline.DENOISE == 50 and pipeline.FAINT_SENSITIVITY == 50
     # the line-art detail is the one slider with no "keep everything" end, so it starts where the

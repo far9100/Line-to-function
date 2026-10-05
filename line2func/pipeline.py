@@ -79,7 +79,9 @@ FAINT_LOOSE = {"faint_contrast": 0.12, "faint_band": 1.0, "very_faint_length": 6
                "very_faint_junction_gap": 5.0}
 FILL_SPACING = 1.5  # px: distance between the rings inside filled areas (fill=True)
 FILL_TOLERANCE = 0.5  # px: fitting tolerance of those rings
-STAGES = ("lineart", "upscale", "vectorize", "refine", "measure", "outline", "residual", "fill", "count",
+SHADE_SHARE = 0.3  # of curve_count: the most of it that the shading of a picture's tone may take (shade=True)
+SHADE_CURVES = 2000  # the most shading curves when no curve_count is asked for
+STAGES = ("lineart", "upscale", "shade", "vectorize", "refine", "measure", "outline", "residual", "fill", "count",
           "optimize", "shapes")
 
 
@@ -169,6 +171,7 @@ def trace(
     faint_sensitivity: float = FAINT_SENSITIVITY,
     lineart_detail: float = lineart.DETAIL,
     baseline_options: dict | None = None,
+    shade: bool = False,
 ) -> tuple[CurveSet, np.ndarray]:
     """Trace an RGB image; returns ``(curves in original pixels, ink map at original size)``.
 
@@ -188,6 +191,13 @@ def trace(
     ``lineart_detail`` (0..100) is how much of a photo becomes lines
     (:func:`line2func.lineart.detail_params`), and only the ``flow`` method
     reads it; the other methods have nothing it would mean.
+    ``shade`` draws how dark the picture is as well as where its edges are: 45
+    degree hatching, closer together the darker the picture is under it
+    (:func:`line2func.fill.shade_curves`). It is for a photo or a painting, where
+    most of what there is to see is tone and none of it is line. The hatching is
+    paid for out of ``curve_count`` - at most :data:`SHADE_SHARE` of it, and the
+    lines are merged down to what is left - or is at most :data:`SHADE_CURVES`
+    curves when no count is asked for; ``meta["shade"]`` reports what it took.
     ``baseline_options`` overrides :class:`line2func.baseline.BaselineParams`
     fields in the first pass, for measuring one tracer setting against another
     (``python -m line2func.eval --realset ... --set name=value``); the defaults
@@ -227,6 +237,17 @@ def trace(
                     else lineart.extract(big, lineart_method, lineart_detail))
     else:
         work_rgb, work_ink = rgb, ink
+
+    shading: list = []
+    if shade:
+        # found first, because the lines are merged down to what the shading leaves of the count
+        from line2func.fill import shade_curves
+
+        step("shade")
+        room = SHADE_CURVES if curve_count is None else int(SHADE_SHARE * int(curve_count))
+        shading, shade_spacing = shade_curves(rgb, room)
+        if curve_count is not None:
+            curve_count = max(1, int(curve_count) - len(shading))
 
     # the ink threshold to trace at: the given one, or for line art Otsu's lowered to keep faint strokes whole;
     # line widths and faint-stroke detection are still judged at Otsu's (reference_threshold)
@@ -311,11 +332,17 @@ def trace(
         attributes.measure(curves, work_ink, work_rgb)  # widths and colors where the curves are now
     if factor > 1:
         curves = curves.scaled(1.0 / factor, w, h)
+    if shading:
+        first = max((c.stroke for c in curves.curves), default=-1) + 1
+        for i, c in enumerate(shading):
+            c.stroke = first + i
+        curves.curves.extend(shading)
     step("shapes")
     shapes.recognize(curves, shape_tolerance)
     curves.meta.update(upscale=factor, faint_lines=faint_lines, refined=refine, residual=residual, outline=outline,
                        fill=fill, optimized=optimize, denoise=denoise,
-                       faint_sensitivity=faint_sensitivity)
+                       faint_sensitivity=faint_sensitivity,
+                       shade={"curves": len(shading), "spacing": shade_spacing} if shade else False)
     if thr is not None:
         curves.meta["ink_threshold"] = round(float(thr), 3)  # traced at (meta "threshold" is a given one)
     return curves, ink

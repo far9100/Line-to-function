@@ -1,12 +1,16 @@
 """Solid areas (heavy eyelashes) become filled outlines, and rings inside filled areas make them look filled in
 Desmos, where nothing can be filled."""
 
+import math
+
 import numpy as np
+import pytest
 
 from line2func import attributes, geometry as g, pipeline
 from line2func.baseline import BaselineParams, vectorize
 from line2func.curves import Curve, CurveSet
 from line2func.export import to_desmos, to_svg
+from line2func import fill
 from line2func.fill import add_fill, spacing_for
 from line2func.fit import fit_polyline
 from line2func.render import fill_loops, filled_area, rasterize
@@ -176,3 +180,55 @@ def test_pipeline_fills_a_heavy_lash_for_desmos():
     assert any("fill_outline" in c.tags for c in hollow) and not any("fill" in c.tags for c in hollow)
     lines, _ = pipeline.trace(rgb, upscale=1, threshold=0.3, outline=False, fill=False)
     assert not any("fill_outline" in c.tags or "outline" in c.tags for c in lines)
+
+
+# ---------- the tone of a photo as hatching ----------
+def _two_tones() -> np.ndarray:
+    """A picture in three bands: black, mid-gray and white."""
+    rgb = np.full((120, 240, 3), 255, np.uint8)
+    rgb[:, :80], rgb[:, 80:160] = 10, 150
+    return rgb
+
+
+def _hatched(curves, x0: int, x1: int) -> float:
+    """Hatch length per pixel of the band from ``x0`` to ``x1``, away from its edges."""
+    total = 0.0
+    for c in curves:
+        a, b = c.ctrl[0], c.ctrl[3]
+        lo, hi = max(min(a[0], b[0]), x0 + 10), min(max(a[0], b[0]), x1 - 10)
+        total += max(0.0, hi - lo) * math.sqrt(2.0)  # 45 degrees: sqrt(2) of length per unit of x
+    return total / (120 * (x1 - x0 - 20))
+
+
+def test_a_darker_area_is_hatched_closer_and_paper_not_at_all():
+    curves, spacing = fill.shade_curves(_two_tones(), budget=10_000)
+    assert spacing == fill.SHADE_SPACINGS[0]
+    black, gray, white = (_hatched(curves, x0, x0 + 80) for x0 in (0, 80, 160))
+    assert white == 0.0 and gray > 0.0
+    assert black == pytest.approx(2.0 * gray, rel=0.15)  # 245 against 105 of darkness: one octave apart
+    assert black == pytest.approx(1.0 / spacing, rel=0.15)  # lines `spacing` apart ink 1 / spacing of the area
+    for c in curves:
+        assert c.tags == (fill.SHADE_TAG,) and c.width == fill.SHADE_WIDTH
+        d = c.ctrl[3] - c.ctrl[0]
+        assert abs(d[0] + d[1]) < 1e-9  # every one a straight 45 degree line: y = -x + c in image pixels
+    dark = [c.tone for c in curves if max(c.ctrl[0][0], c.ctrl[3][0]) < 70]
+    assert dark and min(dark) > 0.9  # and each carries the tone it stands for
+
+
+def test_the_hatching_opens_up_to_fit_the_budget():
+    rgb = _two_tones()
+    counts = []
+    for budget in (10_000, 60, 25):
+        curves, spacing = fill.shade_curves(rgb, budget)
+        assert len(curves) <= budget
+        counts.append((len(curves), spacing))
+    assert counts[0][1] < counts[1][1] <= counts[2][1], counts  # fewer curves allowed: wider apart
+    assert len(fill.shade_curves(rgb, budget=3)[0]) == 3  # past the widest spacing the longest are kept
+
+
+def test_a_pale_picture_is_not_shaded_as_if_its_darkest_were_black():
+    pale, dark = np.full((80, 80, 3), 235, np.uint8), np.full((80, 80, 3), 235, np.uint8)
+    pale[20:60, 20:60], dark[20:60, 20:60] = 215, 20
+    faint, heavy = (len(fill.shade_curves(rgb, budget=1000)[0]) for rgb in (pale, dark))
+    assert 0 < faint <= heavy / 3  # its square is a light gray, and is hatched as one
+    assert fill.shade_curves(np.full((80, 80, 3), 235, np.uint8), budget=1000)[0] == []

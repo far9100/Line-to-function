@@ -98,9 +98,9 @@ def test_trace_options_defaults_and_checks():
     options = jobs.trace_options({}, (160, 120), 1.0, 4_000_000)
     assert options == {"tolerance": 1.0, "curves": None, "threshold": None, "refine": True, "form": "parametric",
                        "shape_tolerance": 0.5, "upscale": "auto", "faint": True, "denoise": pipeline.DENOISE,
-                       "faint_sensitivity": pipeline.FAINT_SENSITIVITY, "quality": False}
+                       "faint_sensitivity": pipeline.FAINT_SENSITIVITY, "quality": False, "shade": False}
     assert list(options) == ["tolerance", "curves", "threshold", "refine", "form", "shape_tolerance", "upscale",
-                             "faint", "denoise", "faint_sensitivity", "quality"]
+                             "faint", "denoise", "faint_sensitivity", "quality", "shade"]
     assert jobs.trace_options({"named": True}, (160, 120), 1.0, 4_000_000)["form"] == "named"
     assert jobs.trace_options({"curves": 5000, "form": "function"}, (160, 120), 1.0, 4_000_000)["curves"] == 5000
     for bad, field in (({"curves": 2.5}, "curves"), ({"form": "implicit"}, "form"), ({"denoise": 101}, "denoise"),
