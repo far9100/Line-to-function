@@ -102,6 +102,54 @@ def test_the_lines_come_out_wide_enough_that_the_tracer_does_not_upscale():
         assert baseline.estimate_line_width(ink, baseline.auto_threshold(ink)) >= AUTO_UPSCALE_BELOW
 
 
+def test_a_boundary_between_two_colours_of_one_brightness_is_a_line():
+    """Gray cannot see it at all, and a painted picture is full of them: hair against sky, cloth on cloth."""
+    rgb = np.empty((96, 96, 3), np.uint8)
+    rgb[:, :48], rgb[:, 48:] = (200, 80, 80), (60, 128, 200)  # both 116 in luminance
+    assert lineart.flow(lineart.to_gray(rgb)).max() == 0.0
+    ink = lineart.flow(rgb)
+    drawn = ink[10:-10] >= 0.5
+    assert drawn.any(axis=1).all()  # a line the whole way down
+    assert drawn[:, 40:56].sum() == drawn.sum()  # and nothing away from the boundary
+    assert np.array_equal(lineart.extract(rgb, "flow"), ink)  # extract reads the colours too
+
+
+def test_a_gray_picture_reads_the_same_with_one_channel_or_three():
+    gray = _photoish(_strokes(size=96, count=3), noise=0.02)
+    as_rgb = np.repeat((255 * gray).astype(np.uint8)[:, :, None], 3, axis=2)
+    assert np.array_equal(lineart.flow(as_rgb), lineart.flow(as_rgb[..., 0].astype(np.float32) / 255.0))
+    channels = [as_rgb[..., i].astype(np.float32) / 255.0 for i in range(3)]
+    tx, ty, axis = lineart.flow_field(channels)
+    one = lineart.flow_dog(channels[0], *lineart.edge_tangent_flow(channels[0]))
+    assert np.abs(lineart.flow_dog(channels, tx, ty, axis=axis) - one).max() < 1e-3
+
+
+def test_the_noise_in_a_picture_is_read_off_the_picture():
+    assert lineart.noise_level(np.full((64, 64), 0.5, np.float32)) == 0.0
+    yy, xx = np.mgrid[0:96, 0:96]
+    assert lineart.noise_level((0.1 + 0.8 * xx / 95.0).astype(np.float32)) < 1e-6  # a slope is not noise
+    for noise in (0.01, 0.03, 0.06):
+        assert lineart.noise_level(_photoish(_strokes(), noise)) == pytest.approx(noise, rel=0.1)
+
+
+def test_noise_alone_draws_next_to_nothing():
+    """The bar rises with the picture's own noise, so grain is not traced where there is no line."""
+    rng = np.random.default_rng(11)
+    for noise in (0.02, 0.06, 0.12):
+        grain = np.clip(0.5 + rng.normal(0.0, noise, (160, 160)), 0.0, 1.0).astype(np.float32)
+        assert (lineart.flow(grain) >= 0.5).mean() < 0.002, noise
+
+
+def test_a_faint_line_is_found_on_light_and_on_dark_alike():
+    """One bar everywhere: the same step down is as much of a line on a face as in a night sky."""
+    found = []
+    for paper in (0.2, 0.9):
+        gray = np.full((80, 80), paper, np.float32)
+        gray[:, 39:41] -= 0.08
+        found.append(float((lineart.flow(ndimage.gaussian_filter(gray, 0.7))[10:-10] >= 0.5).sum()))
+    assert min(found) > 0 and max(found) / min(found) < 1.05, found
+
+
 def test_the_flow_follows_the_stroke_and_not_the_gradient():
     gray = np.ones((128, 128), np.float32)
     rows = np.arange(20, 108)
@@ -138,7 +186,7 @@ def test_a_detail_outside_zero_to_a_hundred_is_refused():
 
 
 def test_only_the_flow_method_reads_the_detail():
-    photo = _photoish(_strokes(size=96, count=3), noise=0.02)
+    photo = (255 * _photoish(_strokes(size=96, count=3), noise=0.02)).astype(np.uint8)
     for method in ("none", "canny", "xdog"):
         assert np.array_equal(lineart.extract(photo, method), lineart.extract(photo, method, detail=0.0))
     assert not np.array_equal(lineart.extract(photo, "flow"), lineart.extract(photo, "flow", detail=0.0))

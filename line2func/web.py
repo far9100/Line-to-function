@@ -39,6 +39,10 @@ MAX_BYTES = 32 << 20  # bytes per image file
 #     2.0 MP   3.0 s + 6.2 s    406 MB
 #     2.5 MP   3.8 s + 7.6 s    487 MB
 #
+# (taken before the extractor read colour. On a 2.07 MP illustration that took extraction from 3.7 s to
+# 4.7 s and the heap from 387 MB to 464 MB, and the trace from 49 s to 62 s, because there is nearly
+# twice the line in it to trace)
+#
 # so 2.5 MP costs about 11 s and half a gigabyte - lighter than what this page already put up with, as
 # 0.6 MP once took 17-56 s and 460 MB. The cap is not where memory runs out; it is where more pixels
 # stop buying anything, because budget.reduce_to merges the extra curves away again. WebAssembly memory

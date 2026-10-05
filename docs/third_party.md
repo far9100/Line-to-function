@@ -24,7 +24,9 @@ and the papers are cited for the ideas rather than for any source.
 
 | Where | Method |
 |---|---|
-| `lineart.flow`, `lineart.edge_tangent_flow`, `lineart.flow_dog` | Coherent line drawing: Henry Kang, Seungyong Lee and Charles K. Chui, *Coherent Line Drawing*, Proc. NPAR 2007. The flow is built as the minor eigenvector of a smoothed structure tensor, after Jan Eric Kyprianidis and Jürgen Döllner, rather than by Kang's iterative smoothing; the two are the same field, and the note in `edge_tangent_flow` says why one Gaussian replaces the rounds. |
+| `lineart.flow`, `lineart.flow_field`, `lineart.flow_dog` | Coherent line drawing: Henry Kang, Seungyong Lee and Charles K. Chui, *Coherent Line Drawing*, Proc. NPAR 2007. The flow is built as the minor eigenvector of a smoothed structure tensor, after Jan Eric Kyprianidis and Jürgen Döllner, rather than by Kang's iterative smoothing; the two are the same field, and the note in `flow_field` says why one Gaussian replaces the rounds. |
+| `lineart.flow_field` (the colour axis) | The structure tensor summed over the colour channels: Silvano Di Zenzo, *A note on the gradient of a multi-image*, Computer Vision, Graphics, and Image Processing 33, 1986. |
+| `lineart.noise_level` | John Immerkaer, *Fast noise variance estimation*, Computer Vision and Image Understanding 64(2), 1996, with the median in place of the mean so that edges do not count as noise. |
 | `lineart.xdog` | eXtended difference-of-Gaussians: Holger Winnemöller, Jan Eric Kyprianidis and Sven C. Olsen, *XDoG*, Computers & Graphics 36(6), 2012. Only the edge term is kept; the docstring says why. |
 | `lineart.canny` | John Canny, *A Computational Approach to Edge Detection*, PAMI 1986. |
 | `baseline.thin` | The Guo-Hall and Lam-Lee-Suen thinning rules, written from the published lookup tables. |

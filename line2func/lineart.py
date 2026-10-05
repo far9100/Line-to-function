@@ -205,16 +205,19 @@ def xdog(
 
 # The flow extractor's fixed settings; the three the detail slider moves are in DETAIL_TUNED below.
 FLOW_SIGMA_G = 1.0  # px: gradient smoothing for the structure tensor the flow is read from
-FLOW_SIGMA_C = 5.2  # px: how far the flow is smoothed, = 3.0 * sqrt(3) (see edge_tangent_flow)
+FLOW_SIGMA_C = 2.0  # px: how far the flow and the colour axis are smoothed (see flow_field)
 FLOW_K = 1.6  # the DoG's second sigma, as a multiple of the first (as in xdog)
-FLOW_PHI = 40.0  # steepness of the soft threshold, on gray in [0, 1] (xdog uses 50)
+FLOW_PHI = 70.0  # steepness of the soft threshold, on gray in [0, 1] (xdog uses 50)
+FLOW_NOISE_BAR = 4.0  # a ridge must also clear this many standard deviations of what noise alone gives
+FLOW_DRAW = 0.5  # how dark a found line is drawn onto the picture between rounds, on gray in [0, 1]
 FLOW_ITERS = 3  # FDoG rounds: each one draws the lines found so far onto the original and looks again
+LUMA = (0.299, 0.587, 0.114)  # = to_gray: "lighter" along a colour axis is judged by this
 
 DETAIL = 50.0  # default line-art detail, 0..100 (see detail_params)
 # The flow settings the detail slider moves: as tuned (50), at its coarsest (0) and at its finest (100).
-DETAIL_TUNED = {"sigma_e": 1.00, "sigma_m": 2.60, "tau": 0.985}
-DETAIL_COARSE = {"sigma_e": 1.80, "sigma_m": 3.80, "tau": 0.950}
-DETAIL_FINE = {"sigma_e": 0.80, "sigma_m": 2.20, "tau": 0.997}
+DETAIL_TUNED = {"sigma_e": 1.00, "sigma_m": 2.60, "eps": 0.0060}
+DETAIL_COARSE = {"sigma_e": 1.80, "sigma_m": 3.80, "eps": 0.0300}
+DETAIL_FINE = {"sigma_e": 0.80, "sigma_m": 2.20, "eps": 0.0020}
 
 
 def detail_params(detail: float | None = None) -> dict:
@@ -224,19 +227,15 @@ def detail_params(detail: float | None = None) -> dict:
     :data:`DETAIL_FINE` at 100 and to :data:`DETAIL_COARSE` at 0. All three move together because they
     are three views of one decision - how weak a ridge still counts as a line. Finer means a narrower
     kernel across the flow (so lines close together stay apart), a shorter run along it (less evidence
-    demanded that a ridge carries on), and a ``tau`` nearer 1 (the DoG's centre and surround nearly
-    cancel, so a weaker ridge survives).
+    demanded that a ridge carries on), and a lower bar ``eps`` for the ridge to clear.
 
-    **``tau`` is moved in proportion, not linearly**, because what it does is set by how far it is from
-    1, and that margin spans 0.050 to 0.003 - an order of magnitude - across the slider. Interpolated
-    straight, the fine half of the slider barely moves ``tau`` while the two sigmas drop quickly, and
-    the result is *less* line at 60 than at 50. Measured on three pictures, over 0, 10, ... 100, the
-    proportional form gives more line at every step and the straight one does not.
+    **``eps`` is moved in proportion, not linearly**, because it spans most of an order of magnitude
+    across the slider. Interpolated straight, the fine half of the slider barely moves it while the two
+    sigmas drop quickly, and the result can be *less* line at 60 than at 50.
 
     Two consequences worth knowing. The narrower kernels of a high detail are also **cheaper**, so the
-    slowest setting is 0, not 100. And the fine end is deliberately tame - 100 gives about one and a
-    half to two times the line of the tuned setting, not ten times - because past that what comes in is
-    mostly texture, and the curve budget goes on it.
+    slowest setting is 0, not 100. And the fine end is deliberately tame, because past it what comes in
+    is mostly texture, and the curve budget goes on it.
     """
     if detail is None:
         detail = DETAIL
@@ -244,38 +243,106 @@ def detail_params(detail: float | None = None) -> dict:
         raise ValueError("line-art detail must be between 0 and 100")
     other = DETAIL_FINE if detail >= DETAIL else DETAIL_COARSE
     a = abs(detail - DETAIL) / DETAIL
-    out = {k: (1.0 - a) * v + a * other[k] for k, v in DETAIL_TUNED.items() if k != "tau"}
-    margin = (1.0 - DETAIL_TUNED["tau"]) ** (1.0 - a) * (1.0 - other["tau"]) ** a
-    out["tau"] = 1.0 - margin
+    out = {k: (1.0 - a) * v + a * other[k] for k, v in DETAIL_TUNED.items() if k != "eps"}
+    out["eps"] = DETAIL_TUNED["eps"] ** (1.0 - a) * other["eps"] ** a
     return out
 
 
-def edge_tangent_flow(gray: np.ndarray, sigma_g: float = FLOW_SIGMA_G,
-                      sigma_c: float = FLOW_SIGMA_C) -> tuple[np.ndarray, np.ndarray]:
-    """The edge tangent flow of ``gray``: unit vectors ``(tx, ty)`` along the local feature direction.
+def noise_level(gray: np.ndarray) -> float:
+    """The standard deviation of the pixel noise in ``gray``, read off the picture itself.
 
-    The flow is the minor eigenvector of the smoothed structure tensor, which points along an edge
-    rather than across it. Kang et al. build the same field by smoothing the tangents over several
-    rounds; **rounds of un-normalized linear smoothing collapse** - three passes of sigma 3.0 are one
-    pass of sigma 3 * sqrt(3) - so this is one separable Gaussian (:data:`FLOW_SIGMA_C`).
+    The picture is filtered with the difference of two Laplacians (Immerkaer, 1996), which is blind to
+    anything flat, sloped or curved like a paraboloid - most of what a picture is made of - and passes
+    white noise scaled by 6. The **median** of what comes out, rather than its mean, is taken as the
+    noise, so edges and texture do not count as long as they cover under half the picture. Checked on
+    drawings given Gaussian noise of 0.01, 0.03 and 0.06: it answers 0.010, 0.030 and 0.058.
+    """
+    kernel = np.array([[1.0, -2.0, 1.0], [-2.0, 4.0, -2.0], [1.0, -2.0, 1.0]])
+    return 1.4826 * float(np.median(np.abs(ndimage.convolve(gray.astype(np.float64), kernel)))) / 6.0
+
+
+def _noise_gain(sigma_e: float, sigma_m: float, k: float = FLOW_K) -> float:
+    """What one standard deviation of white pixel noise becomes after :func:`flow_dog`'s two passes."""
+    across = _offsets(2.0 * k * sigma_e)
+    w = _gaussian_weights(across, sigma_e) - _gaussian_weights(across, k * sigma_e)
+    v = _gaussian_weights(_offsets(2.0 * sigma_m), sigma_m)
+    return float(np.sqrt((w * w).sum() * (v * v).sum()))
+
+
+def _channels(image) -> list[np.ndarray]:
+    """``image`` as the channels the flow extractor reads, each float32 in ``[0, 1]``.
+
+    A 2-D float array is taken as it is - gray in ``[0, 1]`` - and gives one channel. Anything else goes
+    through :func:`load_rgb` and gives three, or one if the three are the same picture.
+    """
+    arr = image if isinstance(image, np.ndarray) else None
+    if arr is not None and arr.ndim == 2 and arr.dtype.kind == "f":
+        return [arr.astype(np.float32)]
+    rgb = load_rgb(image)
+    if np.array_equal(rgb[..., 0], rgb[..., 1]) and np.array_equal(rgb[..., 1], rgb[..., 2]):
+        return [rgb[..., 0].astype(np.float32) / 255.0]
+    return [rgb[..., i].astype(np.float32) / 255.0 for i in range(3)]
+
+
+def flow_field(channels: list[np.ndarray], sigma_g: float = FLOW_SIGMA_G,
+               sigma_c: float = FLOW_SIGMA_C) -> tuple[np.ndarray, np.ndarray, list[np.ndarray] | None]:
+    """The edge tangent flow of a picture and, for a colour one, the colour axis it changes along.
+
+    ``(tx, ty)`` are unit vectors along the local feature direction: the minor eigenvector of the
+    smoothed structure tensor, summed over the channels (Di Zenzo), which points along an edge rather
+    than across it. Kang et al. build the same field by smoothing the tangents over several rounds;
+    rounds of un-normalized linear smoothing collapse into one, so this is one separable Gaussian
+    (:data:`FLOW_SIGMA_C`). It is kept short: over 5 px a small feature - an eye, a finger - is given
+    its neighbours' direction and its line is averaged across instead of along.
 
     It is a direction without a sign: ``(tx, ty)`` and ``(-tx, -ty)`` mean the same thing, and which
     one comes out flips along a curve. Everything that reads the flow has to be even in it, which is
     why :func:`_directional` samples symmetrically.
+
+    **The colour axis** is what lets an edge between two colours of the same brightness be a line. At
+    each pixel it is the direction in RGB along which the picture changes most nearby - the principal
+    eigenvector of the gradients' 3 x 3 colour covariance - turned to point at the lighter side, so
+    that "the dark side of an edge" still means something. Projected on it, a red|blue boundary is as
+    much of a step as black|white. It is found by three rounds of power iteration started from
+    :data:`LUMA`, which both avoids a per-pixel eigen-decomposition and settles the sign. The three
+    arrays are scaled so that a gray picture reads exactly as its one channel would. ``None`` for a
+    single channel.
     """
-    g = gray.astype(np.float64)
-    gx = ndimage.gaussian_filter(g, sigma_g, order=(0, 1))
-    gy = ndimage.gaussian_filter(g, sigma_g, order=(1, 0))
-    e = ndimage.gaussian_filter(gx * gx, sigma_c)
-    f = ndimage.gaussian_filter(gx * gy, sigma_c)
-    h = ndimage.gaussian_filter(gy * gy, sigma_c)
+    gx = [ndimage.gaussian_filter(c, sigma_g, order=(0, 1)) for c in channels]
+    gy = [ndimage.gaussian_filter(c, sigma_g, order=(1, 0)) for c in channels]
+    e = ndimage.gaussian_filter(sum(x * x for x in gx), sigma_c).astype(np.float64)
+    f = ndimage.gaussian_filter(sum(x * y for x, y in zip(gx, gy)), sigma_c).astype(np.float64)
+    h = ndimage.gaussian_filter(sum(y * y for y in gy), sigma_c).astype(np.float64)
     # the smaller eigenvalue of [[e, f], [f, h]], and (f, lam - e), the eigenvector that goes with it
     lam = 0.5 * (e + h - np.hypot(e - h, 2.0 * f))
     tx, ty = f, lam - e
     size = np.hypot(tx, ty)
     flat = size < 1e-12  # no edge here at all: any direction will do, and none of them gets any weight
     size = np.where(flat, 1.0, size)
-    return np.where(flat, 1.0, tx / size), np.where(flat, 0.0, ty / size)
+    tx, ty = np.where(flat, 1.0, tx / size), np.where(flat, 0.0, ty / size)
+    if len(channels) == 1:
+        return tx, ty, None
+    n = len(channels)
+    cov = {}
+    for i in range(n):
+        for j in range(i, n):
+            cov[i, j] = cov[j, i] = ndimage.gaussian_filter(gx[i] * gx[j] + gy[i] * gy[j], sigma_c)
+    del gx, gy
+    axis = [np.full(channels[0].shape, w, np.float32) for w in LUMA]
+    for _ in range(3):
+        axis = [sum(cov[i, j] * axis[j] for j in range(n)) for i in range(n)]
+        norm = np.sqrt(sum(a * a for a in axis))
+        norm[norm < 1e-20] = 1.0
+        axis = [a / norm for a in axis]
+    scale = np.float32(1.0 / np.sqrt(n))  # so R = G = B reads as that one channel does
+    return tx, ty, [a * scale for a in axis]
+
+
+def edge_tangent_flow(gray: np.ndarray, sigma_g: float = FLOW_SIGMA_G,
+                      sigma_c: float = FLOW_SIGMA_C) -> tuple[np.ndarray, np.ndarray]:
+    """The edge tangent flow of ``gray`` alone: :func:`flow_field` for one channel."""
+    tx, ty, _ = flow_field([gray.astype(np.float32)], sigma_g, sigma_c)
+    return tx, ty
 
 
 def _offsets(reach: float) -> np.ndarray:
@@ -295,7 +362,7 @@ def _directional(img: np.ndarray, dx: np.ndarray, dy: np.ndarray, offsets: np.nd
 
     One straight line of samples per pixel, aimed along that pixel's own ``(dx, dy)``. The weights are
     symmetric, so the answer does not depend on which way round the direction points - which is what
-    makes this safe to use on the unsigned flow of :func:`edge_tangent_flow`. Following a curved
+    makes this safe to use on the unsigned flow of :func:`flow_field`. Following a curved
     streamline instead would have to pick a way round at every step and would double back wherever the
     sign flips; the straight run is one gather per offset, and :func:`flow_dog` recovers the curve by
     re-aiming on each of its rounds.
@@ -326,42 +393,76 @@ def _directional(img: np.ndarray, dx: np.ndarray, dy: np.ndarray, offsets: np.nd
     return acc
 
 
-def flow_dog(gray: np.ndarray, tx: np.ndarray, ty: np.ndarray, sigma_e: float = 1.0,
-             sigma_m: float = 2.6, tau: float = 0.985, k: float = FLOW_K, phi: float = FLOW_PHI,
+def flow_dog(image, tx: np.ndarray, ty: np.ndarray, sigma_e: float = DETAIL_TUNED["sigma_e"],
+             sigma_m: float = DETAIL_TUNED["sigma_m"], eps: float = DETAIL_TUNED["eps"],
+             axis: list[np.ndarray] | None = None, k: float = FLOW_K, phi: float = FLOW_PHI,
              iterations: int = FLOW_ITERS) -> np.ndarray:
-    """Flow-based difference of Gaussians as an ink map, given the flow from :func:`edge_tangent_flow`.
+    """Flow-based difference of Gaussians as an ink map, given the flow from :func:`flow_field`.
+
+    ``image`` is one channel, or a list of them together with the ``axis`` :func:`flow_field` gave.
 
     Each round does two passes: a difference of Gaussians **across** the flow, which asks "is there a
     dark ridge here", and a Gaussian **along** it, which asks the neighbours on the same line whether
     they agree. A speck of noise has no line to agree with it and is averaged away; a real line is
-    reinforced from both ends. The lines found are then drawn onto the original and the round runs
-    again, which closes the places a single pass leaves dotted.
+    reinforced from both ends. The lines found are then drawn onto the picture and the round runs
+    again, which closes the places a single pass leaves dotted. They are drawn :data:`FLOW_DRAW`
+    darker than whatever is there, not in black: black on a light ground is a far bigger step than
+    black on a dark one, and a line on a face was being reinforced four times as hard as the same
+    line in a night sky.
 
-    The two Gaussians across the flow are folded into one kernel (``w_e - tau * w_k``) before any
-    sampling, which halves the work. ``tau`` below 1 leaves a margin that flat and smoothly shaded
-    areas cannot cross, so a sky or a cheek contributes exactly nothing: a difference of Gaussians is
-    zero on anything linear, and what is left, ``(1 - tau) * gray``, has the wrong sign to be ink.
+    The two Gaussians across the flow are folded into one kernel (``w_e - w_k``) before any sampling,
+    which halves the work. The kernel sums to zero, so a flat area and a smooth gradient give exactly
+    nothing - a difference of Gaussians is zero on anything linear - and ``eps`` is the bar a ridge
+    then has to clear. The bar is the same everywhere. (Kang et al. weight the second Gaussian by a
+    ``tau`` under 1 instead, which leaves ``(1 - tau) * gray`` as the bar: five times higher on a
+    light face than in a dark sky, so the faces stayed blank while the sky filled with specks.)
+
+    With several channels the ridge is read along the colour ``axis``: each channel takes the pass
+    across the flow, the three answers are projected on the axis, and the pass along the flow is then
+    taken once. That is done on the first round only. A later round differs from it by the lines
+    drawn onto the picture, and the passes are linear, so it takes the first round's answer and adds
+    the pass over *what was drawn*, which is one picture whatever the number of channels. Colour then
+    costs two extra short passes in all rather than six.
     """
-    original = gray.astype(np.float64)
-    img = original
+    channels = [c.astype(np.float64) for c in (image if isinstance(image, (list, tuple)) else [image])]
+    if axis is None:
+        if len(channels) != 1:
+            raise ValueError("several channels need the colour axis from flow_field")
+        axis = [1.0]
     across = _offsets(2.0 * k * sigma_e)
-    w_across = _gaussian_weights(across, sigma_e) - tau * _gaussian_weights(across, k * sigma_e)
+    w_across = _gaussian_weights(across, sigma_e) - _gaussian_weights(across, k * sigma_e)
     along = _offsets(2.0 * sigma_m)
     w_along = _gaussian_weights(along, sigma_m)
     nx, ny = -ty, tx  # across the flow
-    ink = np.zeros_like(original)
-    for _ in range(iterations):
-        ridge = _directional(img, nx, ny, across, w_across)
+    first = sum(a * _directional(c, nx, ny, across, w_across) for a, c in zip(axis, channels))
+    ridge = first
+    ink = np.zeros_like(channels[0])
+    for round_ in range(iterations):
+        if round_:  # the lines found so far, drawn on
+            ridge = first + _directional(-FLOW_DRAW * ink, nx, ny, across, w_across)
         agreed = _directional(ridge, tx, ty, along, w_along)
-        ink = np.tanh(phi * np.maximum(-agreed, 0.0))
-        img = np.minimum(original, 1.0 - ink)
+        ink = np.tanh(phi * np.maximum(-agreed - eps, 0.0))
     return np.clip(ink, 0.0, 1.0).astype(np.float32)
 
 
-def flow(gray: np.ndarray, detail: float | None = None) -> np.ndarray:
-    """Coherent line drawing as an ink map: the flow, then :func:`flow_dog` at ``detail`` (0..100)."""
-    tx, ty = edge_tangent_flow(gray)
-    return flow_dog(gray, tx, ty, **detail_params(detail))
+def flow(image, detail: float | None = None) -> np.ndarray:
+    """Coherent line drawing as an ink map: the flow, then :func:`flow_dog` at ``detail`` (0..100).
+
+    ``image`` is anything :func:`load_rgb` takes, read in colour, or a 2-D float array of gray in
+    ``[0, 1]``.
+
+    **The bar is the detail's own plus what this picture's noise asks for.** ``eps`` from
+    :func:`detail_params` is the least a ridge has to be on a clean picture; on top of it comes
+    :data:`FLOW_NOISE_BAR` standard deviations of what the picture's noise (:func:`noise_level`) turns
+    into after the two passes. A clean illustration is therefore read at the low bar its faint edges
+    need, and a grainy photograph at one its grain cannot reach - one setting was never right for both.
+    """
+    channels = _channels(image)
+    params = detail_params(detail)
+    gray = channels[0] if len(channels) == 1 else sum(w * c for w, c in zip(LUMA, channels))
+    params["eps"] += FLOW_NOISE_BAR * _noise_gain(params["sigma_e"], params["sigma_m"]) * noise_level(gray)
+    tx, ty, axis = flow_field(channels)
+    return flow_dog(channels if axis is not None else channels[0], tx, ty, axis=axis, **params)
 
 
 def extract(image, method: str = "none", detail: float | None = None) -> np.ndarray:
@@ -374,6 +475,8 @@ def extract(image, method: str = "none", detail: float | None = None) -> np.ndar
         from line2func import lineart_model
 
         return lineart_model.extract(load_rgb(image), method)
+    if method == "flow":
+        return flow(load_rgb(image), detail)  # the one extractor that reads the colours
     gray = to_gray(image)
     if method == "none":
         return _plain(gray)
@@ -381,8 +484,6 @@ def extract(image, method: str = "none", detail: float | None = None) -> np.ndar
         return canny(gray)
     if method == "xdog":
         return xdog(gray)
-    if method == "flow":
-        return flow(gray, detail)
     raise ValueError(f"unknown line-art method {method!r}; choose from {', '.join(METHODS)}")
 
 

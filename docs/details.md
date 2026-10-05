@@ -467,7 +467,46 @@ sky or a cheek contributes nothing to the curve budget. And its lines are wide
 enough to trace as they are: a median of 2.2 px on the 32 photographs, and
 under `pipeline.AUTO_UPSCALE_BELOW` on one of them.
 
-The pretrained weights are never bundled. Download them once; they are checked
+**What `flow` reads, since 2.0.0.** The tables above were measured with the
+extractor as 2.0.0 shipped it, which read the picture in gray and held every
+picture to one bar. It has changed in three ways since, each for a fault that
+showed on a painted illustration - nine figures on a night sky, where the faces
+came out blank and the sky full of specks:
+
+- **Colour.** Two colours of the same brightness - hair against sky, cloth on
+  cloth - are no edge at all in gray. At each pixel the extractor now finds the
+  direction in RGB the picture changes along and reads the ridge along that, so
+  a red|blue boundary is as much of a step as black|white. A gray picture is
+  read as its one channel and pays nothing for this.
+- **One bar everywhere.** Kang's formulation leaves `(1 - tau) x gray` as the
+  bar, which is five times higher on a light face than in a dark sky; and
+  drawing the lines found in black between rounds reinforced a line on a light
+  ground four times as hard as the same line on a dark one. The bar is now a
+  plain `eps`, and lines are drawn a fixed step darker than what is there.
+- **The picture's own noise sets how far the bar rises.** The noise is read
+  off the picture (0.010, 0.030 and 0.058 for 0.01, 0.03 and 0.06 put in) and a
+  ridge must clear four standard deviations of what that noise becomes after
+  the two passes. A clean illustration is read at the low bar its faint edges
+  need, a grainy photograph at one its grain cannot reach.
+
+On the illustration, at the default detail: **109,293 skeleton pixels in 19.9
+pieces per 1,000, against 57,103 in 37.5** - nearly twice the line, half as
+broken. On drawings given camera blur, uneven light and noise, where the true
+lines are known:
+
+| noise | lines found | false line | pieces per 1,000 px |
+|---|---|---|---|
+| 0.01 | 99.3% (was 97.5%) | 0.5% (was 4.1%) | 1.2 (was 4.6) |
+| 0.03 | 99.3% (was 97.5%) | 0.6% (was 3.6%) | 1.2 (was 5.8) |
+| 0.06 | 99.4% (was 97.2%) | 2.4% (was 8.0%) | 10.2 (was 24.7) |
+
+On eight photographs at 2.5 MP it gave fewer pieces per 1,000 pixels on every
+one that has lines in it (2.6 to 40.3, against 3.9 to 58.1), more line on each,
+and lines 2.3 to 2.8 px wide. **What it costs is time**: 4.1 s a photograph
+against 3.0 s. **What has not been done** is to repeat the 32-photograph
+comparison above with it; those figures stand for the earlier extractor.
+
+The pretrained weights are never bundled. Download them once; they are checkedThe pretrained weights are never bundled. Download them once; they are checked
 against a pinned SHA-256 and stored in `~/.cache/line2func` (override with
 `LINE2FUNC_HOME`):
 
@@ -691,37 +730,37 @@ share of curve length on true lines fell from 0.929 at 50 to 0.902 at 75 and
 With `--lineart flow`, one slider from 0 to 100 decides how weak a ridge still
 counts as a line. It moves three settings together, because they are three
 views of that one decision: the width of the kernel taken across the flow
-(`sigma_e`), how far the answer is smoothed along it (`sigma_m`), and how
-nearly the difference of Gaussians cancels (`tau`). Measured on a 0.81 MP
-photograph, at a fixed tolerance of 1.0 with no curve budget:
+(`sigma_e`), how far the answer is smoothed along it (`sigma_m`), and the bar a
+ridge has to clear (`eps`, on gray in 0..1). Measured on a 2.07 MP illustration
+(1920 x 1080, nine figures on a night sky):
 
-| detail | `sigma_e` | `sigma_m` | `tau` | extract | ink | skeleton px | pieces/1,000 px | curves | total |
-|---|---|---|---|---|---|---|---|---|---|
-| 0 | 1.80 | 3.80 | 0.9500 | 1.35 s | 2.1% | 2,760 | 39.5 | 107 | 1.94 s |
-| 25 | 1.40 | 3.20 | 0.9726 | 1.16 s | 3.8% | 5,431 | 31.9 | 202 | 1.80 s |
-| **50** | **1.00** | **2.60** | **0.9850** | **0.91 s** | **4.6%** | **6,796** | **46.1** | **302** | **1.83 s** |
-| 75 | 0.90 | 2.40 | 0.9933 | 0.78 s | 8.3% | 9,234 | 61.3 | 821 | 2.00 s |
-| 100 | 0.80 | 2.20 | 0.9970 | 0.74 s | 19.5% | 17,062 | 104.3 | 1,211 | 2.57 s |
+| detail | `sigma_e` | `sigma_m` | `eps` | extract | ink | skeleton px | pieces/1,000 px | line width |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 1.80 | 3.80 | 0.0300 | 4.42 s | 6.8% | 35,918 | 26.4 | 3.42 px |
+| 25 | 1.40 | 3.20 | 0.0134 | 3.78 s | 14.0% | 78,680 | 17.8 | 3.19 px |
+| **50** | **1.00** | **2.60** | **0.0060** | **3.22 s** | **15.9%** | **109,293** | **19.9** | **2.62 px** |
+| 75 | 0.90 | 2.40 | 0.0035 | 2.81 s | 16.6% | 124,720 | 21.1 | 2.39 px |
+| 100 | 0.80 | 2.20 | 0.0020 | 2.66 s | 17.4% | 138,444 | 22.8 | 2.26 px |
 
 Three things in that table are worth knowing before turning the slider.
 
 **More detail never finds less line.** That is the promise the control makes,
-and it is what the endpoints were chosen for. `tau` is moved *in proportion*
-rather than linearly, because what it does is set by how far it is from 1, and
-that margin spans 0.050 to 0.003 across the slider. Interpolated straight, the
-fine half barely moved `tau` while the two sigmas fell quickly, and detail 60
-drew *less* than detail 50. On three test pictures, over 0, 10, ... 100, the
-proportional form gives more line at every step and the straight one does not.
+and it is what the endpoints were chosen for. `eps` is moved *in proportion*
+rather than linearly, because it spans more than an order of magnitude across
+the slider; interpolated straight, the fine half would barely move it while the
+two sigmas fell quickly.
 
 **The slowest setting is 0, not 100.** Higher detail means narrower kernels and
-so fewer samples per pixel: extraction falls from 1.35 s to 0.74 s across the
+so fewer samples per pixel: extraction falls from 4.42 s to 2.66 s across the
 range. What goes up is the tracing, because there is more line to trace.
 
-**The top end is where the curve budget goes.** At 100 the lines are also more
-broken (104 pieces per 1,000 skeleton pixels against 46 at the tuned setting),
-because what is coming in is texture rather than strokes. `tau` stops at 0.997
-for that reason. On a textured photograph, expect detail 100 to be the setting
-that reaches the 5,000-curve limit.
+**The top end is where the curve budget goes.** At 100 there is a quarter more
+line than at the tuned setting and it is a little more broken (22.8 pieces per
+1,000 skeleton pixels against 19.9), because what is coming in is texture
+rather than strokes. This picture reaches the 5,000-curve limit at 50 already.
+
+**`eps` is the bar on a clean picture; a noisy one raises it by itself.** See
+*What `flow` reads* in section 6.
 
 #### Shadows, heavy eyelashes and other filled areas
 
@@ -1468,7 +1507,23 @@ x=81.52-0.4101\left(y-36.01\right)-0.00564\left(y-36.01\right)^{2}-0.0000929\lef
 
 `flow` 還有兩個和連貫性同樣重要的性質。純色區域給出的 ink **恰好是 0**，平滑漸層也一樣——高斯差對任何線性的東西都是 0，剩下的部分符號也不對，成不了 ink——所以天空或臉頰完全不會吃掉曲線預算。而且它的線夠寬，可以照原樣描：在那 32 張照片上中位數是 2.2 px，低於 `pipeline.AUTO_UPSCALE_BELOW` 的只有 1 張。
 
-預訓練權重不隨專案附帶。下載一次即可；下載後會用固定的 SHA-256 驗證，存放在 `~/.cache/line2func`（可用環境變數 `LINE2FUNC_HOME` 更改）：
+**`flow` 讀的是什麼（2.0.0 之後）。** 上面的表是用 2.0.0 發布時的抽取器量的，當時它用灰階讀圖，而且每張圖都用同一個門檻。之後它改了三件事，每一件都是為了一張手繪插畫上看得到的毛病——夜空前的九個人物，臉是空白的，天空卻滿是碎點：
+
+- **顏色。** 兩個亮度相同的顏色——頭髮對天空、布料疊布料——在灰階裡根本不是邊。現在抽取器在每個像素找出圖片在 RGB 裡變化的方向，沿著那個方向讀脊，所以紅|藍的交界和黑|白一樣是一個台階。灰階圖片只當成一個通道來讀，不必付顏色的額外成本。
+- **到處都是同一個門檻。** Kang 的寫法留下 `(1 - tau) x gray` 當門檻，亮的臉上比暗的天空高五倍；而兩輪之間把找到的線用黑色畫上去，讓亮底上的線被強化的力道是暗底上同一條線的四倍。現在門檻是單純的 `eps`，線則是畫得比原處深一個固定的量。
+- **圖片自己的雜訊決定門檻抬多高。** 雜訊是從圖片上讀出來的（放進 0.01、0.03、0.06，讀到 0.010、0.030、0.058），一條脊必須跨過「那個雜訊經過兩次濾波後」的四個標準差。乾淨的插畫用它的淡邊需要的低門檻來讀，有顆粒的照片用顆粒搆不到的門檻來讀。
+
+在那張插畫上、預設細節：**109,293 個骨架像素、每千像素 19.9 片，原本是 57,103 個、37.5 片**——線將近兩倍，破碎程度減半。在加上相機模糊、不均勻光線與雜訊、而且知道真實線條在哪裡的合成圖上：
+
+| 雜訊 | 找到的線 | 假線 | 每千像素片數 |
+|---|---|---|---|
+| 0.01 | 99.3%（原 97.5%） | 0.5%（原 4.1%） | 1.2（原 4.6） |
+| 0.03 | 99.3%（原 97.5%） | 0.6%（原 3.6%） | 1.2（原 5.8） |
+| 0.06 | 99.4%（原 97.2%） | 2.4%（原 8.0%） | 10.2（原 24.7） |
+
+在八張 2.5 MP 的照片上，凡是有線的每一張，每千像素片數都更少（2.6 到 40.3，原本 3.9 到 58.1），線都更多，線寬 2.3 到 2.8 px。**代價是時間**：每張照片 4.1 秒，原本 3.0 秒。**還沒做的**是用它重跑上面那 32 張照片的比較；那些數字代表的是先前的抽取器。
+
+預訓練權重不隨專案附帶。下載一次即可；預訓練權重不隨專案附帶。下載一次即可；下載後會用固定的 SHA-256 驗證，存放在 `~/.cache/line2func`（可用環境變數 `LINE2FUNC_HOME` 更改）：
 
 ```bash
 python -m line2func.weights list            # 列出可用的權重、授權與下載狀態
@@ -1596,23 +1651,25 @@ python -m line2func.demo IMAGE [options]
 
 #### 照片裡有多少東西會變成線條：`--lineart-detail`
 
-搭配 `--lineart flow` 時，一支 0 到 100 的滑桿決定「多弱的脊還算一條線」。它會同時移動三個設定，因為那是同一個決定的三個面向：跨著流場取的核有多寬（`sigma_e`）、答案沿著流場平滑多遠（`sigma_m`），以及高斯差抵消得多徹底（`tau`）。在一張 0.81 MP 的照片上實測，固定容差 1.0、不設曲線預算：
+搭配 `--lineart flow` 時，一支 0 到 100 的滑桿決定「多弱的脊還算一條線」。它會同時移動三個設定，因為那是同一個決定的三個面向：跨著流場取的核有多寬（`sigma_e`）、答案沿著流場平滑多遠（`sigma_m`），以及一條脊必須跨過的門檻（`eps`，以 0 到 1 的灰階計）。在一張 2.07 MP 的插畫上實測（1920 x 1080，夜空前的九個人物）：
 
-| 細節 | `sigma_e` | `sigma_m` | `tau` | 抽取 | ink | 骨架像素 | 每千像素片數 | 曲線 | 合計 |
-|---|---|---|---|---|---|---|---|---|---|
-| 0 | 1.80 | 3.80 | 0.9500 | 1.35 s | 2.1% | 2,760 | 39.5 | 107 | 1.94 s |
-| 25 | 1.40 | 3.20 | 0.9726 | 1.16 s | 3.8% | 5,431 | 31.9 | 202 | 1.80 s |
-| **50** | **1.00** | **2.60** | **0.9850** | **0.91 s** | **4.6%** | **6,796** | **46.1** | **302** | **1.83 s** |
-| 75 | 0.90 | 2.40 | 0.9933 | 0.78 s | 8.3% | 9,234 | 61.3 | 821 | 2.00 s |
-| 100 | 0.80 | 2.20 | 0.9970 | 0.74 s | 19.5% | 17,062 | 104.3 | 1,211 | 2.57 s |
+| 細節 | `sigma_e` | `sigma_m` | `eps` | 抽取 | ink | 骨架像素 | 每千像素片數 | 線寬 |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 1.80 | 3.80 | 0.0300 | 4.42 s | 6.8% | 35,918 | 26.4 | 3.42 px |
+| 25 | 1.40 | 3.20 | 0.0134 | 3.78 s | 14.0% | 78,680 | 17.8 | 3.19 px |
+| **50** | **1.00** | **2.60** | **0.0060** | **3.22 s** | **15.9%** | **109,293** | **19.9** | **2.62 px** |
+| 75 | 0.90 | 2.40 | 0.0035 | 2.81 s | 16.6% | 124,720 | 21.1 | 2.39 px |
+| 100 | 0.80 | 2.20 | 0.0020 | 2.66 s | 17.4% | 138,444 | 22.8 | 2.26 px |
 
 這張表裡有三件事，在動滑桿之前值得知道。
 
-**調高細節不會讓線變少。** 這是這個控制項給的承諾，端點也是為了它才這樣選。`tau` 是**按比例**移動而不是線性移動的，因為它起的作用取決於它離 1 有多遠，而那個餘裕在整支滑桿上橫跨 0.050 到 0.003。直接線性內插的話，細的那一半幾乎不動 `tau`、兩個 sigma 卻掉得很快，於是細節 60 畫出來的線**比** 50 **還少**。在三張測試圖上、以 0、10、…、100 掃過，按比例的版本每一格都更多，線性的則不是。
+**調高細節不會讓線變少。** 這是這個控制項給的承諾，端點也是為了它才這樣選。`eps` 是**按比例**移動而不是線性移動的，因為它在整支滑桿上橫跨超過一個數量級；直接線性內插的話，細的那一半幾乎不動它、兩個 sigma 卻掉得很快。
 
-**最慢的設定是 0，不是 100。** 細節調高代表核更窄、每個像素取的樣本更少：抽取時間從 1.35 秒降到 0.74 秒。變多的是描線，因為有更多線要描。
+**最慢的設定是 0，不是 100。** 細節調高代表核更窄、每個像素取的樣本更少：抽取時間從 4.42 秒降到 2.66 秒。變多的是描線，因為有更多線要描。
 
-**曲線預算是花在高端的。** 細節 100 時線也更破碎（每千個骨架像素 104 片，調好的設定是 46 片），因為進來的是紋理而不是筆畫。`tau` 就是為此停在 0.997。在紋理多的照片上，細節 100 會是那個撞到 5,000 條上限的設定。
+**曲線預算是花在高端的。** 細節 100 的線比調好的設定多四分之一，也稍微更破碎（每千個骨架像素 22.8 片，對 19.9 片），因為進來的是紋理而不是筆畫。這張圖在 50 就已經撞到 5,000 條上限。
+
+**`eps` 是乾淨圖片上的門檻；有雜訊的圖片會自己把它抬高。** 見第 6 節的〈`flow` 讀的是什麼〉。
 
 #### 陰影、粗重的睫毛與其他填滿的區域
 
