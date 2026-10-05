@@ -10,7 +10,7 @@ re-measured from the current tree, so nothing else belongs here.
 | `decisions_learned.json` | the same run with the learned decision scorer |
 
 These two are the raw data behind the learned-against-rules table in
-`docs/details.md`, section 7 ("Why there is no learned scorer"). The scorer was
+`docs/details.md`, section 8 ("Why there is no learned scorer"). The scorer was
 removed in 8e43ed4 together with its weights, its training code and the
 `--decisions` flag, so the `learned` side can never be measured again: this file
 is the only surviving record of it. `data/real_v1` is gitignored as well, so

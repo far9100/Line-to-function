@@ -45,6 +45,12 @@ class FakeWorker {
       this.reply({ type: "answer", id: m.id, heap: b.heap, zip: new Uint8Array([80, 75]),
                    answer: JSON.stringify({ summary: { curves: 2 }, params: { method: "none", scale: 1 } }),
                    files: { "curves.json": new TextEncoder().encode('{"curves": []}'), "desmos.txt": new Uint8Array([120]) } });
+    } else if (m.type === "lineart") {
+      this.reply({ type: "stage", id: m.id, stage: "lineart" });
+      const params = JSON.parse(m.params);
+      this.reply({ type: "answer", id: m.id, heap: b.heap,
+                   answer: JSON.stringify({ summary: { width: 10, height: 8, scale: 1 }, params }),
+                   files: { "lineart.png": new Uint8Array([137, 80, params.lineart_detail | 0]) } });
     } else if (m.type === "svg") {
       const svg = `<svg data-style="${m.name}|${m.color}|${m.seed}|${m.width}"/>`;
       this.reply({ type: "answer", id: m.id, heap: 1, answer: JSON.stringify({ ok: true }),
@@ -141,6 +147,42 @@ const out = {};
     otherBody: await (await fetch(other)).text(),
     jsBody: await (await fetch(js)).text(),
     unknownJob: await engine.styledFile("nope", "out.svg", style),
+  };
+}
+
+// the line-art preview: a snapshot of its own kind, a blob: URL for the PNG, and - the point of keeping
+// previews in their own map - re-previewing must not forget the result the page is still showing
+{
+  FakeWorker.created = [];
+  FakeWorker.behaviour.trace = "answer";
+  FakeWorker.behaviour.heap = 100;
+  const snaps = [];
+  const engine = createEngine(config, { onJob: (s) => snaps.push(s), Worker: FakeWorker });
+  const image = await engine.open(new Blob([new Uint8Array([1])]), "f.png");
+  const traced = await engine.trace({ image_id: image.image_id, kind: "trace", method: "flow" });
+  await settle();
+  const curvesURL = engine.fileURL(traced.job_id, "curves.json");
+  const first = await engine.lineart({ image_id: image.image_id, kind: "lineart", method: "flow", lineart_detail: 20 });
+  await settle();
+  const firstURL = engine.fileURL(first.job_id, "lineart.png");
+  const previews = [];
+  for (const detail of [40, 60, 80]) {
+    const job = await engine.lineart({ image_id: image.image_id, kind: "lineart", method: "flow", lineart_detail: detail });
+    await settle();
+    previews.push(await (await fetch(engine.fileURL(job.job_id, "lineart.png"))).arrayBuffer());
+  }
+  const readable = async (url) => { try { return (await (await fetch(url)).arrayBuffer()).byteLength > 0; } catch { return false; } };
+  out.lineart = {
+    kinds: [...new Set(snaps.map((s) => s.kind))].sort(),
+    snapshot: { kind: first.kind, state: first.state },
+    stages: snaps.filter((s) => s.job_id === first.job_id).map((s) => s.stage),
+    isBlob: firstURL.startsWith("blob:"),
+    // the detail reached Python, and each preview replaced the one before it
+    details: previews.map((b) => new Uint8Array(b)[2]),
+    oldPreviewGone: !(await readable(firstURL)),
+    resultStillThere: await readable(curvesURL),
+    workers: FakeWorker.created.length,
+    unknown: await engine.lineart({ image_id: "nope" }).catch((e) => e.code),
   };
 }
 

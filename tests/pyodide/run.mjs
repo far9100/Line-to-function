@@ -22,6 +22,22 @@ const out = answer.toJs({ dict_converter: Object.fromEntries });
 answer.destroy();
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 
+// the line-art preview the page asks for before a photo is traced (web.lineart_preview)
+const art = { kind: "lineart", method: "flow", lineart_detail: 50, scale: "auto" };
+const artStages = [];
+const artStarted = Date.now();
+const artCall = web.lineart_preview(new Uint8Array(await readFile(imagePath)), path.basename(imagePath),
+                                    JSON.stringify(art), (s) => artStages.push(s), "art");
+const artOut = artCall.toJs({ dict_converter: Object.fromEntries });
+artCall.destroy();
+const lineart = {
+  stages: artStages,
+  answer: JSON.parse(artOut.answer),
+  seconds: (Date.now() - artStarted) / 1000,
+  files: Object.fromEntries(Object.entries(artOut.files).map(([name, bytes]) => [name, sha(bytes)])),
+  bytes: Object.fromEntries(Object.entries(artOut.files).map(([name, b]) => [name, b.byteLength])),
+};
+
 // what the page asks for when a download must match the line style it is showing (viewer/engine.js styledSVG)
 function restyle(color, seed, width) {
   const call = web.export_svg(out.files["curves.json"], color, seed, width);
@@ -41,6 +57,7 @@ console.log(JSON.stringify({
   files: Object.fromEntries(Object.entries(out.files).map(([name, bytes]) => [name, sha(bytes)])),
   styled: { bwUniform: restyle("bw", 0, "uniform"), randomMeasured: restyle("random", 7, "measured"),
             bad: restyle("nope", 0, "uniform") },
+  lineart,
   standalone: out.zip ? out.zip.buffer.byteLength === out.zip.byteLength : null, // a copy: can be transferred
   heap: py._module.HEAPU8.byteLength,
 }));

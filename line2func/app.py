@@ -4,12 +4,13 @@
     python -m line2func --browser none     # only print the address
     python -m line2func --browser chrome   # an app window instead (no tabs, no address bar)
 
-The page is the curve viewer. Drop a line drawing onto it (or choose or paste
-one), choose functions or parametric equations and convert: the drawing is
-traced like ``demo`` (up to 5,000 curves) with a quality check, and the result
-opens in the same page (equations, Desmos, SVG, LaTeX, ZIP). The API can also
-extract line art from photos first (jobs of kind "lineart"); the page does not
-offer that.
+The page is the curve viewer. Drop any image onto it (or choose or paste one),
+choose functions or parametric equations and convert: it is traced like
+``demo`` (up to 5,000 curves) with a quality check, and the result opens in the
+same page (equations, Desmos, SVG, LaTeX, ZIP). A photo is recognized on the
+way in and the line art in it is found first, for the user to look at (jobs of
+kind "lineart"); the trace that follows reuses exactly the ink map that was
+shown.
 
 Everything runs on this computer. The server binds to 127.0.0.1, answers only
 requests addressed to this machine by name, and every POST must carry a
@@ -70,6 +71,7 @@ import numpy as np
 from line2func import __version__, browser, jobs, lineart, pipeline, weights
 from line2func.export import DESMOS_CURVE_LIMIT
 from line2func.jobs import ApiError, StoredImage
+from line2func.lineart import MODEL_METHODS
 from line2func.serve import DATA_FILES, BaseHandler, LocalServer
 
 MAX_UPLOAD = 64 << 20  # bytes per uploaded file
@@ -86,10 +88,9 @@ GRACE = 10.0  # seconds to wait for a reload after the last window closed
 PING = 5.0
 LANGS = ("en", "zh-TW")
 IMMUTABLE = "private, max-age=31536000, immutable"  # id-addressed files never change
-MODEL_METHODS = ("informative", "informative-coarse")
-OPTION_KEYS = {"method", "scale", "tolerance", "threshold", "refine", "named", "shape_tolerance", "upscale",
-               "faint", "quality", "form", "denoise", "denoise_on", "faint_sensitivity",
-               "line_color", "color_seed", "line_width"}
+OPTION_KEYS = {"method", "lineart_detail", "scale", "tolerance", "threshold", "refine", "named",
+               "shape_tolerance", "upscale", "faint", "quality", "form", "denoise", "denoise_on",
+               "faint_sensitivity", "line_color", "color_seed", "line_width"}
 DOWNLOAD_NAMES = {
     "curves.json": "{stem}.json",
     "out.svg": "{stem}.svg",
@@ -438,14 +439,14 @@ class App:
         if not isinstance(p, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params")
         img = self.image(p.get("image_id"))
-        kind = jobs.check_choice(p, "kind", ("lineart", "trace"))
-        method = jobs.check_choice(p, "method", lineart.METHODS, "none")
-        if kind == "lineart" and method == "none":
+        kind = jobs.check_choice(p, "kind", jobs.KINDS)
+        art = jobs.lineart_options(p)
+        if kind == "lineart" and art["method"] == "none":
             raise ApiError(HTTPStatus.BAD_REQUEST, "bad_params", field="method")
-        status = self.method_status(method)
+        status = self.method_status(art["method"])
         if not status["available"]:
             raise ApiError(HTTPStatus.CONFLICT, status["reason"], field="method")
-        params = {"method": method, "scale": jobs.resolve_scale(img, p.get("scale", "auto"))}
+        params = {**art, "scale": jobs.resolve_scale(img, p.get("scale", "auto"))}
         if kind == "trace":
             params.update(jobs.trace_options(p, img.size, params["scale"], QUALITY_MAX_PIXELS))
         return Job(_new_id(), kind, img.id, img.name, params)
@@ -460,8 +461,10 @@ class App:
             self.derived.put(key, rgb)
         return rgb
 
-    def _ink(self, img: StoredImage, scale: float, method: str, rgb: np.ndarray, step) -> np.ndarray:
-        key = ("ink", img.id, scale, method)
+    def _ink(self, img: StoredImage, scale: float, method: str, detail: float, rgb: np.ndarray,
+             step) -> np.ndarray:
+        # the detail belongs in the key: a preview at one setting must never be traced at another
+        key = ("ink", img.id, scale, method, detail)
         ink = self.derived.get(key)
         if ink is not None:
             return ink
@@ -478,7 +481,7 @@ class App:
             self.models_loaded.add(method)
         step("lineart")
         try:
-            ink = lineart.extract(rgb, method)
+            ink = lineart.extract(rgb, method, detail)
         except (ImportError, weights.WeightsError):
             raise
         except Exception as exc:  # noqa: BLE001 - e.g. CUDA out of memory
@@ -503,13 +506,13 @@ class App:
         rgb = self._working_rgb(img, p["scale"])
         method = p["method"]
         if job.kind == "lineart":
-            ink = self._ink(img, p["scale"], method, rgb, step)
+            ink = self._ink(img, p["scale"], method, p["lineart_detail"], rgb, step)
             step("encode")
             h, w = rgb.shape[:2]
             job.files = {"lineart.png": jobs.lineart_png(ink, PREVIEW_SIDE)}
             job.summary = {"width": w, "height": h, "scale": p["scale"]}
             return
-        ink = self._ink(img, p["scale"], method, rgb, step) if method != "none" else None
+        ink = self._ink(img, p["scale"], method, p["lineart_detail"], rgb, step) if method != "none" else None
         job.files, job.summary = jobs.run_trace(rgb, img.name, p, step, ink=ink, started=job.started)
 
     def zip_bytes(self, job: Job) -> bytes:
@@ -722,7 +725,7 @@ def make_app(port: int = 0, *, auto_exit: bool = False, grace: float = GRACE, ho
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="python -m line2func",
-        description="Open line2func in the browser: drop a line drawing onto the page and turn its lines "
+        description="Open line2func in the browser: drop an image onto the page and turn its lines "
                     "into equations.")
     p.add_argument("--port", type=int, default=0, help="port to use (default: any free port)")
     p.add_argument("--browser", choices=browser.CHOICES, default="default",

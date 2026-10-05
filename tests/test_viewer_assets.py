@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from line2func import app as app_mod
-from line2func import pipeline, serve
+from line2func import lineart, pipeline, serve
 from line2func.curves import Curve, CurveSet
 from line2func import geometry as g
 from line2func.export import (DESMOS_CURVE_LIMIT, LINE_COLOR_MODES, LINE_WIDTH_MODES, OUTLINE_WIDTH, PALETTE,
@@ -71,12 +71,39 @@ def test_the_page_starts_where_it_says_it_does():
     source = (serve.VIEWER_DIR / "app.js").read_text(encoding="utf-8")
     start = re.search(r"const START = \{(.*?)\n\};", source, re.S).group(1)
     for field, value in (("form", '"parametric"'), ("denoiseOn", "false"), ("denoise", "0"),
-                         ("faint", "100"), ("lineColor", '"bw"'), ("lineWidth", '"measured"')):
+                         ("faint", "100"), ("lineColor", '"bw"'), ("lineWidth", '"measured"'),
+                         ("method", '"auto"'), ("lineartDetail", "50")):
         assert re.search(rf"\b{field}: {re.escape(value)},", start), field
     assert pipeline.DENOISE == 50 and pipeline.FAINT_SENSITIVITY == 50
+    # the line-art detail is the one slider with no "keep everything" end, so it starts where the
+    # command line is and its tooltip says so, like the other two
+    assert lineart.DETAIL == 50
     strings = json.loads((serve.VIEWER_DIR / "i18n.json").read_text(encoding="utf-8"))
-    for key in ("convert.denoiseHint", "convert.faintHint"):
+    for key in ("convert.denoiseHint", "convert.faintHint", "convert.detailHint"):
         assert "50" in strings["en"][key] and "50" in strings["zh-TW"][key]  # the command line's value
+
+
+def test_the_page_offers_every_line_art_method():
+    """The picker and lineart.METHODS are one list in two files, and every name is translated."""
+    html = serve.VIEWER.read_text(encoding="utf-8")
+    block = re.search(r'<select id="lineart-method".*?</select>', html, re.S).group(0)
+    values = re.findall(r'<option value="([\w-]+)"', block)
+    assert values == ["auto", *lineart.METHODS]
+    assert re.findall(r'data-i18n="method\.([\w-]+)"', block) == values
+    source = (serve.VIEWER_DIR / "app.js").read_text(encoding="utf-8")
+    listed = re.search(r"const METHODS = \[(.*?)\];", source).group(1)
+    assert re.findall(r'"([\w-]+)"', listed) == values
+    models = re.search(r"const MODEL_METHODS = \[(.*?)\];", source).group(1)
+    assert tuple(re.findall(r'"([\w-]+)"', models)) == lineart.MODEL_METHODS
+    strings = json.loads((serve.VIEWER_DIR / "i18n.json").read_text(encoding="utf-8"))
+    for value in values:
+        assert f"method.{value}" in strings["en"] and f"method.{value}" in strings["zh-TW"]
+
+
+def test_the_detail_slider_covers_the_whole_range():
+    html = serve.VIEWER.read_text(encoding="utf-8")
+    tag = re.search(r'<input type="range" id="lineart-detail"[^>]*>', html).group(0)
+    assert 'min="0"' in tag and 'max="100"' in tag
 
 
 def test_the_background_slider_starts_where_the_viewer_draws():
@@ -86,6 +113,53 @@ def test_the_background_slider_starts_where_the_viewer_draws():
     source = (serve.VIEWER_DIR / "viewer.js").read_text(encoding="utf-8")
     drawn = float(re.search(r"alpha: \{ original: ([\d.]+),", source).group(1))
     assert markup / 100 == drawn == 0.5
+
+
+def test_no_viewer_file_holds_a_control_character():
+    """An escape eaten on the way in (a CSS "\\2026" read as octal) leaves a C1 character no editor shows."""
+    for path in [serve.VIEWER, *(serve.VIEWER_DIR / name for name in serve.ASSETS)]:
+        text = path.read_text(encoding="utf-8")
+        found = [(text.count("\n", 0, m.start()) + 1, hex(ord(m.group())))
+                 for m in re.finditer(r"[\x80-\x9f]", text)]
+        assert not found, (path.name, found)
+
+
+@pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
+def test_only_line_art_that_is_current_can_be_traced():
+    """The picture that is up stays up while the next one is made; Convert must wait for the next one."""
+    job, url, error = {"pending": True}, {"url": "blob:a", "fresh": True}, {"error": {"code": "failed"}}
+    cases = {
+        "line art, nothing to find": (False, None),
+        "not asked for yet": (True, None),
+        "the first one is being made": (True, job),
+        "made": (True, url),
+        "made, and the next one is being made": (True, {**url, **job, "fresh": False}),
+        "made, and the next one failed": (True, {**url, **error, "fresh": False}),
+        "made, and the next one was stopped": (True, {**url, "fresh": False}),
+        "the first one failed": (True, error),
+    }
+    script = (f"import {{ lineartState }} from {json.dumps((serve.VIEWER_DIR / 'preview.js').as_uri())};\n"
+              f"console.log(JSON.stringify(Object.fromEntries(Object.entries({json.dumps(cases)})"
+              ".map(([name, [on, preview]]) => [name, lineartState(on, preview)]))));\n")
+    out = subprocess.run([NODE, "--input-type=module", "-"], input=script, capture_output=True, text=True,
+                         encoding="utf-8", timeout=60)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout)
+    assert {name: (s["state"], s["status"]) for name, s in got.items()} == {
+        "line art, nothing to find": ("off", ""),
+        "not asked for yet": ("off", ""),
+        "the first one is being made": ("running", "stage"),
+        "made": ("ready", "note"),
+        "made, and the next one is being made": ("running", "stage"),
+        "made, and the next one failed": ("failed", "error"),
+        "made, and the next one was stopped": ("off", ""),
+        "the first one failed": ("failed", "error"),
+    }
+    # Convert: free for line art, and for a photo only once the line art on screen is the one to be traced
+    assert [name for name, s in got.items() if not s["convertDisabled"]] == ["line art, nothing to find", "made"]
+    assert all(s["ready"] != s["convertDisabled"] for name, s in got.items() if name != "line art, nothing to find")
+    # the chips that swap line art and original are there whenever there is line art to swap to
+    assert [name for name, s in got.items() if s["shown"]] == [name for name, (_, p) in cases.items() if p and "url" in p]
 
 
 def test_the_package_ships_every_asset():
@@ -227,5 +301,5 @@ def test_the_worker_handles_every_message_the_engine_sends():
     # every {type: "..."} the engine builds, less "module" (the Worker's own option)
     sent = set(re.findall(r'type:\s*"(\w+)"', engine)) - {"module"}
     handled = set(re.findall(r'm\.type === "(\w+)"', worker))
-    assert sent == {"init", "open", "trace", "svg"}  # if this changes, the pair below is what matters
+    assert sent == {"init", "open", "trace", "lineart", "svg"}  # if this changes, the pair below is what matters
     assert sent <= handled, sent - handled

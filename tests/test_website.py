@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from line2func import serve, web, website
+from line2func import lineart, serve, web, website
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,10 +76,18 @@ def test_nothing_shipped_reaches_for_what_is_left_out():
     shipped = {p.stem for p in pkg.glob("*.py")} - website.NOT_IN_BROWSER
     referenced = set().union(*(_intra_package_imports(pkg, m) for m in shipped))
     # The only two ways out, both lazy and neither reachable online: lineart.extract imports
-    # lineart_model for a model method, and web.py pins the method to "none"; pipeline.trace
-    # imports optimize for optimize=True, which neither jobs.py nor web.py can set. Both of
-    # them import torch at module scope, which Pyodide does not have, so even reaching one
-    # could not work. Widen this set only with the same kind of argument.
+    # lineart_model for a method in lineart.MODEL_METHODS, and web.py allows only
+    # lineart.PURE_METHODS; pipeline.trace imports optimize for optimize=True, which neither
+    # jobs.py nor web.py can set. Both of them import torch at module scope, which Pyodide
+    # does not have, so even reaching one could not work. Widen this set only with the same
+    # kind of argument - and the argument is checked, not just written down:
+    assert set(lineart.PURE_METHODS) & set(lineart.MODEL_METHODS) == set()
+    assert set(lineart.PURE_METHODS) | set(lineart.MODEL_METHODS) == set(lineart.METHODS)
+    for method in lineart.MODEL_METHODS:
+        answer = json.loads(web.lineart_preview(b"", "x.png", json.dumps(
+            {"kind": "lineart", "method": method}))["answer"])
+        assert answer["error"]["field"] == "method"
+    assert "optimize" not in (web.jobs.trace_options({}, (64, 64), 1.0, 1 << 20) | web.jobs.lineart_options({}))
     assert referenced - shipped == {"lineart_model", "optimize"}
     assert "importlib" not in "".join(                     # nothing loads a module by name
         (pkg / f"{m}.py").read_text(encoding="utf-8") for m in shipped)

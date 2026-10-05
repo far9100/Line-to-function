@@ -75,6 +75,17 @@ def test_chinese_only_lives_in_the_translations():
         assert not stray, (name, "".join(stray)[:40])
 
 
+def test_the_english_side_is_in_english():
+    """A string edited into the wrong block reads perfectly to a reader of the other language.
+
+    Every other check here is about which keys exist and what they interpolate, and all of them pass
+    when a Chinese sentence is sitting under "en" - which is exactly what happened once.
+    """
+    for key, value in STRINGS["en"].items():
+        for text in (value.values() if isinstance(value, dict) else [value]):
+            assert not CJK.search(text), (key, text)
+
+
 class _VisibleText(HTMLParser):
     """Text nodes of the page body that are not covered by a data-i18n attribute."""
 

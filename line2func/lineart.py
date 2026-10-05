@@ -8,6 +8,10 @@ where 1 means "line" and 0 means "paper".
 * ``canny`` - Canny edge detection. Thick lines produce an edge on each side.
 * ``xdog``  - eXtended Difference of Gaussians (Winnemöller et al., 2012), edge
   term only, which gives sketch-like lines from photos.
+* ``flow``  - coherent line drawing (Kang, Lee & Chui, NPAR 2007): a difference
+  of Gaussians taken across the edge tangent flow and smoothed along it, which
+  gives long connected lines instead of speckle. **The default for photos**,
+  and the only good one that needs nothing downloaded.
 * ``informative`` / ``informative-coarse`` - pretrained line-art network
   (Informative Drawings, Chan et al., CVPR 2022, MIT); needs PyTorch and
   ``python -m line2func.weights fetch informative``. See :mod:`line2func.lineart_model`.
@@ -22,7 +26,9 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage
 
-METHODS = ("none", "canny", "xdog", "informative", "informative-coarse")
+METHODS = ("none", "canny", "xdog", "flow", "informative", "informative-coarse")
+MODEL_METHODS = ("informative", "informative-coarse")  # need PyTorch and downloaded weights
+PURE_METHODS = tuple(m for m in METHODS if m not in MODEL_METHODS)  # what a browser can run
 
 
 class ImageTooLarge(ValueError):
@@ -197,9 +203,174 @@ def xdog(
     return np.clip(np.tanh(phi * (-dog - epsilon)), 0.0, 1.0).astype(np.float32)
 
 
-def extract(image, method: str = "none") -> np.ndarray:
-    """Ink map of ``image`` (path or array) using ``method`` (one of :data:`METHODS`)."""
-    if method in ("informative", "informative-coarse"):
+# The flow extractor's fixed settings; the three the detail slider moves are in DETAIL_TUNED below.
+FLOW_SIGMA_G = 1.0  # px: gradient smoothing for the structure tensor the flow is read from
+FLOW_SIGMA_C = 5.2  # px: how far the flow is smoothed, = 3.0 * sqrt(3) (see edge_tangent_flow)
+FLOW_K = 1.6  # the DoG's second sigma, as a multiple of the first (as in xdog)
+FLOW_PHI = 40.0  # steepness of the soft threshold, on gray in [0, 1] (xdog uses 50)
+FLOW_ITERS = 3  # FDoG rounds: each one draws the lines found so far onto the original and looks again
+
+DETAIL = 50.0  # default line-art detail, 0..100 (see detail_params)
+# The flow settings the detail slider moves: as tuned (50), at its coarsest (0) and at its finest (100).
+DETAIL_TUNED = {"sigma_e": 1.00, "sigma_m": 2.60, "tau": 0.985}
+DETAIL_COARSE = {"sigma_e": 1.80, "sigma_m": 3.80, "tau": 0.950}
+DETAIL_FINE = {"sigma_e": 0.80, "sigma_m": 2.20, "tau": 0.997}
+
+
+def detail_params(detail: float | None = None) -> dict:
+    """The :func:`flow` settings for a line-art detail of 0..100 (``None`` means :data:`DETAIL`).
+
+    :data:`DETAIL` (50) gives the tuned values (:data:`DETAIL_TUNED`); from there the settings move to
+    :data:`DETAIL_FINE` at 100 and to :data:`DETAIL_COARSE` at 0. All three move together because they
+    are three views of one decision - how weak a ridge still counts as a line. Finer means a narrower
+    kernel across the flow (so lines close together stay apart), a shorter run along it (less evidence
+    demanded that a ridge carries on), and a ``tau`` nearer 1 (the DoG's centre and surround nearly
+    cancel, so a weaker ridge survives).
+
+    **``tau`` is moved in proportion, not linearly**, because what it does is set by how far it is from
+    1, and that margin spans 0.050 to 0.003 - an order of magnitude - across the slider. Interpolated
+    straight, the fine half of the slider barely moves ``tau`` while the two sigmas drop quickly, and
+    the result is *less* line at 60 than at 50. Measured on three pictures, over 0, 10, ... 100, the
+    proportional form gives more line at every step and the straight one does not.
+
+    Two consequences worth knowing. The narrower kernels of a high detail are also **cheaper**, so the
+    slowest setting is 0, not 100. And the fine end is deliberately tame - 100 gives about one and a
+    half to two times the line of the tuned setting, not ten times - because past that what comes in is
+    mostly texture, and the curve budget goes on it.
+    """
+    if detail is None:
+        detail = DETAIL
+    if not 0.0 <= detail <= 100.0:
+        raise ValueError("line-art detail must be between 0 and 100")
+    other = DETAIL_FINE if detail >= DETAIL else DETAIL_COARSE
+    a = abs(detail - DETAIL) / DETAIL
+    out = {k: (1.0 - a) * v + a * other[k] for k, v in DETAIL_TUNED.items() if k != "tau"}
+    margin = (1.0 - DETAIL_TUNED["tau"]) ** (1.0 - a) * (1.0 - other["tau"]) ** a
+    out["tau"] = 1.0 - margin
+    return out
+
+
+def edge_tangent_flow(gray: np.ndarray, sigma_g: float = FLOW_SIGMA_G,
+                      sigma_c: float = FLOW_SIGMA_C) -> tuple[np.ndarray, np.ndarray]:
+    """The edge tangent flow of ``gray``: unit vectors ``(tx, ty)`` along the local feature direction.
+
+    The flow is the minor eigenvector of the smoothed structure tensor, which points along an edge
+    rather than across it. Kang et al. build the same field by smoothing the tangents over several
+    rounds; **rounds of un-normalized linear smoothing collapse** - three passes of sigma 3.0 are one
+    pass of sigma 3 * sqrt(3) - so this is one separable Gaussian (:data:`FLOW_SIGMA_C`).
+
+    It is a direction without a sign: ``(tx, ty)`` and ``(-tx, -ty)`` mean the same thing, and which
+    one comes out flips along a curve. Everything that reads the flow has to be even in it, which is
+    why :func:`_directional` samples symmetrically.
+    """
+    g = gray.astype(np.float64)
+    gx = ndimage.gaussian_filter(g, sigma_g, order=(0, 1))
+    gy = ndimage.gaussian_filter(g, sigma_g, order=(1, 0))
+    e = ndimage.gaussian_filter(gx * gx, sigma_c)
+    f = ndimage.gaussian_filter(gx * gy, sigma_c)
+    h = ndimage.gaussian_filter(gy * gy, sigma_c)
+    # the smaller eigenvalue of [[e, f], [f, h]], and (f, lam - e), the eigenvector that goes with it
+    lam = 0.5 * (e + h - np.hypot(e - h, 2.0 * f))
+    tx, ty = f, lam - e
+    size = np.hypot(tx, ty)
+    flat = size < 1e-12  # no edge here at all: any direction will do, and none of them gets any weight
+    size = np.where(flat, 1.0, size)
+    return np.where(flat, 1.0, tx / size), np.where(flat, 0.0, ty / size)
+
+
+def _offsets(reach: float) -> np.ndarray:
+    """Whole-pixel offsets from ``-reach`` to ``reach``, rounded outwards."""
+    r = int(np.ceil(reach))
+    return np.arange(-r, r + 1, dtype=np.float64)
+
+
+def _gaussian_weights(offsets: np.ndarray, sigma: float) -> np.ndarray:
+    w = np.exp(-0.5 * (offsets / sigma) ** 2)
+    return w / w.sum()
+
+
+def _directional(img: np.ndarray, dx: np.ndarray, dy: np.ndarray, offsets: np.ndarray,
+                 weights: np.ndarray) -> np.ndarray:
+    """``sum_i weights[i] * img(p + offsets[i] * (dx, dy))`` at every pixel ``p``, sampled bilinearly.
+
+    One straight line of samples per pixel, aimed along that pixel's own ``(dx, dy)``. The weights are
+    symmetric, so the answer does not depend on which way round the direction points - which is what
+    makes this safe to use on the unsigned flow of :func:`edge_tangent_flow`. Following a curved
+    streamline instead would have to pick a way round at every step and would double back wherever the
+    sign flips; the straight run is one gather per offset, and :func:`flow_dog` recovers the curve by
+    re-aiming on each of its rounds.
+
+    Samples that fall outside the picture come from an **odd reflection**, which carries the slope
+    across the border instead of flattening it. Repeating the edge pixel would leave a kink there that
+    a difference of Gaussians reads as a line, and a photo would come out framed: measured on a plain
+    gradient, clamping drew a 0.019 line down the first column, odd reflection draws exactly nothing.
+    """
+    h, w = img.shape
+    pad = int(np.ceil(np.abs(offsets).max())) + 1
+    wide = np.pad(img, pad, mode="reflect", reflect_type="odd")
+    rows, cols = np.ogrid[pad:h + pad, pad:w + pad]
+    coords = np.empty((2, h, w), dtype=np.float64)
+    got = np.empty((h, w), dtype=np.float64)
+    acc = np.zeros((h, w), dtype=np.float64)
+    for offset, weight in zip(offsets, weights):
+        if offset == 0.0:
+            acc += weight * img
+            continue
+        np.multiply(dy, offset, out=coords[0])
+        coords[0] += rows
+        np.multiply(dx, offset, out=coords[1])
+        coords[1] += cols
+        ndimage.map_coordinates(wide, coords, order=1, mode="nearest", output=got)
+        np.multiply(got, weight, out=got)
+        acc += got
+    return acc
+
+
+def flow_dog(gray: np.ndarray, tx: np.ndarray, ty: np.ndarray, sigma_e: float = 1.0,
+             sigma_m: float = 2.6, tau: float = 0.985, k: float = FLOW_K, phi: float = FLOW_PHI,
+             iterations: int = FLOW_ITERS) -> np.ndarray:
+    """Flow-based difference of Gaussians as an ink map, given the flow from :func:`edge_tangent_flow`.
+
+    Each round does two passes: a difference of Gaussians **across** the flow, which asks "is there a
+    dark ridge here", and a Gaussian **along** it, which asks the neighbours on the same line whether
+    they agree. A speck of noise has no line to agree with it and is averaged away; a real line is
+    reinforced from both ends. The lines found are then drawn onto the original and the round runs
+    again, which closes the places a single pass leaves dotted.
+
+    The two Gaussians across the flow are folded into one kernel (``w_e - tau * w_k``) before any
+    sampling, which halves the work. ``tau`` below 1 leaves a margin that flat and smoothly shaded
+    areas cannot cross, so a sky or a cheek contributes exactly nothing: a difference of Gaussians is
+    zero on anything linear, and what is left, ``(1 - tau) * gray``, has the wrong sign to be ink.
+    """
+    original = gray.astype(np.float64)
+    img = original
+    across = _offsets(2.0 * k * sigma_e)
+    w_across = _gaussian_weights(across, sigma_e) - tau * _gaussian_weights(across, k * sigma_e)
+    along = _offsets(2.0 * sigma_m)
+    w_along = _gaussian_weights(along, sigma_m)
+    nx, ny = -ty, tx  # across the flow
+    ink = np.zeros_like(original)
+    for _ in range(iterations):
+        ridge = _directional(img, nx, ny, across, w_across)
+        agreed = _directional(ridge, tx, ty, along, w_along)
+        ink = np.tanh(phi * np.maximum(-agreed, 0.0))
+        img = np.minimum(original, 1.0 - ink)
+    return np.clip(ink, 0.0, 1.0).astype(np.float32)
+
+
+def flow(gray: np.ndarray, detail: float | None = None) -> np.ndarray:
+    """Coherent line drawing as an ink map: the flow, then :func:`flow_dog` at ``detail`` (0..100)."""
+    tx, ty = edge_tangent_flow(gray)
+    return flow_dog(gray, tx, ty, **detail_params(detail))
+
+
+def extract(image, method: str = "none", detail: float | None = None) -> np.ndarray:
+    """Ink map of ``image`` (path or array) using ``method`` (one of :data:`METHODS`).
+
+    ``detail`` is the line-art detail, 0..100 (:data:`DETAIL` when it is ``None``). Only ``flow``
+    reads it; the other methods have nothing it would mean.
+    """
+    if method in MODEL_METHODS:
         from line2func import lineart_model
 
         return lineart_model.extract(load_rgb(image), method)
@@ -210,6 +381,8 @@ def extract(image, method: str = "none") -> np.ndarray:
         return canny(gray)
     if method == "xdog":
         return xdog(gray)
+    if method == "flow":
+        return flow(gray, detail)
     raise ValueError(f"unknown line-art method {method!r}; choose from {', '.join(METHODS)}")
 
 
@@ -237,3 +410,14 @@ def suggest_mode(image) -> str:
     blank = 1.0 - float(drawn.mean())
     solid = float(np.mean(ndimage.distance_transform_edt(drawn)[drawn] > 2.0))
     return "lineart" if blank >= 0.5 and solid <= 0.35 else "photo"
+
+
+def suggest_method(image) -> str:
+    """The line-art method to offer for ``image``: ``"flow"`` for a photo, ``"none"`` for line art.
+
+    The rule the two web pages open an image with (:func:`line2func.jobs.read_image` applies it to the
+    mode it has already read), so their automatic choice cannot drift apart. It follows
+    :func:`suggest_mode`, and is only a suggestion: the pages let the user pick another method, and the
+    command line does not guess at all - there ``--lineart`` says which.
+    """
+    return "flow" if suggest_mode(image) == "photo" else "none"

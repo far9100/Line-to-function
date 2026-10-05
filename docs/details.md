@@ -69,13 +69,15 @@ from the jsDelivr CDN on the first visit; the browser keeps it for later.
 
 - It traces like `python -m line2func` (up to 5,000 curves, with the quality
   check), within tighter limits for a browser tab: files up to 32 MB, images
-  kept at up to 2048 px, traced and quality-checked at up to 1.5 megapixels
-  (larger ones are shrunk first).
+  kept at up to 2048 px, traced at up to 2.5 megapixels (larger ones are
+  shrunk first) and quality-checked at up to 2.0 (above that the check is
+  skipped, and the page says so).
 - It takes 1.5 to 2 times as long as installed. Five real drawings of about
   0.6 megapixels took 17–56 s each (Edge or Node.js on a Ryzen 7 9700X,
   including the quality check), against 11–30 s installed, and used up to
-  about 460 MB of memory. Slower computers and phones take longer, and a phone
-  may run out of memory on a large drawing.
+  about 460 MB of memory. A photograph at the full 2.5 megapixels took about
+  11 s, line extraction included, and 487 MB. Slower computers and phones take
+  longer, and a phone may run out of memory on a large picture.
 - WebAssembly rounds some calculations slightly differently, so a curve or two
   can come out differently from the installed version; the share of lines kept
   is the same.
@@ -83,7 +85,8 @@ from the jsDelivr CDN on the first visit; the browser keeps it for later.
 - It needs Chrome, Edge or Firefox 112 or newer, or Safari 16.4 or newer. The
   settings and the language are kept in the browser.
 
-Photos and the other options (sections 6 and 7) need the installed version.
+Photos work here too (see below). The pretrained line-art network and the
+other options (sections 6 and 7) need the installed version.
 
 #### In the browser (drag and drop)
 
@@ -93,7 +96,7 @@ python -m line2func          # or just: line2func   (after pip install -e .)
 
 The page opens in a new tab of your default browser. Then:
 
-1. **Drop a line drawing** onto the page. You can also click **Choose a
+1. **Drop an image** onto the page. You can also click **Choose a
    file…** or paste with Ctrl+V. PNG, JPEG, WebP, BMP, TIFF and GIF are
    accepted, up to 64 MB. Photos from phones are turned upright.
 2. The drawing appears in place. Choose how to write the lines, as
@@ -115,9 +118,12 @@ The page opens in a new tab of your default browser. Then:
 4. **Clear image** at the top removes the image, so the next one can be
    dropped. You can also drop another image at any time.
 
-The web page traces every image as line art. For photos, use `demo` with
-`--lineart` (section 6); the command line also has all the other options
-(section 7).
+The web page takes photos as well as drawings. A photo is recognized as it is
+opened and the lines in it are found first (`flow`, section 6); the page shows
+you that line art, with **Line-art detail** to adjust it and a pair of chips to
+compare it with the original, and traces it only when you convert. The
+pretrained network and the other options are on the command line (sections 6
+and 7).
 
 The **中文 / EN** switch in the top right changes the language, and the choice is
 remembered. Ctrl+C in the terminal, or the **Quit** button on the page, ends the
@@ -186,7 +192,7 @@ eyelashes, are traced by their outline only (tagged `fill_outline`; the outline
 of a thick or strongly tapered stroke is tagged `outline`). Each one carries how
 dark it is, as `tone` (0 paper, 1 black). **Nothing is ever filled.** An area is
 drawn with curves tagged `fill` across it, spaced by one formula for every area
-(section 4): rings where it is deeper than one spacing, 45 degree hatching where
+(section 8): rings where it is deeper than one spacing, 45 degree hatching where
 it is not. Desmos cannot fill a pasted expression, so this is the only way tone
 reaches it - and the page and the SVG draw the same curves, so all three outputs
 show the same drawing. Its outline is stroked in the color measured inside it,
@@ -292,7 +298,7 @@ your computer, ask for fewer, e.g. `--curves 2000`.
 
 A pasted expression is drawn by Desmos as a line of one fixed width and one
 color, so `desmos.txt` can only say how dark an area is by how densely it is
-drawn (section 4, *Shadows, heavy eyelashes and other filled areas*). The
+drawn (section 8, *Shadows, heavy eyelashes and other filled areas*). The
 Desmos API takes a `color` and a `lineWidth` per expression, and `desmos.js` is
 the same expressions written with them - the width and color measured along
 each stroke, and for the curves inside a filled area, the area's own gray.
@@ -372,15 +378,94 @@ functions of the selected curve.
 
 ### 6. Photos and color images
 
-Photos need a line-extraction step first (`--lineart`):
+Photos need a line-extraction step first (`--lineart`). Both web pages do it by
+themselves for anything `lineart.suggest_mode` calls a photo, and show you the
+result before tracing it; on the command line it is a flag.
 
 | Method | Needs | Result |
 |---|---|---|
-| `informative` | PyTorch + weights | Pretrained line-art network: drawing-like lines. **Best for photos** |
+| `flow` | nothing | Coherent line drawing: long, connected lines. **The default for photos, and the best one that needs nothing downloaded** |
+| `informative` | PyTorch + weights | Pretrained line-art network: drawing-like lines. **Best of all, where PyTorch is installed** |
 | `informative-coarse` | PyTorch + weights | Same network, bolder and simpler lines |
 | `canny` | nothing | Edge detection; thick lines get an edge on each side |
 | `xdog` | nothing | Stylized edges; works on high-contrast images |
 | `none` (default) | nothing | The input already is line art |
+
+**Why `flow`, and why it is the one in the browser.** A tracer does not want
+pretty edges, it wants *strokes*: it binarizes, thins to a skeleton, walks that
+skeleton into a graph and fits curves to the runs it finds. Every disconnected
+fragment is either thrown away by the speck filter or costs a curve of its own,
+which is why the other image-to-Desmos tools say photos give them thousands of
+equations. `flow` is a difference of Gaussians taken **across** the edge tangent
+flow and then smoothed **along** it (Kang, Lee & Chui, NPAR 2007): a speck of
+noise has no line to agree with it and is averaged away, while a real line is
+reinforced from both ends. Measured on a photo-like picture (a drawing blurred,
+unevenly lit and given noise), with the ink thinned and its connected pieces
+counted:
+
+| Method | seconds | skeleton px | pieces | pieces per 1,000 px | line width |
+|---|---|---|---|---|---|
+| `flow` | 0.85 | 17,163 | 558 | **32.5** | 2.40 |
+| `xdog` | 0.02 | 10,462 | 1,983 | 189.5 | 1.78 |
+| `canny` | 0.06 | 49,495 | 755 | 15.3 | 1.12 |
+
+and with the noise raised from 0.02 to 0.06, which is an ordinary photograph:
+
+| Method | skeleton px | pieces | pieces per 1,000 px | change |
+|---|---|---|---|---|
+| `flow` | 18,169 | 633 | **34.8** | +7% |
+| `xdog` | 19,393 | 8,248 | 425.3 | +124% |
+| `canny` | 48,502 | 806 | 16.6 | +9% |
+
+That is a controlled experiment on one picture. On **32 real photographs**
+(section 9), paired photograph by photograph with a 95% bootstrap interval:
+
+| flow minus | pieces per 1,000 px | skeleton px | line width | extraction |
+|---|---|---|---|---|
+| `xdog` | **−132.7** [−174.6, −96.8] | **+3,362** [+1,368, +7,845] | **+0.55 px** [+0.47, +0.67] | +2.70 s |
+| `canny` | +34.4 [+26.6, +46.7] | **−23,270** [−37,860, −11,170] | +1.13 px [+1.01, +1.22] | +2.58 s |
+
+Every interval misses zero. Against `xdog`, `flow` hands the tracer lines that
+are a third as broken up (median 57 pieces per 1,000 skeleton pixels against
+182) and it finds *more* line while doing it, not less. Against `canny` it has
+more pieces per 1,000 pixels and that is the wrong way to read the column:
+`canny` has **1.8x the skeleton** for the same photographs, because every line
+gets an edge on each side, so it has more pixels to divide by and twice as much
+to trace.
+
+The last column of that comparison decides something else. Of the 32
+photographs, the lines came out thinner than `pipeline.AUTO_UPSCALE_BELOW`
+(1.75 px) in **30 of them for `xdog` and 32 of 32 for `canny`, against 1 of 32
+for `flow`**. Before the rule that closes this section, that asked for the 2x
+upscale on nearly
+every photograph anyone would open - four times the tracing work, to interpolate
+a decision the extractor had already made.
+
+**What this does not buy is a smaller result.** Traced the way `demo` traces -
+`--curves 5000`, `auto` upscaling - two photographs from each group of the
+corpus came out like this:
+
+| Method | median curves | median seconds | reached the budget |
+|---|---|---|---|
+| `flow` | 5,000 | 23 s | 6 of 10 |
+| `xdog` | 4,348 | 9 s | 5 of 10 |
+| `canny` | 5,000 | 16 s | 6 of 10 |
+
+A photograph fills the budget whichever method found its lines, and `flow` is
+the slowest of the three. What differs is **what those 5,000 curves are**:
+`flow` spends them on long strokes (57 pieces per 1,000 skeleton pixels) and
+`xdog` on dust (182). On one portrait `xdog`'s whole extraction was 8,650
+skeleton pixels in about 3,800 pieces - an average of 2.3 pixels each, which
+the speck filter is right to throw away. Being quick about finding nothing is
+not an advantage; it is why `flow` is the default and `xdog` is still offered
+for a slow machine or a very large picture.
+
+Two properties of `flow` matter as much as the coherence. A flat area gives
+*exactly* zero ink, and so does a smooth gradient - a difference of Gaussians is
+zero on anything linear, and what is left has the wrong sign to be ink - so a
+sky or a cheek contributes nothing to the curve budget. And its lines are wide
+enough to trace as they are: a median of 2.2 px on the 32 photographs, and
+under `pipeline.AUTO_UPSCALE_BELOW` on one of them.
 
 The pretrained weights are never bundled. Download them once; they are checked
 against a pinned SHA-256 and stored in `~/.cache/line2func` (override with
@@ -395,8 +480,14 @@ python -m line2func.demo photo.jpg --lineart informative --out out/
 ```
 
 Photos usually give many short curves. `demo` merges them down to 5,000
-(section 8). The web page traces every image as line art, so photos go through
-`demo`.
+(section 8).
+
+**An extractor's ink map is not enlarged.** `--upscale auto` doubles the
+resolution of a *drawing* whose own lines are thinner than one pixel can carry;
+an extractor's output is already the lines it decided on, at the picture's own
+resolution, so enlarging it only interpolates that decision at four times the
+work. `auto` therefore stays at 1x for every `--lineart` method other than
+`none`; `--upscale 2` still does what it says.
 
 ### 7. All `demo` options
 
@@ -407,7 +498,8 @@ python -m line2func.demo IMAGE [options]
 | Option | Default | Meaning |
 |---|---|---|
 | `--out DIR` | `out` | Output folder |
-| `--lineart {none,canny,xdog,informative,informative-coarse}` | `none` | Line extraction (section 6) |
+| `--lineart {none,canny,xdog,flow,informative,informative-coarse}` | `none` | Line extraction (section 6) |
+| `--lineart-detail 0..100` | `50` | With `--lineart flow`: how much of the picture becomes lines (section 8) |
 | `--curves N` | `5000` | Make N curves: trace finely, then merge the neighbouring pieces whose merge changes the drawing least (section 8). A drawing that gives fewer keeps all of them |
 | `--tolerance PX` | off | Trace to this max curve-fitting error instead of a number of curves. Larger gives fewer, smoother curves |
 | `--threshold 0..1` | automatic | Ink threshold. Automatic: Otsu's, but for line art at most 0.25 so light strokes stay whole (kept at Otsu's when the paper itself would be traced). Lower it if faint lines are missed, raise it if paper texture is traced |
@@ -593,6 +685,43 @@ At the top, pencil texture comes in as short dashes, and on noisy scans the
 noise is traced too (as with `--denoise 0`): on 25 synthetic noisy scans the
 share of curve length on true lines fell from 0.929 at 50 to 0.902 at 75 and
 0.826 at 100 (0.165 on the worst scan). Clean synthetic scans are unchanged.
+
+#### How much of a photo becomes a line: `--lineart-detail`
+
+With `--lineart flow`, one slider from 0 to 100 decides how weak a ridge still
+counts as a line. It moves three settings together, because they are three
+views of that one decision: the width of the kernel taken across the flow
+(`sigma_e`), how far the answer is smoothed along it (`sigma_m`), and how
+nearly the difference of Gaussians cancels (`tau`). Measured on a 0.81 MP
+photograph, at a fixed tolerance of 1.0 with no curve budget:
+
+| detail | `sigma_e` | `sigma_m` | `tau` | extract | ink | skeleton px | pieces/1,000 px | curves | total |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 1.80 | 3.80 | 0.9500 | 1.35 s | 2.1% | 2,760 | 39.5 | 107 | 1.94 s |
+| 25 | 1.40 | 3.20 | 0.9726 | 1.16 s | 3.8% | 5,431 | 31.9 | 202 | 1.80 s |
+| **50** | **1.00** | **2.60** | **0.9850** | **0.91 s** | **4.6%** | **6,796** | **46.1** | **302** | **1.83 s** |
+| 75 | 0.90 | 2.40 | 0.9933 | 0.78 s | 8.3% | 9,234 | 61.3 | 821 | 2.00 s |
+| 100 | 0.80 | 2.20 | 0.9970 | 0.74 s | 19.5% | 17,062 | 104.3 | 1,211 | 2.57 s |
+
+Three things in that table are worth knowing before turning the slider.
+
+**More detail never finds less line.** That is the promise the control makes,
+and it is what the endpoints were chosen for. `tau` is moved *in proportion*
+rather than linearly, because what it does is set by how far it is from 1, and
+that margin spans 0.050 to 0.003 across the slider. Interpolated straight, the
+fine half barely moved `tau` while the two sigmas fell quickly, and detail 60
+drew *less* than detail 50. On three test pictures, over 0, 10, ... 100, the
+proportional form gives more line at every step and the straight one does not.
+
+**The slowest setting is 0, not 100.** Higher detail means narrower kernels and
+so fewer samples per pixel: extraction falls from 1.35 s to 0.74 s across the
+range. What goes up is the tracing, because there is more line to trace.
+
+**The top end is where the curve budget goes.** At 100 the lines are also more
+broken (104 pieces per 1,000 skeleton pixels against 46 at the tuned setting),
+because what is coming in is texture rather than strokes. `tau` stops at 0.997
+for that reason. On a textured photograph, expect detail 100 to be the setting
+that reaches the 5,000-curve limit.
 
 #### Shadows, heavy eyelashes and other filled areas
 
@@ -879,10 +1008,46 @@ python -m line2func.eval --realset path/to/drawings --set local_trim=false --jso
 python -m line2func.eval --compare runs/b.json runs/a.json
 ```
 
+`--lineart METHOD` (with `--lineart-detail N`) runs the set through a line
+extractor first, which is how a folder of **photographs** is measured:
+
+```bash
+python -m line2func.eval --realset path/to/photos --lineart flow --json runs/photo_flow.json
+python -m line2func.eval --realset path/to/photos --lineart xdog --json runs/photo_xdog.json
+python -m line2func.eval --compare runs/photo_xdog.json runs/photo_flow.json
+```
+
+**Most of the columns cannot be compared between two extractors, and the report
+says so when one is used.** The judge scores the curves against the ink map that
+arm's own extractor produced - the threshold comes from that same ink - so
+`kept`, `precision`, `missed_ink`, `d_M`, `psnr_db` and `ssim` all answer "did
+we draw our own extraction faithfully". An extractor that finds almost nothing
+scores beautifully on every one of them. Three columns do survive the
+comparison, because they do not divide by what the arm chose to find:
+
+| Measure | What it says |
+|---|---|
+| `curves` | Whether the budget is spent (section 8) |
+| `seconds` | What it cost |
+| `pieces_per_kpx` | Connected pieces per 1,000 skeleton pixels of the ink: how broken up the lines handed to the tracer are. This is the one that separates a method that draws strokes from one that shatters (section 6) |
+
 The 66 drawings and the 15 held-out JPEGs that the measurements in this manual
 were taken on are third-party line art. They are kept outside the repository
 and are not published with it, so `data/real_v1` below names where they were,
 not a folder you will find in a checkout. `--realset` takes any folder.
+
+The photograph measurements in section 6 were taken on a separate set of **32
+CC0 photographs** from Wikimedia Commons, every file's licence checked against
+the API rather than assumed from its category, scaled to the 2.5 megapixels the
+online page traces, and spread deliberately over the cases the photo path has to
+survive: 8 portraits (smooth tone must give no lines at all), 9 of foliage and
+grass (the budget-flooding case), 5 of architecture (hard edges, where the older
+methods should compete), 5 of streets at night (grain, where a plain difference
+of Gaussians shatters) and 5 plain objects. They are third-party pictures and
+are kept outside the repository too, with a `sources.json` recording each file's
+page on Commons. The line drawings stay the **regression** set for that work:
+the line-art path must not move, and over all 81 of them it did not - every
+measure zero, with a zero-width interval.
 
 ### 10. Using line2func from Python
 
@@ -940,6 +1105,7 @@ line2func/
   demo.py  serve.py  pipeline.py           # commands, and the tracing flow they share
   lineart.py  lineart_model.py  weights.py # line extraction, pretrained model, downloads
   baseline.py  fit.py                      # baseline engine, Schneider fitting
+  boundary.py                              # the outline of a filled area as closed loops
   attributes.py  shapes.py  export.py      # refinement, width/color, lines/arcs, exports
   functions.py                             # curves as functions y = f(x) / x = g(y) (--form function)
   residual.py  outline.py  fill.py         # second pass, thick strokes as outlines, filling for Desmos
@@ -987,6 +1153,11 @@ This is version 1.2.
 - [x] One-screen web page with three display modes; lines broken into dots and dashes kept; a noise filter slider (`--denoise`)
 - [x] Faint-line sensitivity (`--faint-sensitivity`)
 - [x] Online page: the web page with line2func running in the browser (Pyodide), published with GitHub Pages
+- [x] Any image, not only line art: photographs are recognized as they are opened and the lines in them are found first, with a coherent line drawing (`--lineart flow`) that needs nothing downloaded and so runs in the browser too. Both pages show that line art and let it be adjusted (**Line-art detail**, `--lineart-detail`) before anything is traced
+
+Next:
+
+- [ ] Line art from **regions** rather than edges: quantize the colors, merge the small regions and trace the boundaries. It would give closed loops instead of strokes, and a measured tone per region, which is what the filled-area machinery already draws from - so a photograph could come out shaded rather than outlined. It needs its own curve budget policy, because a loop per region plus rings inside each one is the one way to flood the 5,000, and its own measurement
 
 ---
 
@@ -1044,13 +1215,13 @@ pip install -e ".[torch,dev]"     # 加上 pytest
 
 <https://far9100.github.io/Line-to-function/> 就是下面介紹的網頁版，只是 line2func 透過 [Pyodide](https://pyodide.org)（編譯成 WebAssembly 的 Python）在你的瀏覽器裡執行。不用安裝任何東西，圖片也不會離開你的電腦。Pyodide 連同 numpy、SciPy、Pillow 約 25 MB，第一次使用時從 jsDelivr CDN 下載，之後由瀏覽器保存。
 
-- 描線方式和 `python -m line2func` 相同（最多 5,000 條曲線，並做品質檢查），但為了瀏覽器分頁而限制較嚴：檔案最大 32 MB，圖片最多保留 2048 px，描線與品質檢查最多 1.5 百萬像素（更大的圖會先縮小）。
-- 所需時間是安裝版的 1.5 到 2 倍。五張約 0.6 百萬像素的真實線稿每張要 17–56 秒（Ryzen 7 9700X 上的 Edge 或 Node.js，含品質檢查），安裝版是 11–30 秒；記憶體最多用了約 460 MB。較慢的電腦與手機會更久，手機遇到大圖也可能記憶體不足。
+- 描線方式和 `python -m line2func` 相同（最多 5,000 條曲線，並做品質檢查），但為了瀏覽器分頁而限制較嚴：檔案最大 32 MB，圖片最多保留 2048 px，描線最多 2.5 百萬像素（更大的圖會先縮小），品質檢查最多 2.0 百萬像素（超過就略過檢查，頁面會說明）。
+- 所需時間是安裝版的 1.5 到 2 倍。五張約 0.6 百萬像素的真實線稿每張要 17–56 秒（Ryzen 7 9700X 上的 Edge 或 Node.js，含品質檢查），安裝版是 11–30 秒；記憶體最多用了約 460 MB。一張 2.5 百萬像素的照片，連同抽線稿約 11 秒、487 MB。較慢的電腦與手機會更久，手機遇到大圖也可能記憶體不足。
 - WebAssembly 的部分計算捨入方式略有不同，所以偶爾會有一兩條曲線和安裝版的結果不同；保留線條的比例則相同。
 - 〔取消〕會立刻停止。沒有〔結束〕按鈕：關閉分頁即可。
 - 需要 Chrome、Edge 或 Firefox 112 以上，或 Safari 16.4 以上。設定和語言會保存在瀏覽器裡。
 
-照片和其他選項（第 6、7 節）需要安裝版。
+照片在這裡也能用（見下文）。預訓練的線稿網路和其他選項（第 6、7 節）需要安裝版。
 
 #### 用瀏覽器（拖放）
 
@@ -1060,12 +1231,12 @@ python -m line2func          # 或直接打：line2func（執行過 pip install 
 
 會在預設瀏覽器開一個新分頁。接著：
 
-1. **把線稿拖進頁面**。也可以按〔選擇檔案…〕，或按 Ctrl+V 貼上。支援 PNG、JPEG、WebP、BMP、TIFF、GIF，最大 64 MB。手機拍的照片會自動轉正。
+1. **把圖片拖進頁面**。也可以按〔選擇檔案…〕，或按 Ctrl+V 貼上。支援 PNG、JPEG、WebP、BMP、TIFF、GIF，最大 64 MB。手機拍的照片會自動轉正。
 2. 圖片會出現在原處。選擇線段的寫法：**函數** `y = f(x)`、`x = g(y)`（見第 5 節）或**參數方程式** `x(t)`、`y(t)`，以及去雜訊的強度（〔去雜訊〕，0–100：調低保留更多細節，有雜訊的掃描圖可以調高；見第 8 節）與〔淡線〕靈敏度（0–100：調高保留更淡的頭髮和背景線），再按〔確認 ▶〕。頁面一開始選的是參數方程式，而且什麼都不過濾——〔去雜訊〕關閉、拖動條在 0，〔淡線〕100——所以第一次描線會畫出找到的每一條線，拖動條是用來減的；`demo` 自己的預設值兩者都是 50。描線方式和 `demo` 相同：最多 5,000 條曲線，並做品質檢查（超過 2048 px 的圖會先縮小）。處理時會顯示目前的步驟，按〔取消〕會在下一個步驟停下。
 3. 結果會在同一頁的檢視器中開啟（見第 4 節）。可以下載 SVG、JSON、Desmos、LaTeX，或把全部打包成 ZIP，也可以〔全部複製到 Desmos〕。
 4. 上方的〔清除圖片〕會清掉目前的圖，接著就能拖入下一張；隨時直接拖入新圖片也可以。
 
-網頁版會把每張圖都當成線稿描線。照片請用 `demo` 加上 `--lineart`（見第 6 節）；其他選項也都在指令列（見第 7 節）。
+網頁版線稿和照片都收。照片在開啟時就會被認出來，並先找出裡面的線條（`flow`，見第 6 節）；頁面會把那份線稿顯示出來，可以用〔線稿細節〕調整，也可以用兩個按鈕和原圖來回對照，按下確認才會描線。預訓練網路與其他選項仍在指令列（見第 6、7 節）。
 
 右上角的〔中文｜EN〕可以切換語言，選擇會被記住。在終端機按 Ctrl+C，或按頁面上的〔結束〕，就會結束程式。
 
@@ -1118,7 +1289,7 @@ sample_lineart.png: 256x256, 136 curves in 10 strokes, 0.25 s (3.88 s/MP); 132 r
 
 **信心值**是曲線落在墨跡上的比例。描線器補過缺口的地方，信心值會低於 1。
 
-**填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑）。**完全不填色。** 區域是用標上 `fill` 的曲線畫出來的，所有區域共用同一條間距算式（見第 4 節）：深度大於一個間距的地方畫圈線，不夠深的地方畫 45 度排線。Desmos 無法填滿貼上的算式，所以這是濃淡唯一能傳達過去的方式 —— 而網頁與 SVG 畫的是同一批曲線，所以三種輸出看到的是同一張圖。區域的外框用在內部量到的顏色描邊，並且封閉，裡面的曲線才會落在一個形狀內。
+**填滿的區域。** 墨色平坦的區域（大片的，以及像很粗的睫毛這種粗重筆畫）只描外框，標上 `fill_outline`；粗筆畫或兩端粗細差很多的筆畫，其外框標上 `outline`。每個區域都帶著自己的濃淡 `tone`（0 是紙白，1 是全黑）。**完全不填色。** 區域是用標上 `fill` 的曲線畫出來的，所有區域共用同一條間距算式（見第 8 節）：深度大於一個間距的地方畫圈線，不夠深的地方畫 45 度排線。Desmos 無法填滿貼上的算式，所以這是濃淡唯一能傳達過去的方式 —— 而網頁與 SVG 畫的是同一批曲線，所以三種輸出看到的是同一張圖。區域的外框用在內部量到的顏色描邊，並且封閉，裡面的曲線才會落在一個形狀內。
 
 區域的邊界是用 Moore 鄰域輪廓追蹤取得的（:func:`line2func.boundary.contours`），不是把邊緣細化後當骨架走。邊界必須是封閉的：兩個環相接的地方，骨架走訪會把環切開，而開放的鏈在填色時會被一條直線弦接起來，憑空造出兩者之間的面積。在 `lineArt (5).jpg` 上這憑空多出 129,399 px（真實填色區域是 87,337，幾乎翻倍），在 `lineArt (11).jpg` 上則把梅花狀瞳孔空白的上半部塗掉了。改用輪廓追蹤後每個環都封閉，憑空多出的面積降到 2,050 px。
 
@@ -1200,7 +1371,7 @@ y=0.5000x+5.00\left\{10.00\le x\le 90.00\right\}
 
 #### 顏色與線寬：`desmos.js`
 
-貼進算式列的算式，Desmos 一律用同一種線寬、同一種顏色畫，所以 `desmos.txt` 只能靠「畫得多密」來表達一塊區域有多深（見第 4 節〈陰影、粗睫毛與其他色塊〉）。Desmos API 則可以逐條算式指定 `color` 和 `lineWidth`，`desmos.js` 就是把同樣的算式配上這兩項寫出來 —— 每一筆畫量到的線寬與顏色，而色塊內部的曲線，用的是那塊區域自己的灰階。
+貼進算式列的算式，Desmos 一律用同一種線寬、同一種顏色畫，所以 `desmos.txt` 只能靠「畫得多密」來表達一塊區域有多深（見第 8 節〈陰影、粗睫毛與其他色塊〉）。Desmos API 則可以逐條算式指定 `color` 和 `lineWidth`，`desmos.js` 就是把同樣的算式配上這兩項寫出來 —— 每一筆畫量到的線寬與顏色，而色塊內部的曲線，用的是那塊區域自己的灰階。
 
 裡面的數學和 `desmos.txt` 逐位元相同，只是多了樣式。它是一個 JavaScript 檔，結尾是一次 `setExpressions` 呼叫，所以：
 
@@ -1247,15 +1418,55 @@ x=81.52-0.4101\left(y-36.01\right)-0.00564\left(y-36.01\right)^{2}-0.0000929\lef
 
 ### 6. 照片與彩色圖片
 
-照片需要先抽出線稿（`--lineart`）：
+照片需要先抽出線稿（`--lineart`）。兩個網頁版都會自己對 `lineart.suggest_mode` 判定為照片的圖做這件事，並在描線前先顯示結果；指令列則是一個旗標。
 
 | 方法 | 需要 | 結果 |
 |---|---|---|
-| `informative` | PyTorch 與權重 | 預訓練線稿網路，產生像手繪的線條。**最適合照片** |
+| `flow` | 無 | 連貫線稿：線條長而相連。**照片的預設值，也是不需下載任何東西之中最好的** |
+| `informative` | PyTorch 與權重 | 預訓練線稿網路，產生像手繪的線條。**裝了 PyTorch 的話，這個最好** |
 | `informative-coarse` | PyTorch 與權重 | 同一個網路，線條較粗、較簡潔 |
 | `canny` | 無 | 邊緣偵測；粗線的兩側會各描出一條邊 |
 | `xdog` | 無 | 風格化的邊緣；適合高對比的圖 |
 | `none`（預設） | 無 | 輸入本身已經是線稿 |
+
+**為什麼是 `flow`，以及為什麼瀏覽器裡用它。** 描線器要的不是漂亮的邊緣，而是**筆畫**：它會二值化、細化成骨架、把骨架走成圖，再對找到的每一段擬合曲線。每一個斷開的碎片不是被去雜訊丟掉，就是各自吃掉一條曲線——這正是其他 image-to-Desmos 工具都說照片會產生上千條算式的原因。`flow` 是**跨著**邊緣切向流場做高斯差，再**沿著**流場平滑（Kang, Lee & Chui, NPAR 2007）：一個雜訊點沒有線可以附和它，就被平均掉了；真正的線則從兩端被強化。在一張類照片的圖上實測（把線稿加上模糊、不均勻打光與雜訊），把 ink 細化後數連通片：
+
+| 方法 | 秒 | 骨架像素 | 片數 | 每千像素片數 | 線寬 |
+|---|---|---|---|---|---|
+| `flow` | 0.85 | 17,163 | 558 | **32.5** | 2.40 |
+| `xdog` | 0.02 | 10,462 | 1,983 | 189.5 | 1.78 |
+| `canny` | 0.06 | 49,495 | 755 | 15.3 | 1.12 |
+
+把雜訊從 0.02 提高到 0.06，也就是一般照片的程度：
+
+| 方法 | 骨架像素 | 片數 | 每千像素片數 | 變化 |
+|---|---|---|---|---|
+| `flow` | 18,169 | 633 | **34.8** | +7% |
+| `xdog` | 19,393 | 8,248 | 425.3 | +124% |
+| `canny` | 48,502 | 806 | 16.6 | +9% |
+
+那是單一張圖的控制實驗。在 **32 張真實照片**上（見第 9 節），逐張配對、附 95% bootstrap 區間：
+
+| flow 減去 | 每千像素片數 | 骨架像素 | 線寬 | 抽取時間 |
+|---|---|---|---|---|
+| `xdog` | **−132.7** [−174.6, −96.8] | **+3,362** [+1,368, +7,845] | **+0.55 px** [+0.47, +0.67] | +2.70 s |
+| `canny` | +34.4 [+26.6, +46.7] | **−23,270** [−37,860, −11,170] | +1.13 px [+1.01, +1.22] | +2.58 s |
+
+每一個區間都不包含 0。對上 `xdog`，`flow` 交給描線器的線破碎程度只有三分之一（每千個骨架像素 57 片，對 182 片），而且同時找到**更多**線，不是更少。對上 `canny`，`flow` 的每千像素片數比較高，但那一欄不能這樣讀：同樣這些照片，`canny` 的**骨架長度是 1.8 倍**，因為每條線兩側都畫了一條邊，所以分母比較大，而要描的東西是兩倍。
+
+那份比較的最後一欄還決定了另一件事。這 32 張照片裡，線寬低於 `pipeline.AUTO_UPSCALE_BELOW`（1.75 px）的，`xdog` 有 **30 張、`canny` 是 32 張全中，而 `flow` 只有 1 張**。在本節最後那條規則之前，這等於幾乎每一張會被打開的照片都要求 2 倍放大——四倍的描線工作量，只為了把抽取器早就做好的決定內插一次。
+
+**這並不會讓結果變小。** 照 `demo` 的方式描（`--curves 5000`、`auto` 放大），從語料每一組各取兩張照片：
+
+| 方法 | 曲線數中位數 | 秒數中位數 | 撞到預算 |
+|---|---|---|---|
+| `flow` | 5,000 | 23 s | 10 張中 6 張 |
+| `xdog` | 4,348 | 9 s | 10 張中 5 張 |
+| `canny` | 5,000 | 16 s | 10 張中 6 張 |
+
+不管線是哪個方法找出來的，照片都會把預算填滿，而且 `flow` 是三者中最慢的。差別在於**那 5,000 條曲線是什麼**：`flow` 把它們花在長筆畫上（每千個骨架像素 57 片），`xdog` 花在粉塵上（182 片）。在其中一張人像上，`xdog` 整張抽出來只有 8,650 個骨架像素、分成約 3,800 片——平均每片 2.3 個像素，去雜訊把它們丟掉是對的。「很快地找到幾乎什麼都沒有」不是優點；這就是 `flow` 成為預設、而 `xdog` 仍然保留給慢機器或超大圖的原因。
+
+`flow` 還有兩個和連貫性同樣重要的性質。純色區域給出的 ink **恰好是 0**，平滑漸層也一樣——高斯差對任何線性的東西都是 0，剩下的部分符號也不對，成不了 ink——所以天空或臉頰完全不會吃掉曲線預算。而且它的線夠寬，可以照原樣描：在那 32 張照片上中位數是 2.2 px，低於 `pipeline.AUTO_UPSCALE_BELOW` 的只有 1 張。
 
 預訓練權重不隨專案附帶。下載一次即可；下載後會用固定的 SHA-256 驗證，存放在 `~/.cache/line2func`（可用環境變數 `LINE2FUNC_HOME` 更改）：
 
@@ -1267,7 +1478,9 @@ python -m line2func.weights verify          # 重新檢查雜湊值
 python -m line2func.demo photo.jpg --lineart informative --out out/
 ```
 
-照片通常會得到很多短曲線。`demo` 會把它們合併到 5,000 條（見第 8 節）。網頁版會把每張圖都當成線稿描線，所以照片請用 `demo`。
+照片通常會得到很多短曲線。`demo` 會把它們合併到 5,000 條（見第 8 節）。
+
+**抽出來的 ink map 不會被放大。** `--upscale auto` 會把**線稿**中細到一個像素裝不下的線放大兩倍；但抽取器的輸出本來就是它決定好的線，而且已經是原圖的解析度，放大只是把那個決定內插一遍，工作量卻變成四倍。所以除了 `none` 以外的每一個 `--lineart` 方法，`auto` 都維持 1 倍；明確指定 `--upscale 2` 仍然照做。
 
 ### 7. `demo` 的所有選項
 
@@ -1278,7 +1491,8 @@ python -m line2func.demo IMAGE [options]
 | 選項 | 預設 | 說明 |
 |---|---|---|
 | `--out DIR` | `out` | 輸出資料夾 |
-| `--lineart {none,canny,xdog,informative,informative-coarse}` | `none` | 抽線稿方法（見第 6 節） |
+| `--lineart {none,canny,xdog,flow,informative,informative-coarse}` | `none` | 抽線稿方法（見第 6 節） |
+| `--lineart-detail 0..100` | `50` | 搭配 `--lineart flow`：畫面裡有多少東西會變成線條（見第 8 節） |
 | `--curves N` | `5000` | 產生 N 條曲線：先細緻地描線，再合併「合併後對圖影響最小」的相鄰片段（見第 8 節）。曲線本來就比 N 少的圖會全部保留 |
 | `--tolerance PX` | 關閉 | 改用曲線擬合的最大誤差來描線，而不是指定曲線數量。數值越大，曲線越少、越平滑 |
 | `--threshold 0..1` | 自動 | 墨跡門檻。自動：採用 Otsu 門檻，但線稿最高只到 0.25，讓淺色的筆畫保持完整（如果連紙面都會被描出來，就維持 Otsu 門檻）。淡的線被漏掉時調低，紙張紋理被描出來時調高 |
@@ -1379,6 +1593,26 @@ python -m line2func.demo IMAGE [options]
 | af26b7b7 | 2.99% | 1.64% | 0.993 | 1.71／1.75 px |
 
 調到最高時，鉛筆紋理會變成短線被描出來；有雜訊的掃描圖連雜訊也會描（和 `--denoise 0` 一樣）：在 25 張有雜訊的合成掃描圖上，曲線落在真實線條上的比例從 50 時的 0.929 降到 75 時的 0.902、100 時的 0.826（最差一張 0.165）。乾淨的合成掃描圖不受影響。
+
+#### 照片裡有多少東西會變成線條：`--lineart-detail`
+
+搭配 `--lineart flow` 時，一支 0 到 100 的滑桿決定「多弱的脊還算一條線」。它會同時移動三個設定，因為那是同一個決定的三個面向：跨著流場取的核有多寬（`sigma_e`）、答案沿著流場平滑多遠（`sigma_m`），以及高斯差抵消得多徹底（`tau`）。在一張 0.81 MP 的照片上實測，固定容差 1.0、不設曲線預算：
+
+| 細節 | `sigma_e` | `sigma_m` | `tau` | 抽取 | ink | 骨架像素 | 每千像素片數 | 曲線 | 合計 |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 1.80 | 3.80 | 0.9500 | 1.35 s | 2.1% | 2,760 | 39.5 | 107 | 1.94 s |
+| 25 | 1.40 | 3.20 | 0.9726 | 1.16 s | 3.8% | 5,431 | 31.9 | 202 | 1.80 s |
+| **50** | **1.00** | **2.60** | **0.9850** | **0.91 s** | **4.6%** | **6,796** | **46.1** | **302** | **1.83 s** |
+| 75 | 0.90 | 2.40 | 0.9933 | 0.78 s | 8.3% | 9,234 | 61.3 | 821 | 2.00 s |
+| 100 | 0.80 | 2.20 | 0.9970 | 0.74 s | 19.5% | 17,062 | 104.3 | 1,211 | 2.57 s |
+
+這張表裡有三件事，在動滑桿之前值得知道。
+
+**調高細節不會讓線變少。** 這是這個控制項給的承諾，端點也是為了它才這樣選。`tau` 是**按比例**移動而不是線性移動的，因為它起的作用取決於它離 1 有多遠，而那個餘裕在整支滑桿上橫跨 0.050 到 0.003。直接線性內插的話，細的那一半幾乎不動 `tau`、兩個 sigma 卻掉得很快，於是細節 60 畫出來的線**比** 50 **還少**。在三張測試圖上、以 0、10、…、100 掃過，按比例的版本每一格都更多，線性的則不是。
+
+**最慢的設定是 0，不是 100。** 細節調高代表核更窄、每個像素取的樣本更少：抽取時間從 1.35 秒降到 0.74 秒。變多的是描線，因為有更多線要描。
+
+**曲線預算是花在高端的。** 細節 100 時線也更破碎（每千個骨架像素 104 片，調好的設定是 46 片），因為進來的是紋理而不是筆畫。`tau` 就是為此停在 0.997。在紋理多的照片上，細節 100 會是那個撞到 5,000 條上限的設定。
 
 #### 陰影、粗重的睫毛與其他填滿的區域
 
@@ -1547,9 +1781,27 @@ python -m line2func.eval --realset path/to/drawings --set local_trim=false --jso
 python -m line2func.eval --compare runs/b.json runs/a.json
 ```
 
+`--lineart 方法`（可搭配 `--lineart-detail N`）會先讓整個資料夾經過抽線稿，一資料夾的**照片**就是這樣測量的：
+
+```bash
+python -m line2func.eval --realset path/to/photos --lineart flow --json runs/photo_flow.json
+python -m line2func.eval --realset path/to/photos --lineart xdog --json runs/photo_xdog.json
+python -m line2func.eval --compare runs/photo_xdog.json runs/photo_flow.json
+```
+
+**大部分的欄位不能在兩個抽取器之間比較，用了抽取器時報告也會這樣提醒。** 評判是拿曲線去對該組自己的抽取器產生的 ink map——門檻也來自同一份 ink——所以 `kept`、`precision`、`missed_ink`、`d_M`、`psnr_db`、`ssim` 回答的都是「我們有沒有忠實畫出自己抽到的東西」。一個幾乎什麼都沒抽到的抽取器，在這每一項上都會很漂亮。有三欄經得起比較，因為它們不是除以該組自己選擇要找的東西：
+
+| 指標 | 意義 |
+|---|---|
+| `curves` | 預算有沒有用完（見第 8 節） |
+| `seconds` | 花了多少時間 |
+| `pieces_per_kpx` | ink 每 1,000 個骨架像素有幾個相連的片段：交給描線器的線有多破碎。分得出「畫出筆畫」和「碎成粉塵」的就是這一欄（見第 6 節） |
+
 本手冊中的測量所用的 66 張線稿與 15 張 held-out JPEG 都是第三方線稿作品，保存在儲存庫之外，
 也不隨專案發布。因此下文提到的 `data/real_v1` 指的是它們當初的位置，而不是 checkout 裡找得到的
 資料夾；`--realset` 可以指向任何資料夾。
+
+第 6 節的照片測量用的是另一組 **32 張 CC0 照片**，來自 Wikimedia Commons，每個檔案的授權都是向 API 查過而不是從分類推定的，縮到線上版描線的 2.5 百萬像素，並刻意分散在照片這條路必須撐過的幾種情況：8 張人像（平滑的色調必須完全不產生線）、9 張枝葉與草地（會灌爆預算的情況）、5 張建築（硬邊，舊方法應該有競爭力的地方）、5 張夜間街景（顆粒，單純的高斯差會碎掉的地方）、5 張單純的物件。它們是第三方的圖片，同樣保存在儲存庫之外，並有一份 `sources.json` 記錄每個檔案在 Commons 上的頁面。線稿仍然是這項工作的**回歸**測試集：線稿這條路不能動，而在全部 81 張上它也確實沒動——每一項指標都是 0，區間寬度為零。
 
 ### 10. 在 Python 中使用
 
@@ -1601,6 +1853,7 @@ line2func/
   demo.py  serve.py  pipeline.py           # 指令，以及它們共用的描線流程
   lineart.py  lineart_model.py  weights.py # 抽線稿、預訓練模型、權重下載
   baseline.py  fit.py                      # 傳統引擎、Schneider 擬合
+  boundary.py                              # 把色塊的外框描成封閉的環
   attributes.py  shapes.py  export.py      # 精修、線寬顏色、直線圓弧、匯出
   functions.py                             # 把曲線寫成函數 y = f(x)／x = g(y)（--form function）
   residual.py  outline.py  fill.py         # 第二遍描線、粗筆畫外框、Desmos 用的填色曲線
@@ -1645,3 +1898,8 @@ python -m line2func.website --out _site --serve    # 並在 http://127.0.0.1:800
 - [x] 單一畫面的網頁版，三種顯示方式；斷成點和虛線的線會保留；去雜訊強度拖動條（`--denoise`）
 - [x] 淡線靈敏度（`--faint-sensitivity`）
 - [x] 線上版網頁：line2func 在瀏覽器裡執行（Pyodide），以 GitHub Pages 發布
+- [x] 任何圖片都可以，不只線稿：照片在開啟時就會被認出來，並先找出裡面的線條——用的是連貫線稿（`--lineart flow`），不需下載任何東西，所以瀏覽器裡也能跑。兩個頁面都會把那份線稿顯示出來、可以調整（〔線稿細節〕、`--lineart-detail`），確認後才描線
+
+接下來：
+
+- [ ] 從**區域**而不是邊緣抽線稿：把顏色量化、合併小區域，再描出區域邊界。這樣得到的是封閉迴圈而不是筆畫，而且每個區域都量得到自己的色調——那正是填滿區域那套機制已經在用的東西——所以照片可以畫成有明暗的，而不只是輪廓。它需要自己的曲線預算策略（一個區域一個迴圈、裡面再加環，是唯一會灌爆 5,000 條的做法），也需要自己的量測

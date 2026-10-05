@@ -26,13 +26,15 @@ y(t) =  20.00·t³ − 270.00·t² + 250.00·t + 10.00        0 ≤ t ≤ 1
 ### Use it online
 
 Open **<https://far9100.github.io/Line-to-function/>**: nothing to install.
-Drop a line drawing onto the page, choose functions or parametric equations
-and click **Convert**; the rest works like the installed page (below).
-line2func runs in your browser ([Pyodide](https://pyodide.org)), so the image
-is not uploaded anywhere. The first visit downloads about 25 MB; a drawing
-takes from a few seconds to a few minutes, 1.5 to 2 times as long as
-installed. Drawings over 1.5 megapixels are shrunk first; for those, photos
-and all the other options, install line2func.
+Drop **any image** onto the page - a drawing or a photo - choose functions or
+parametric equations and click **Convert**; the rest works like the installed
+page (below). A photo is recognized on the way in and its line art is found
+first, which the page shows you before anything is traced. line2func runs in
+your browser ([Pyodide](https://pyodide.org)), so the image is not uploaded
+anywhere. The first visit downloads about 25 MB; a picture takes from a few
+seconds to a few minutes, 1.5 to 2 times as long as installed. Images over
+2.5 megapixels are shrunk first. The pretrained line-art network and the other
+options need the installed version.
 
 ### Install
 
@@ -60,20 +62,25 @@ python -m line2func        # or just: line2func
 
 The page opens in a new tab of your default browser.
 
-1. **Drop a line drawing** onto the page, click **Choose a file…**, or paste
+1. **Drop any image** onto the page, click **Choose a file…**, or paste
    with Ctrl+V.
-2. Choose how the lines are written, as **functions** or as **parametric
+2. If it is a photo, the **line art** in it is found and shown right away; the
+   chips swap between the line art and the original, and **Line-art detail**
+   (0-100) decides how much of the picture becomes lines. Pick a different
+   method, or turn it off with *Already line art*, if you would rather. A
+   drawing goes straight through with none of this.
+3. Choose how the lines are written, as **functions** or as **parametric
    equations**, how strongly noise is removed (**Remove noise**, 0-100) and
    how light a line may be (**Faint lines**, 0-100; higher keeps lighter
    strands of hair and background). The page starts on parametric equations
    and filters nothing - noise removal off, **Faint lines** at 100 - so a
    first run shows every line it found; the command line uses 50 for both.
    Click **Convert**.
-3. The result opens in the same page. Hover or click a curve to see its
+4. The result opens in the same page. Hover or click a curve to see its
    equations. Show the lines alone, over the original, or with the missed
    detail highlighted. Download SVG, JSON, Desmos, LaTeX or a ZIP, or click
    **Copy all for Desmos**.
-4. **Clear image** starts over. Ctrl+C in the terminal, or **Quit** on the
+5. **Clear image** starts over. Ctrl+C in the terminal, or **Quit** on the
    page, ends the program.
 
 ### Use it from the command line
@@ -101,7 +108,8 @@ python -m line2func.serve out/                                    # look at the 
 | `--denoise 0..100` | How strongly specks and short faint pieces are dropped (default 50) |
 | `--faint-sensitivity 0..100` | How light a line may be and still be traced (default 50; higher keeps lighter strands) |
 | `--threshold 0..1` | Ink threshold: lower it if faint lines are missed |
-| `--lineart METHOD` | For photos: `informative` or `informative-coarse` (the pretrained network, fine or coarse lines), `canny` or `xdog` |
+| `--lineart METHOD` | For photos: `flow` (coherent line drawing; the best one that needs nothing downloaded), `informative` or `informative-coarse` (the pretrained network, fine or coarse lines), `canny` or `xdog` |
+| `--lineart-detail 0..100` | With `--lineart flow`: how much of the picture becomes lines (default 50; lower keeps only the strong edges) |
 | `--quality` | Also judge the result: `quality.json` holds the scores, `quality.png` marks missed detail |
 
 `python -m line2func.demo --help` lists every option.
@@ -121,10 +129,17 @@ come out the gray they are. See [docs/details.md](docs/details.md), section 5.
 
 ### Good inputs
 
-Clean line art works best: sketches, ink drawings, comics and scans, with dark
-lines on light paper (light lines on dark paper are inverted automatically).
-Photos need line extraction first: `--lineart informative` (after
-`python -m line2func.weights fetch informative`), or `canny` / `xdog`.
+Clean line art goes straight through: sketches, ink drawings, comics and
+scans, with dark lines on light paper (light lines on dark paper are inverted
+automatically).
+
+**Photos work too**, in the browser as well as on the command line: the lines
+in them are found first with `--lineart flow`, a coherent line drawing (Kang,
+Lee & Chui, NPAR 2007) that needs nothing downloaded. Both pages do this by
+themselves for anything that looks like a photo, and show you the line art
+before they trace it. `--lineart informative` (after
+`python -m line2func.weights fetch informative`) is better still where PyTorch
+is installed; `canny` and `xdog` are the older, cheaper ways.
 
 ### More
 
@@ -152,7 +167,7 @@ y(t) =  20.00·t³ − 270.00·t² + 250.00·t + 10.00        0 ≤ t ≤ 1
 
 ### 線上使用（免安裝）
 
-打開 **<https://far9100.github.io/Line-to-function/>**，不用安裝任何東西。把線稿拖進頁面，選擇寫成函數或參數方程式，再按〔確認 ▶〕；其餘操作和安裝版的網頁（見下方）相同。line2func 會在你的瀏覽器裡執行（[Pyodide](https://pyodide.org)），所以圖片不會上傳到任何地方。第一次使用要下載約 25 MB；一張圖需要幾秒到幾分鐘，所需時間是安裝版的 1.5 到 2 倍。超過 1.5 百萬像素的圖會先縮小；這類大圖、照片以及其他所有選項，請安裝 line2func。
+打開 **<https://far9100.github.io/Line-to-function/>**，不用安裝任何東西。把**任何圖片**拖進頁面——線稿或照片都可以——選擇寫成函數或參數方程式，再按〔確認 ▶〕；其餘操作和安裝版的網頁（見下方）相同。照片在讀進來時就會被認出來，並先抽出線稿讓你看過，才開始描線。line2func 會在你的瀏覽器裡執行（[Pyodide](https://pyodide.org)），所以圖片不會上傳到任何地方。第一次使用要下載約 25 MB；一張圖需要幾秒到幾分鐘，所需時間是安裝版的 1.5 到 2 倍。超過 2.5 百萬像素的圖會先縮小。預訓練線稿網路和其他選項仍然需要安裝版。
 
 ### 安裝
 
@@ -176,10 +191,11 @@ python -m line2func        # 安裝後也可以直接打 line2func
 
 會在預設瀏覽器開一個新分頁。
 
-1. **把線稿拖進頁面**，或按〔選擇檔案…〕，或按 Ctrl+V 貼上。
-2. 選擇線段寫成**函數**或**參數方程式**、去雜訊的強度（〔去雜訊〕，0–100），以及多淡的線也算線條（〔淡線〕，0–100；調高會保留更淡的頭髮與背景線）。頁面一開始選的是參數方程式，而且什麼都不過濾——〔去雜訊〕關閉、〔淡線〕100——所以第一次描線會畫出找到的每一條線；指令列兩者的預設值則是 50。再按〔確認 ▶〕。
-3. 結果會在同一頁開啟。滑過或點擊曲線可以看它的算式；可以只顯示線段、疊在原圖上，或標出遺漏的線段；也可以下載 SVG、JSON、Desmos、LaTeX 或 ZIP，或按〔全部複製到 Desmos〕。
-4. 〔清除圖片〕會重新開始。在終端機按 Ctrl+C，或按頁面上的〔結束〕，就會結束程式。
+1. **把任何圖片拖進頁面**，或按〔選擇檔案…〕，或按 Ctrl+V 貼上。
+2. 如果是照片，頁面會立刻找出裡面的**線稿**並顯示出來；用〔線稿〕〔原圖〕兩個按鈕可以來回對照，〔線稿細節〕（0–100）決定畫面裡有多少東西會變成線條。你也可以改用別的方法，或選〔本來就是線稿〕關掉它。線稿圖則完全不會經過這一步。
+3. 選擇線段寫成**函數**或**參數方程式**、去雜訊的強度（〔去雜訊〕，0–100），以及多淡的線也算線條（〔淡線〕，0–100；調高會保留更淡的頭髮與背景線）。頁面一開始選的是參數方程式，而且什麼都不過濾——〔去雜訊〕關閉、〔淡線〕100——所以第一次描線會畫出找到的每一條線；指令列兩者的預設值則是 50。再按〔確認 ▶〕。
+4. 結果會在同一頁開啟。滑過或點擊曲線可以看它的算式；可以只顯示線段、疊在原圖上，或標出遺漏的線段；也可以下載 SVG、JSON、Desmos、LaTeX 或 ZIP，或按〔全部複製到 Desmos〕。
+5. 〔清除圖片〕會重新開始。在終端機按 Ctrl+C，或按頁面上的〔結束〕，就會結束程式。
 
 ### 用指令列
 
@@ -206,7 +222,8 @@ python -m line2func.serve out/                                    # 在瀏覽器
 | `--denoise 0..100` | 小雜點和短的淡線片段丟掉的強度（預設 50） |
 | `--faint-sensitivity 0..100` | 多淡的線也算線條（預設 50；調高保留更淡的線） |
 | `--threshold 0..1` | 墨跡門檻：淡的線被漏掉時調低 |
-| `--lineart 方法` | 照片用：`informative` 或 `informative-coarse`（預訓練網路，細線或粗線）、`canny` 或 `xdog` |
+| `--lineart 方法` | 照片用：`flow`（連貫線稿，不需下載任何東西，效果最好的一個）、`informative` 或 `informative-coarse`（預訓練網路，細線或粗線）、`canny` 或 `xdog` |
+| `--lineart-detail 0..100` | 搭配 `--lineart flow`：畫面裡有多少東西會變成線條（預設 50；調低只留下明顯的邊緣） |
 | `--quality` | 另外評估結果：`quality.json` 記錄分數，`quality.png` 會標出遺漏的細節 |
 
 `python -m line2func.demo --help` 會列出所有選項。
@@ -219,7 +236,9 @@ python -m line2func.serve out/                                    # 在瀏覽器
 
 ### 適合的輸入
 
-乾淨的線稿效果最好：素描、墨線稿、漫畫、掃描稿，淺色紙上的深色線條（深色背景上的淺色線條會自動反轉）。照片要先抽線稿：`--lineart informative`（先執行 `python -m line2func.weights fetch informative`），或 `canny`／`xdog`。
+乾淨的線稿可以直接描：素描、墨線稿、漫畫、掃描稿，淺色紙上的深色線條（深色背景上的淺色線條會自動反轉）。
+
+**照片也可以**，網頁版和指令列都行：會先用 `--lineart flow` 找出裡面的線條——這是連貫線稿（Coherent Line Drawing，Kang, Lee & Chui, NPAR 2007），不需要下載任何東西。兩個頁面都會自己對看起來像照片的圖做這件事，並在描線之前先把線稿顯示出來。如果裝了 PyTorch，`--lineart informative`（先執行 `python -m line2func.weights fetch informative`）效果更好；`canny` 與 `xdog` 則是比較舊、比較便宜的做法。
 
 ### 更多說明
 

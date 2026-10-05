@@ -29,6 +29,7 @@ VIEWER = VIEWER_DIR / "index.html"
 ASSETS = {
     "app.js": "text/javascript; charset=utf-8",
     "viewer.js": "text/javascript; charset=utf-8",
+    "preview.js": "text/javascript; charset=utf-8",
     "i18n.js": "text/javascript; charset=utf-8",
     "i18n.json": "application/json; charset=utf-8",
     "engine.js": "text/javascript; charset=utf-8",  # the online page's engine (see line2func.web)

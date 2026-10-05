@@ -19,9 +19,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m line2func.demo", description=__doc__.strip().splitlines()[0])
     p.add_argument("image", type=Path, help="input image (PNG, JPEG, ...)")
     p.add_argument("--lineart", choices=lineart.METHODS, default="none",
-                   help="line extraction: none (input is line art), canny, xdog, or the pretrained "
-                        "informative / informative-coarse network (needs PyTorch and "
-                        "'python -m line2func.weights fetch informative') (default: none)")
+                   help="line extraction for photos: flow (coherent line drawing, the best one that needs "
+                        "nothing downloaded), canny, xdog, or the pretrained informative / "
+                        "informative-coarse network (needs PyTorch and 'python -m line2func.weights fetch "
+                        "informative'); none means the input already is line art (default: none)")
     p.add_argument("--out", type=Path, default=Path("out"), help="output folder (default: out/)")
     p.add_argument("--tolerance", type=float, default=None,
                    help="trace to this max curve fitting error in pixels (e.g. 1.0) instead of making a set "
@@ -55,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="how light a line may be and still be traced: higher keeps lighter strands of hair and "
                         "background (at the top some pencil texture comes in as short dashes), 0 traces only ink "
                         "above the threshold (default: 50)")
+    p.add_argument("--lineart-detail", type=float, default=lineart.DETAIL, metavar="0..100",
+                   help="with --lineart flow: how much of the picture becomes lines. Lower keeps only the "
+                        "strong edges, higher adds texture, hair and shading (default: 50)")
     p.add_argument("--no-residual", action="store_true",
                    help="skip the second pass that traces ink the first pass left uncovered")
     p.add_argument("--no-outline", action="store_true",
@@ -101,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 <= args.faint_sensitivity <= 100:
         print("error: --faint-sensitivity must be between 0 and 100", file=sys.stderr)
         return 2
+    if not 0 <= args.lineart_detail <= 100:
+        print("error: --lineart-detail must be between 0 and 100", file=sys.stderr)
+        return 2
     form = args.form or ("named" if args.named else "parametric")
     # a number of curves by default (the Desmos budget); a given tolerance traces to that instead
     if args.curves is not None:
@@ -132,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         curve_count=curve_count,
         denoise=args.denoise,
         faint_sensitivity=args.faint_sensitivity,
+        lineart_detail=args.lineart_detail,
     )
     n_shapes = sum(c.shape is not None for c in curves)
     functions = attach(curves, args.function_tolerance) if form == "function" else None
@@ -139,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     curves.meta.update(
         source=args.image.name,
         lineart=args.lineart,
+        lineart_detail=args.lineart_detail,
         vectorizer="baseline",
         refined=not args.no_refine,
         named=form == "named",
@@ -161,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         extras.append(f"noise filter {args.denoise:g}")
     if args.faint_sensitivity != pipeline.FAINT_SENSITIVITY:
         extras.append(f"faint-line sensitivity {args.faint_sensitivity:g}")
+    if args.lineart != "none" and args.lineart_detail != lineart.DETAIL:
+        extras.append(f"line-art detail {args.lineart_detail:g}")
     n_residual = sum("residual" in c.tags for c in curves)
     if n_residual:
         extras.append(f"{n_residual} curves from the second pass")
@@ -206,8 +217,8 @@ def main(argv: list[str] | None = None) -> int:
               f"({functions['count'] / len(curves):.2f} per curve). For about {DESMOS_CURVE_LIMIT} functions, "
               f"try --curves {suggested}.", file=sys.stderr)
     if len(curves) == 0:
-        print("warning: no lines found. If the drawing is light on dark or a photo, "
-              "try --lineart canny or --lineart xdog.", file=sys.stderr)
+        print("warning: no lines found. If this is a photo rather than line art, "
+              "try --lineart flow.", file=sys.stderr)
     if args.quality:
         import json
 

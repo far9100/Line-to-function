@@ -44,6 +44,18 @@ def test_auto_upscale_leaves_normal_lines_alone():
         pipeline.choose_upscale(1.0 - img / 255.0, 7)
 
 
+def test_an_extractors_thin_lines_are_not_enlarged_but_a_drawings_are():
+    """Enlarging an ink map an extractor made only interpolates what it already decided, at 4x the work."""
+    gt = CurveSet(128, 128, [Curve(np.array([[10, 60], [30, 10], [70, 110], [110, 40]], float))])
+    thin = render_lineart(gt, 128, 128, line_width=1.2)  # thin enough that "auto" would enlarge it
+    assert pipeline.trace(_rgb(thin), upscale="auto")[0].meta["upscale"] == 2
+    photo = _rgb(np.clip(255 - (255 - thin) * 0.8, 0, 255).astype(np.uint8))
+    for method in ("canny", "xdog", "flow"):
+        cs, _ = pipeline.trace(photo, lineart_method=method, upscale="auto")
+        assert cs.meta["upscale"] == 1, method
+        assert pipeline.trace(photo, lineart_method=method, upscale=2)[0].meta["upscale"] == 2  # still asked for
+
+
 def _faint_scene(noise: float = 0.0, shading: float = 0.0, seed: int = 0):
     strong = g.line([10, 20], [150, 20])
     faint = np.array([[10, 70], [60, 50], [100, 90], [150, 70]], float)

@@ -67,3 +67,20 @@ def test_the_engine_writes_the_styled_files_again_in_the_pages_line_style(run):
     # the cache is keyed by file as well as style, so desmos.js in the SVG's style is its own answer
     assert r["jsBody"] == '<svg data-style="desmos.js|bw|0|uniform"/>'
     assert r["unknownJob"] == ""  # a result the engine no longer has is not an error
+
+
+def test_a_line_art_preview_is_a_job_of_its_own_kind_with_a_blob_url(run):
+    r = run["lineart"]
+    assert r["kinds"] == ["lineart", "trace"]  # the snapshot says which, as the local server's does
+    assert r["snapshot"] == {"kind": "lineart", "state": "running"}
+    assert r["stages"] == ["lineart", None] and r["isBlob"] is True
+    assert r["details"] == [40, 60, 80]  # the detail the page asked for reached Python, every time
+    assert r["unknown"] == "unknown_image"
+    assert r["workers"] == 1  # a small heap: no needless restart between previews
+
+
+def test_previewing_again_does_not_forget_the_result_the_page_is_showing(run):
+    """Previews are kept apart from results, or re-previewing would revoke the URLs the viewer is using."""
+    r = run["lineart"]
+    assert r["oldPreviewGone"] is True  # only the newest preview is kept
+    assert r["resultStillThere"] is True  # but the trace before them all is untouched

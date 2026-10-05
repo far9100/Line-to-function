@@ -39,8 +39,10 @@ PACKAGE_DIR = Path(__file__).parent
 # belong to the two PyTorch features - Pyodide has no torch, so shipping those three could
 # only ever turn one import error into another. lineart.extract still reaches lineart_model
 # and pipeline.trace still reaches optimize, but only for a model lineart method and for
-# optimize=True, and web.py can produce neither (tests/test_website.py checks that these
-# two stay the only way out). A list of what to leave out rather than what to keep, so a
+# optimize=True, and web.py can produce neither: it checks every method against
+# lineart.PURE_METHODS, which is lineart.METHODS without the model ones, and nothing it
+# exposes sets optimize (tests/test_website.py checks that these two stay the only way
+# out). A list of what to leave out rather than what to keep, so a
 # module added later is merely shipped when it need not be, never missing when it is needed.
 NOT_IN_BROWSER = frozenset({"__main__", "app", "browser", "demo", "eval", "serve", "synth",
                             "website", "lineart_model", "optimize", "weights"})

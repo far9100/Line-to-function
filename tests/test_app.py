@@ -143,13 +143,29 @@ def test_photo_preview_is_reused_for_tracing(client):
     assert snap["state"] == "done" and snap["files"] == ["lineart.png"] and snap["summary"]["scale"] == 1.0
     _, _, png = client.call("GET", f"/api/jobs/{snap['job_id']}/data/lineart.png")
     assert Image.open(io.BytesIO(png)).size == (160, 120)
-    assert client.app.derived.get(("ink", iid, 1.0, "canny")) is not None
+    assert client.app.derived.get(("ink", iid, 1.0, "canny", lineart.DETAIL)) is not None
     stages = []
     real = client.app.board.set_stage
     client.app.board.set_stage = lambda job, stage: (stages.append(stage), real(job, stage))
     snap = client.run(image_id=iid, kind="trace", method="canny", scale=1.0)
     assert snap["state"] == "done" and "lineart.png" in snap["files"] and snap["summary"]["curves"] > 0
     assert "lineart" not in stages and "vectorize" in stages  # the previewed ink map was traced
+
+
+def test_a_trace_at_another_detail_does_not_reuse_the_preview(client):
+    """The preview has to be what gets traced, so the setting it was made at is part of its name."""
+    _, img = client.upload(_png(_photo()), name="photo.png")
+    iid = img["image_id"]
+    assert client.run(image_id=iid, kind="lineart", method="flow", lineart_detail=20,
+                      scale="auto")["state"] == "done"
+    stages = []
+    real = client.app.board.set_stage
+    client.app.board.set_stage = lambda job, stage: (stages.append(stage), real(job, stage))
+    client.run(image_id=iid, kind="trace", method="flow", lineart_detail=80, scale=1.0)
+    assert "lineart" in stages  # a different setting: extracted again
+    stages.clear()
+    client.run(image_id=iid, kind="trace", method="flow", lineart_detail=20, scale=1.0)
+    assert "lineart" not in stages  # the one that was shown
 
 
 def test_downloads_zip_and_unicode_names(client):

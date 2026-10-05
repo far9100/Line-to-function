@@ -6,8 +6,8 @@
 // One request runs at a time. Python cannot be interrupted, so Cancel stops the worker and starts a new one;
 // so does a crash, and a worker whose memory has grown large (WebAssembly memory never shrinks). Every request
 // carries the image's bytes, so a new worker loses nothing.
-export const PROTOCOL = 2; // = worker.js PROTOCOL
-const RECYCLE_BYTES = 1 << 30; // after a trace, a worker with more memory than this is replaced
+export const PROTOCOL = 3; // = worker.js PROTOCOL
+const RECYCLE_BYTES = 1 << 30; // after real work, a worker with more memory than this is replaced
 const KEEP_RESULTS = 2; // results whose files stay available
 const TYPES = { "curves.json": "application/json", "out.svg": "image/svg+xml", "desmos.txt": "text/plain;charset=utf-8",
                 "desmos.js": "text/javascript;charset=utf-8", "equations.tex": "text/plain;charset=utf-8",
@@ -23,6 +23,7 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
   const queue = []; // requests waiting for it
   const images = new Map(); // key -> {data, name, preview}: the image opened last
   const results = new Map(); // job id -> {file name: blob URL}
+  const previews = new Map(); // job id -> {"lineart.png": blob URL}: only the newest line-art preview is kept
   const styled = new Map(); // job id -> {"color|seed|width": blob URL}: out.svg written again in that style
   const jobs = new Map(); // job id -> job
   let seq = 0;
@@ -94,7 +95,9 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
     if (m.type === "answer") {
       const r = current;
       current = null;
-      if (r.message.type === "trace" && !(m.heap <= RECYCLE_BYTES)) restart(); // its memory back, while idle
+      // extracting line art allocates too, and the trace that follows a preview is the one most likely
+      // to run out of memory; only writing a file again is light enough to skip the check
+      if (r.message.type !== "svg" && !(m.heap <= RECYCLE_BYTES)) restart(); // its memory back, while idle
       r.resolve(m);
       pump();
     }
@@ -136,7 +139,7 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
   // ---------- jobs ----------
   function snapshot(job) {
     const end = job.finished ?? performance.now();
-    return { job_id: job.id, kind: "trace", image_id: job.imageId, state: job.state, stage: job.stage,
+    return { job_id: job.id, kind: job.kind, image_id: job.imageId, state: job.state, stage: job.stage,
              elapsed: Math.round(end - job.started) / 1000, error: job.error, summary: job.summary,
              files: job.files, params: job.params };
   }
@@ -150,10 +153,8 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
 
   // Start a trace job (params as app.js sends them to the server); resolves with its first snapshot, and
   // onJob reports the rest. It is "running" from the start (stage "load_engine" until the engine is ready).
-  function trace(params) {
-    const image = images.get(params.image_id);
-    if (!image) return Promise.reject(error("unknown_image"));
-    const job = { id: `job-${++seq}`, imageId: params.image_id, state: "running",
+  function makeJob(kind, params) {
+    const job = { id: `job-${++seq}`, kind, imageId: params.image_id, state: "running",
                   stage: state === "ready" ? null : "load_engine", error: null, summary: null, files: [], params,
                   started: performance.now(), finished: null };
     jobs.set(job.id, job);
@@ -162,7 +163,14 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
       job.stage = stage;
       onJob(snapshot(job));
     };
-    const message = { type: "trace", key: params.image_id, name: image.name, data: image.data, params: JSON.stringify(params) };
+    return { job, onStage, message: { key: params.image_id, params: JSON.stringify(params) } };
+  }
+
+  function trace(params) {
+    const image = images.get(params.image_id);
+    if (!image) return Promise.reject(error("unknown_image"));
+    const { job, onStage, message: base } = makeJob("trace", params);
+    const message = { ...base, type: "trace", name: image.name, data: image.data };
     request(message, job, onStage).then((m) => {
       const answer = JSON.parse(m.answer);
       if (answer.error) {
@@ -182,6 +190,39 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
     return Promise.resolve(snapshot(job));
   }
 
+  // Extract the image's line art, as the server's kind: "lineart" job does; resolves with the job's first
+  // snapshot and onJob reports the rest. Its lineart.png is a blob: URL from fileURL(id, "lineart.png").
+  // Previews are kept apart from results: re-previewing ten times must not forget a trace the page is
+  // still showing, and forgetting one revokes the URLs the viewer and every download button are using.
+  function lineart(params) {
+    const image = images.get(params.image_id);
+    if (!image) return Promise.reject(error("unknown_image"));
+    const { job, onStage, message: base } = makeJob("lineart", params);
+    const message = { ...base, type: "lineart", name: image.name, data: image.data };
+    request(message, job, onStage).then((m) => {
+      const answer = JSON.parse(m.answer);
+      if (answer.error) {
+        finish(job, "error", { error: answer.error });
+        if (answer.error.code === "out_of_memory") restart();
+        return;
+      }
+      const urls = {};
+      for (const [name, bytes] of Object.entries(m.files)) urls[name] = URL.createObjectURL(new Blob([bytes], { type: TYPES[name] }));
+      for (const old of [...previews.keys()]) forgetPreview(old);
+      previews.set(job.id, urls);
+      finish(job, "done", { summary: answer.summary, params: answer.params, files: Object.keys(m.files).sort() });
+    }, (err) => {
+      if (err.code !== "cancelled") finish(job, "error", { error: { code: err.code, detail: err.info?.detail ?? null } });
+    });
+    return Promise.resolve(snapshot(job));
+  }
+
+  function forgetPreview(jobId) {
+    for (const url of Object.values(previews.get(jobId) || {})) URL.revokeObjectURL(url);
+    previews.delete(jobId);
+    jobs.delete(jobId);
+  }
+
   function cancel(jobId) {
     const job = jobs.get(jobId);
     if (!job || job.state !== "running") return;
@@ -198,7 +239,7 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
   }
 
   function fileURL(jobId, name) {
-    return results.get(jobId)?.[name] || "";
+    return results.get(jobId)?.[name] || previews.get(jobId)?.[name] || "";
   }
 
   // out.svg or desmos.js written again with the line style the page is showing, as the local server's
@@ -228,5 +269,5 @@ export function createEngine(config, { onJob = () => {}, onStatus = () => {}, Wo
     jobs.delete(jobId);
   }
 
-  return { start, status, open, trace, cancel, previewURL, fileURL, styledFile };
+  return { start, status, open, trace, lineart, cancel, previewURL, fileURL, styledFile };
 }

@@ -108,7 +108,10 @@ export function createViewer(el) {
   // alpha: how strongly the background shows through, per mode. The original starts at half, so the
   // curves and the drawing under them are equally readable; the missed-detail map starts nearly solid,
   // because its marks are what you came to look at. index.html's #bg-alpha carries the same start.
-  const bg = { images: {}, alpha: { original: 0.5, missed: 0.9 } }; // images: original, quality
+  const bg = { images: {}, alpha: { original: 0.5, missed: 0.9 } }; // images: original, quality, lineart
+  // Which picture a preview shows: the file that was opened, or the line art found in it. Both are drawn
+  // into the same box under the same pan and zoom, so swapping them leaves the detail under the cursor.
+  let previewShown = "original";
   const pointers = new Map();
   let drag = null, pinch = null;
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -123,6 +126,7 @@ export function createViewer(el) {
     tip.style.display = "none";
     list.scrollTop = 0; spacer.innerHTML = ""; spacer.style.height = "0px";
     bg.images = {};
+    previewShown = "original";
     dirty = true;
   }
 
@@ -323,7 +327,8 @@ export function createViewer(el) {
     ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.tx, dpr * view.ty);
     ctx.fillStyle = css("--paper"); ctx.fillRect(0, 0, W, H);
     const alone = imageOnly(), shown = shownMode();
-    const img = alone || shown === "original" ? bg.images.original : shown === "missed" ? bg.images.quality : null;
+    const img = alone ? (bg.images[previewShown] || bg.images.original)
+      : shown === "original" ? bg.images.original : shown === "missed" ? bg.images.quality : null;
     if (img) {
       ctx.globalAlpha = alone ? 1 : bg.alpha[shown]; ctx.imageSmoothingEnabled = view.s < 4;
       ctx.drawImage(img, 0, 0, W, H); ctx.globalAlpha = 1;
@@ -566,6 +571,30 @@ export function createViewer(el) {
     img.onload = () => { if (mine !== generation) return; bg.images.original = img; dirty = true; };
     img.src = url;
   }
+  // A second picture for the same preview: the line art extracted from it, or null to drop it. The view is
+  // not reset, so it arrives without a refit and without a flash, registered with the original.
+  function previewLayer(url) {
+    if (!url) {
+      delete bg.images.lineart;
+      if (previewShown === "lineart") previewShown = "original";
+      dirty = true;
+      return;
+    }
+    const mine = generation;
+    const img = new Image();
+    img.onload = () => { if (mine !== generation) return; bg.images.lineart = img; dirty = true; };
+    img.src = url;
+  }
+
+  /** Show "original" or "lineart" while a preview is up. */
+  function showPreviewLayer(which) {
+    // The line art is asked for the moment its URL is known, before the browser has decoded the PNG, so
+    // this cannot wait for the image: draw() falls back to the original until it arrives, and the swap
+    // then happens by itself. Waiting here left the photo up with the line art already found.
+    previewShown = which;
+    dirty = true;
+  }
+
   function setLoading() { generation++; reset(); status = "loading"; renderStats(); renderMessage(); showDetail(); updateControls(); }
   function fail(msg) { generation++; reset(); status = "failed"; failMsg = msg; renderStats(); renderMessage(); showDetail(); updateControls(); }
   function unload() { generation++; reset(); status = "empty"; renderStats(); renderMessage(); showDetail(); updateControls(); }
@@ -584,7 +613,8 @@ export function createViewer(el) {
   }
   function debug() {
     return { status, curves: curves.length, gridCells: grid.size, selected, hover, width: W, height: H,
-             backgrounds: Object.keys(bg.images), mode: shownMode(), imageOnly: imageOnly(), view: { ...view } };
+             backgrounds: Object.keys(bg.images), previewLayer: previewShown, mode: shownMode(),
+             imageOnly: imageOnly(), view: { ...view } };
   }
   // The chosen line color. `seed` only matters for "random"; it is kept so a re-roll can be reproduced.
   function lineColorState() { return { mode: lineColor, seed: colorSeed, width: lineWidthMode }; }
@@ -608,6 +638,7 @@ export function createViewer(el) {
     dirty = true;
   }
 
-  return { load, preview, setLoading, fail, unload, rerender, setDesmosWarning, fit, handleKey, debug,
-           setLineColor, lineColorState, setLineWidth, refreshList: renderList };
+  return { load, preview, previewLayer, showPreviewLayer, setLoading, fail, unload, rerender,
+           setDesmosWarning, fit, handleKey, debug, setLineColor, lineColorState, setLineWidth,
+           refreshList: renderList };
 }

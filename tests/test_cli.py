@@ -80,7 +80,7 @@ def test_demo_uses_the_desmos_budget_unless_a_tolerance_is_given(drawing, tmp_pa
     assert "curve_count" not in meta(tmp_path / "b")
 
 
-@pytest.mark.parametrize("method", ["canny", "xdog"])
+@pytest.mark.parametrize("method", ["canny", "xdog", "flow"])
 def test_photo_methods_produce_ink(method, drawing, tmp_path):
     rng = np.random.default_rng(0)
     yy, xx = np.mgrid[:120, :160]

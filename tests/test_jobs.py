@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from line2func import geometry as g
-from line2func import jobs, pipeline
+from line2func import jobs, lineart, pipeline
 from line2func.curves import Curve, CurveSet
 from line2func.export import DESMOS_JS_VAR, output_texts
 from line2func.render import render_lineart
@@ -42,16 +42,32 @@ def _code(call) -> tuple[int, str, str | None]:
     return err.value.status, err.value.code, err.value.field
 
 
+def test_lineart_options_defaults_and_checks():
+    assert jobs.lineart_options({}) == {"method": "none", "lineart_detail": lineart.DETAIL}
+    assert jobs.lineart_options({"method": "flow", "lineart_detail": 0})["lineart_detail"] == 0.0
+    for bad, field in (({"method": "nope"}, "method"), ({"method": True}, "method"),
+                       ({"lineart_detail": 101}, "lineart_detail"), ({"lineart_detail": "50"}, "lineart_detail")):
+        with pytest.raises(jobs.ApiError) as raised:
+            jobs.lineart_options(bad)
+        assert raised.value.payload()["error"]["field"] == field
+    # the online engine is handed a narrower list: a browser has no PyTorch
+    with pytest.raises(jobs.ApiError):
+        jobs.lineart_options({"method": "informative"}, lineart.PURE_METHODS)
+    assert jobs.lineart_options({"method": "flow"}, lineart.PURE_METHODS)["method"] == "flow"
+
+
 def test_read_image_keeps_the_upright_image_and_a_preview():
     img = jobs.read_image(_encode(_drawing()), "drawing.png", LIMITS, "abc")
     assert (img.id, img.name, img.size, img.suggested) == ("abc", "drawing.png", (160, 120), "lineart")
     assert img.preview_type == "image/png" and Image.open(io.BytesIO(img.preview)).size == (160, 120)
     info = img.info()
     assert info == {"image_id": "abc", "name": "drawing.png", "width": 160, "height": 120, "source_width": 160,
-                    "source_height": 120, "suggested": "lineart", "auto_scale": 1.0, "max_scale": 1.0}
+                    "source_height": 120, "suggested": "lineart", "suggested_method": "none",
+                    "auto_scale": 1.0, "max_scale": 1.0}
 
     photo = jobs.read_image(_encode(_photo()), "photo.png", LIMITS)
     assert photo.suggested == "photo" and photo.preview_type == "image/jpeg"
+    assert photo.suggested_method == "flow" and photo.info()["suggested_method"] == "flow"
 
     # stored at most store_side, the source size is reported upright (EXIF orientation 6: turned 90 degrees)
     small = jobs.Limits(**{**LIMITS.__dict__, "store_side": 80})

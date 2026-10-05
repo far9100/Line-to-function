@@ -8,6 +8,27 @@ whose SHA-256 differs from the value pinned in `line2func/weights.py`.
 Nothing here is bundled: line2func ships no weights of its own and no trained
 model of any kind. The two files below are downloaded on request.
 
+## Measurement corpora
+
+Neither is in the repository, and neither is published with it.
+
+| Set | What | Licence |
+|---|---|---|
+| 66 + 15 line drawings | The tracer's own measurements throughout this manual | Third-party line art, kept locally, never redistributed |
+| 32 photographs | The photo-path measurements in section 6 of `docs/details.md` | **CC0**, from Wikimedia Commons (the Unsplash import). Each file's licence was read from the API and checked, not assumed from its category; a `sources.json` beside them records every title, page URL and licence string |
+
+## Methods implemented from their papers
+
+No code is copied; these are the published methods the implementations follow,
+and the papers are cited for the ideas rather than for any source.
+
+| Where | Method |
+|---|---|
+| `lineart.flow`, `lineart.edge_tangent_flow`, `lineart.flow_dog` | Coherent line drawing: Henry Kang, Seungyong Lee and Charles K. Chui, *Coherent Line Drawing*, Proc. NPAR 2007. The flow is built as the minor eigenvector of a smoothed structure tensor, after Jan Eric Kyprianidis and Jürgen Döllner, rather than by Kang's iterative smoothing; the two are the same field, and the note in `edge_tangent_flow` says why one Gaussian replaces the rounds. |
+| `lineart.xdog` | eXtended difference-of-Gaussians: Holger Winnemöller, Jan Eric Kyprianidis and Sven C. Olsen, *XDoG*, Computers & Graphics 36(6), 2012. Only the edge term is kept; the docstring says why. |
+| `lineart.canny` | John Canny, *A Computational Approach to Edge Detection*, PAMI 1986. |
+| `baseline.thin` | The Guo-Hall and Lam-Lee-Suen thinning rules, written from the published lookup tables. |
+
 ## Pretrained weights
 
 | Name | File | Source | License | SHA-256 |

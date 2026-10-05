@@ -167,6 +167,7 @@ def trace(
     curve_count: int | None = None,
     denoise: float = DENOISE,
     faint_sensitivity: float = FAINT_SENSITIVITY,
+    lineart_detail: float = lineart.DETAIL,
     baseline_options: dict | None = None,
 ) -> tuple[CurveSet, np.ndarray]:
     """Trace an RGB image; returns ``(curves in original pixels, ink map at original size)``.
@@ -184,6 +185,9 @@ def trace(
     ``faint_sensitivity`` (0..100) is how light a line may be and still be
     traced (:func:`faint_params`): :data:`FAINT_SENSITIVITY` (50) is as tuned,
     higher keeps lighter strands, 0 traces only ink above the threshold.
+    ``lineart_detail`` (0..100) is how much of a photo becomes lines
+    (:func:`line2func.lineart.detail_params`), and only the ``flow`` method
+    reads it; the other methods have nothing it would mean.
     ``baseline_options`` overrides :class:`line2func.baseline.BaselineParams`
     fields in the first pass, for measuring one tracer setting against another
     (``python -m line2func.eval --realset ... --set name=value``); the defaults
@@ -195,12 +199,14 @@ def trace(
         raise ValueError("denoise must be between 0 and 100")
     if not 0.0 <= faint_sensitivity <= 100.0:
         raise ValueError("faint_sensitivity must be between 0 and 100")
+    if not 0.0 <= lineart_detail <= 100.0:
+        raise ValueError("lineart_detail must be between 0 and 100")
     strength = denoise / DENOISE  # a multiple of the tuned limits, 0..2
     faint = faint_params(faint_sensitivity) if faint_lines else faint_params(0.0)
     step = progress or (lambda stage: None)
     if ink is None:
         step("lineart")
-        ink = lineart.extract(rgb, lineart_method)
+        ink = lineart.extract(rgb, lineart_method, lineart_detail)
         given = False
     else:
         ink = np.asarray(ink, dtype=np.float32)
@@ -208,12 +214,17 @@ def trace(
             raise ValueError(f"ink map {ink.shape} does not match the image {rgb.shape[:2]}")
         given = True
     h, w = ink.shape
-    factor = choose_upscale(ink, upscale, threshold)
+    # "auto" upscales a drawing whose own lines are thinner than one pixel can carry. An extractor's ink
+    # map is not that: it is the lines the extractor already decided on, drawn at the picture's own
+    # resolution, and enlarging it only interpolates that decision. Measured on a 0.8 MP photo, canny's
+    # 1.1 px lines asked for 2x and took 67 s; at 1x the same tracing is a quarter of the work.
+    factor = 1 if (upscale == "auto" and lineart_method != "none") else choose_upscale(ink, upscale, threshold)
     if factor > 1:
         step("upscale")
         big = resize(rgb, (w * factor, h * factor))
         work_rgb = big
-        work_ink = _resize_ink(ink, (w * factor, h * factor)) if given else lineart.extract(big, lineart_method)
+        work_ink = (_resize_ink(ink, (w * factor, h * factor)) if given
+                    else lineart.extract(big, lineart_method, lineart_detail))
     else:
         work_rgb, work_ink = rgb, ink
 

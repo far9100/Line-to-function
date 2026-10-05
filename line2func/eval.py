@@ -36,6 +36,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+from scipy import ndimage
 
 from line2func import baseline, lineart
 from line2func.metrics import (
@@ -137,7 +138,8 @@ def _real_images(folder: str | Path) -> list[Path]:
 
 
 def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = None,
-              options: dict | None = None) -> dict:
+              options: dict | None = None, lineart_method: str = "none",
+              lineart_detail: float = lineart.DETAIL) -> dict:
     """Trace real drawings and judge each against its own ink (:mod:`line2func.quality`).
 
     There is no ground truth here, so nothing is scored against a drawing that
@@ -163,6 +165,22 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
     reading runs 1.01 to 1.64, and turning faint strokes off takes the densest
     from 1.64 to 1.29 - while 99.3% of that curve length is on ink and only 8.6%
     of it lies within 0.75 px of another stroke. It is not redundancy.
+
+    ``lineart_method`` and ``lineart_detail`` run the set through a line
+    extractor first, which is how a folder of photographs is measured.
+    **Most of the numbers below cannot then be compared between two methods.**
+    The judge scores the curves against the ink map that arm's own extractor
+    produced (``thr`` comes from that same ink), so ``kept``, ``precision``,
+    ``missed_ink``, ``d_M``, ``psnr_db`` and ``ssim`` all answer "did we draw
+    our own extraction faithfully" - an extractor that finds almost nothing
+    scores beautifully on every one of them. Across extractors only ``curves``
+    (the budget), ``seconds`` (the cost) and ``pieces_per_kpx`` (below) mean
+    anything, because those three do not divide by what the arm chose to find.
+
+    ``pieces_per_kpx`` is connected pieces per 1,000 skeleton pixels of the ink
+    itself: how broken up the lines an extractor hands the tracer are. Every
+    piece is a curve or a speck the filter throws away, so it is the number
+    that says whether a photo will fit the budget at all.
     """
     from line2func import pipeline, quality
 
@@ -170,7 +188,8 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
     for path in _real_images(folder)[:limit]:
         rgb = lineart.load_rgb(path)
         t = time.perf_counter()
-        curves, ink = pipeline.trace(rgb, fit_tolerance=tolerance, curve_count=None, upscale="auto",
+        curves, ink = pipeline.trace(rgb, lineart_method=lineart_method, lineart_detail=lineart_detail,
+                                     fit_tolerance=tolerance, curve_count=None, upscale="auto",
                                      baseline_options=options)
         seconds = time.perf_counter() - t
         # the judge's threshold comes from the ink alone, so it is the same for every setting
@@ -190,15 +209,30 @@ def eval_real(folder: str | Path, tolerance: float = 1.0, limit: int | None = No
             "psnr_db": report["raster"]["psnr_db"],
             "ssim": report["raster"]["ssim"],
             "length_vs_skeleton": round(total_length(curves) / max(baseline.ink_length(ink, thr), 1.0), 4),
+            "pieces_per_kpx": _pieces_per_kpx(ink, thr),
             "seconds": round(seconds, 2),
             "threshold": round(thr, 4),
         })
     return {"folder": str(folder), "tolerance": tolerance, "options": options or {},
+            "lineart": lineart_method, "lineart_detail": lineart_detail,
             "images": rows, "median": _medians(rows)}
 
 
+def _pieces_per_kpx(ink: np.ndarray, thr: float) -> float:
+    """Connected pieces per 1,000 skeleton pixels of ``ink``: how broken up the lines are.
+
+    Read off the ink alone, so unlike the quality measures it is comparable between two line-art
+    methods - which is the only way to tell a method that draws long strokes from one that shatters.
+    """
+    skeleton = baseline.thin(ink > thr)
+    drawn = int(skeleton.sum())
+    if drawn == 0:
+        return 0.0
+    return round(1000.0 * ndimage.label(skeleton, structure=np.ones((3, 3)))[1] / drawn, 4)
+
+
 MEASURES = ("curves", "strokes", "kept", "kept_with_faint", "precision", "missed_ink", "d_M", "psnr_db", "ssim",
-            "length_vs_skeleton", "seconds")
+            "length_vs_skeleton", "pieces_per_kpx", "seconds")
 
 
 def _medians(rows: list[dict]) -> dict[str, float]:
@@ -279,7 +313,11 @@ def _n_for(effect: float, sd: float) -> int | None:
 
 def _print_real(report: dict) -> None:
     cols = [("curves", "curves"), ("kept", "kept"), ("missed_ink", "missed"), ("d_M", "d_M"),
-            ("length_vs_skeleton", "len/skel"), ("psnr_db", "PSNR"), ("seconds", "s")]
+            ("length_vs_skeleton", "len/skel"), ("pieces_per_kpx", "pieces"), ("psnr_db", "PSNR"),
+            ("seconds", "s")]
+    if report.get("lineart", "none") != "none":
+        print(f"line art: {report['lineart']} at detail {report['lineart_detail']:g}. Only curves, pieces "
+              f"and s compare with another method (see eval_real).")
     print(f"{'drawing':<28}" + "".join(f"{h:>10}" for _, h in cols))
     for r in report["images"]:
         print(f"{r['image'][:28]:<28}" + "".join(f"{r[k]:>10.4g}" for k, _ in cols))
@@ -319,6 +357,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--realset", type=Path,
                    help="folder of real drawings: trace each at a fixed tolerance and judge it against its ink")
     p.add_argument("--tolerance", type=float, default=1.0, help="with --realset: fit tolerance, px")
+    p.add_argument("--lineart", choices=lineart.METHODS, default="none",
+                   help="with --realset: extract line art first, for a folder of photographs")
+    p.add_argument("--lineart-detail", type=float, default=lineart.DETAIL, metavar="0..100",
+                   help="with --lineart flow: how much of the picture becomes lines (default: 50)")
     p.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", dest="options",
                    help="with --realset: a BaselineParams field to override (e.g. --set local_trim=false)")
     p.add_argument("--compare", type=Path, nargs=2, metavar=("BEFORE.json", "AFTER.json"),
@@ -332,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
         _print_compare(results)
     elif args.realset is not None:
         results = eval_real(args.realset, args.tolerance, args.limit,
-                            options=_options(p, args.options))
+                            options=_options(p, args.options),
+                            lineart_method=args.lineart, lineart_detail=args.lineart_detail)
         _print_real(results)
     elif args.valset is not None:
         results = eval_scenes(args.valset, args.limit)

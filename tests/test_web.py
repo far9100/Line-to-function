@@ -14,7 +14,7 @@ from PIL import Image
 
 from line2func import app as app_mod
 from line2func import geometry as g
-from line2func import web
+from line2func import lineart, web
 from line2func.curves import Curve, CurveSet
 from line2func.render import render_lineart
 
@@ -28,6 +28,14 @@ def _png(arr: np.ndarray) -> bytes:
 def _drawing() -> bytes:
     cs = CurveSet(160, 120, [Curve(g.line([10, 20], [150, 100])), Curve(g.line([10, 100], [150, 20]), stroke=1)])
     return _png(render_lineart(cs, 160, 120, line_width=2.5))
+
+
+def _photo() -> bytes:
+    """Something suggest_mode calls a photo: a soft shape, uneven light and grain."""
+    yy, xx = np.mgrid[0:120, 0:160]
+    shape = np.where((xx - 80) ** 2 + (yy - 60) ** 2 < 42**2, 70.0, 205.0)
+    lit = shape * (0.75 + 0.3 * xx / 159.0) + np.random.default_rng(2).normal(0, 6, shape.shape)
+    return _png(np.repeat(np.clip(lit, 0, 255).astype(np.uint8)[:, :, None], 3, axis=2))
 
 
 class JsBuffer:
@@ -112,12 +120,50 @@ def test_errors_are_answers():
     data = _drawing()
     for params, code, field in (("{broken", "bad_json", None), ("[1]", "bad_params", None),
                                 (json.dumps({"kind": "lineart"}), "bad_params", "kind"),
-                                (json.dumps({"method": "canny"}), "bad_params", "method"),
+                                (json.dumps({"method": "informative"}), "bad_params", "method"),
+                                (json.dumps({"method": "nope"}), "bad_params", "method"),
+                                (json.dumps({"lineart_detail": 101}), "bad_params", "lineart_detail"),
                                 (json.dumps({"form": "implicit"}), "bad_params", "form"),
                                 (json.dumps({"scale": 2}), "bad_params", "scale")):
         result = web.trace(data, "d.png", params, key="d")
         assert (error(result)["code"], error(result)["field"]) == (code, field), params
         assert result["files"] == {} and result["zip"] is None
+
+    for params, code, field in ((json.dumps({"kind": "trace"}), "bad_params", "kind"),
+                                (json.dumps({"kind": "lineart"}), "bad_params", "method"),
+                                (json.dumps({"kind": "lineart", "method": "informative"}), "bad_params", "method")):
+        result = web.lineart_preview(data, "d.png", params, key="d")
+        assert (error(result)["code"], error(result)["field"]) == (code, field), params
+        assert result["files"] == {}
+
+
+def test_the_browser_extracts_the_same_line_art_as_the_local_server(local_app):
+    """One code path, two transports: the page must get the very same PNG either way."""
+    data = _photo()
+    for method, detail in (("canny", 50), ("xdog", 50), ("flow", 20), ("flow", 80)):
+        params = {"kind": "lineart", "method": method, "lineart_detail": detail, "scale": "auto"}
+        img = local_app.add_image(data, "photo.png")
+        job = local_app.make_job({**params, "image_id": img.id})
+        local_app.run_job(job)
+        mine = web.lineart_preview(data, "photo.png", json.dumps(params), key=f"{method}{detail}")
+        assert list(mine["files"]) == ["lineart.png"] == list(job.files), method
+        assert mine["files"]["lineart.png"] == job.files["lineart.png"], (method, detail)
+        answer = json.loads(mine["answer"])
+        assert answer["params"]["method"] == method and answer["params"]["lineart_detail"] == detail
+        assert {k: answer["summary"][k] for k in job.summary} == job.summary
+
+
+def test_the_previewed_line_art_is_the_one_that_gets_traced():
+    data = _photo()
+    preview = {"kind": "lineart", "method": "flow", "lineart_detail": 30, "scale": 1.0}
+    assert json.loads(web.lineart_preview(data, "p.png", json.dumps(preview), key="p")["answer"])["summary"]
+    stages = []
+    traced = {**PAGE, "method": "flow", "lineart_detail": 30, "scale": 1.0, "quality": False}
+    web.trace(data, "p.png", json.dumps(traced), stages.append, key="p")
+    assert "lineart" not in stages, stages  # it was already made, for the preview the user confirmed
+    stages.clear()
+    web.trace(data, "p.png", json.dumps({**traced, "lineart_detail": 90}), stages.append, key="p")
+    assert "lineart" in stages  # a different setting is a different picture
 
 
 def test_the_limits(monkeypatch, local_app):
@@ -126,6 +172,9 @@ def test_the_limits(monkeypatch, local_app):
         assert getattr(web.LIMITS, name) <= getattr(app_mod._limits(), name), name
     info = web.info()
     assert info["mode"] == "web" and info["limits"]["max_bytes"] == web.MAX_BYTES
+    assert set(info["methods"]) == set(local_app.info()["methods"]) == set(lineart.METHODS)
+    assert [m for m, s in info["methods"].items() if s["available"]] == list(lineart.PURE_METHODS)
+    assert all(info["methods"][m]["reason"] == "torch_missing" for m in lineart.MODEL_METHODS)
     assert set(info["limits"]) == set(local_app.info()["limits"])  # the page reads the same keys
     assert info["desmos_limit"] == local_app.info()["desmos_limit"]
     monkeypatch.setattr(web, "MAX_BYTES", 100)

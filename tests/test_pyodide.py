@@ -75,3 +75,32 @@ def test_the_engine_traces_in_webassembly(tmp_path):
     assert styled["randomMeasured"]["colors"] > 1 and styled["randomMeasured"]["widths"] >= 1
     assert styled["bwUniform"]["sha"] != styled["randomMeasured"]["sha"]
     assert styled["bad"]["answer"]["error"]["field"] == "color"  # an unknown mode is an error answer, not a crash
+
+
+def test_line_art_is_extracted_in_webassembly_too(tmp_path):
+    """The photo path is the online page's, so it has to be measured where the page runs it.
+
+    The 1.5-2x that the manual quotes for WebAssembly was measured on the tracer, which is mostly
+    labelling, distance transforms and thinning. The extractor is whole-image bilinear gathers, a
+    different mix, so its own factor is printed here rather than assumed.
+    """
+    info = website.build(tmp_path / "site")
+    image = tmp_path / "drawing.webp"
+    image.write_bytes(_drawing())
+    out = subprocess.run([NODE, str(HERE / "run.mjs"), str(tmp_path / "site" / info["engine"]["package"]), str(image)],
+                         capture_output=True, text=True, encoding="utf-8", timeout=900, cwd=HERE)
+    assert out.returncode == 0, out.stderr[-3000:]
+    art = json.loads(out.stdout)["lineart"]
+    assert "error" not in art["answer"], art["answer"]
+    assert art["stages"] == ["resize", "lineart", "encode"]
+    assert list(art["files"]) == ["lineart.png"] and art["bytes"]["lineart.png"] > 0
+    assert art["answer"]["params"] == {"method": "flow", "lineart_detail": 50, "scale": 1.0}
+
+    # the same extraction in CPython: the PNG must be the same picture, and the time is worth knowing
+    native = web.lineart_preview(image.read_bytes(), "drawing.webp",
+                                 json.dumps({"kind": "lineart", "method": "flow", "lineart_detail": 50}), key="n")
+    assert json.loads(native["answer"])["summary"]["width"] == art["answer"]["summary"]["width"]
+    here = Image.open(io.BytesIO(native["files"]["lineart.png"]))
+    assert here.size == (art["answer"]["summary"]["width"], art["answer"]["summary"]["height"])
+    print(f"line art in WebAssembly: {art['seconds']:.2f} s "
+          f"(CPython {json.loads(native['answer'])['summary']['seconds']:.2f} s)")

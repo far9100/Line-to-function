@@ -1,5 +1,5 @@
 // line2func app: one page, the curve viewer. Without an image it shows a drop zone; a dropped (chosen or
-// pasted) line drawing is shown in place, and Convert traces it into functions or parametric equations like
+// pasted) image is shown in place, and Convert traces it into functions or parametric equations like
 // the command line does (up to 5,000 curves, with a quality check). /api/info says who does the work:
 // - "app": `python -m line2func` serves the page and traces on this computer;
 // - "web": the online page (static files, line2func/website.py) traces in the browser (engine.js, Pyodide);
@@ -7,6 +7,7 @@
 import { t, setLang, getLang, detectLang, onLangChange } from "./i18n.js";
 import { createViewer, DESMOS_LIMIT } from "./viewer.js";
 import { createEngine } from "./engine.js";
+import { lineartState } from "./preview.js";
 
 // ---------- input guards and handlers: registered first, before anything can fail ----------
 let dragTimer = 0, internalDrag = false;
@@ -34,6 +35,8 @@ const viewer = createViewer({
 const FORMS = ["function", "parametric"]; // how the lines are written (line2func.export)
 const LINE_COLORS = ["bw", "palette", "random"]; // = line2func.viewer.viewer LINE_COLOR_MODES
 const LINE_WIDTHS = ["measured", "uniform"]; // = line2func.export.LINE_WIDTH_MODES
+const METHODS = ["auto", "none", "canny", "xdog", "flow", "informative", "informative-coarse"]; // auto + lineart.METHODS
+const MODEL_METHODS = ["informative", "informative-coarse"]; // = line2func.lineart.MODEL_METHODS
 // Where the page starts, until the visitor changes something: the choice is saved and used from then on
 // (useOptions). These are the page's own values, not the command line's - pipeline.DENOISE and
 // pipeline.FAINT_SENSITIVITY are both 50, while the page starts by filtering nothing at all, so a first
@@ -45,6 +48,10 @@ const START = {
   faint: 100,                    // the lightest lines still traced
   lineColor: "bw",               // black on paper, like the drawing (= viewer.js's own starting color)
   lineWidth: "measured",         // what the SVG writes: every stroke as thick as its ink
+  method: "auto",                // follow the picture: a drawing as drawn, a photo turned into line art first
+  lineartDetail: 50,             // how much of a photo becomes lines (= line2func.lineart.DETAIL). Unlike the
+                                 // two filters above, this one has no "keep everything" end to start at, so it
+                                 // starts where the command line is.
 };
 // the stages in the order they run (the online engine's start, pipeline.trace, app.run_job) -> the step shown,
 // and typical cost
@@ -53,12 +60,15 @@ const STEP_OF = { load_engine: "prepare", resize: "prepare", load_model: "prepar
                   fill: "finish", count: "finish", optimize: "finish", shapes: "finish", export: "finish", quality: "quality" };
 const WEIGHTS = { load_engine: 12, resize: 1, load_model: 6, lineart: 6, upscale: 3, vectorize: 45, refine: 20, measure: 8,
                   outline: 5, residual: 8, fill: 3, count: 10, optimize: 10, shapes: 6, export: 3, quality: 14 };
-const NEVER = ["load_model", "optimize"]; // stages the page's conversions do not run
+const NEVER = ["optimize"]; // stages the page never runs; load_model runs only for a model line-art method
 
 const S = {
   mode: "boot", info: null, gone: false, engine: null,
   view: "empty", // empty (the drop zone), preview (an image to convert) or result
   image: null, form: START.form, denoise: START.denoise, denoiseOn: START.denoiseOn, faint: START.faint,
+  method: START.method, lineartDetail: START.lineartDetail,
+  preview: null, // the line-art preview: {jobId, snap, url, error}
+  previewTicket: 0, // an answer for a superseded ticket is dropped, so dragging the slider cannot race
   jobs: new Map(),
   lineColor: START.lineColor, colorSeed: 0, // the chosen line color; colorSeed only matters for "random"
   lineWidth: START.lineWidth, // the chosen line thickness (LINE_WIDTHS)
@@ -234,6 +244,10 @@ function useOptions(saved) {
   if (typeof saved.faint_sensitivity === "number" && saved.faint_sensitivity >= 0 && saved.faint_sensitivity <= 100) {
     S.faint = saved.faint_sensitivity;
   }
+  if (METHODS.includes(saved.method)) S.method = saved.method;
+  if (typeof saved.lineart_detail === "number" && saved.lineart_detail >= 0 && saved.lineart_detail <= 100) {
+    S.lineartDetail = saved.lineart_detail;
+  }
   if (LINE_COLORS.includes(saved.line_color)) S.lineColor = saved.line_color;
   if (LINE_WIDTHS.includes(saved.line_width)) S.lineWidth = saved.line_width;
   if (Number.isInteger(saved.color_seed) && saved.color_seed >= 0 && saved.color_seed <= 0xffffffff) {
@@ -280,6 +294,19 @@ function setupApp() {
   $("#denoise").addEventListener("change", saveOptions);
   $("#faint").addEventListener("input", (e) => { S.faint = Number(e.target.value); renderFaint(); });
   $("#faint").addEventListener("change", saveOptions);
+  $("#lineart-method").addEventListener("change", (e) => {
+    S.method = e.target.value;
+    saveOptions();
+    renderConvert(); // the note under Convert says whether line art is found first
+    startLineart();
+  });
+  // "input" only moves the reading; the extraction waits for the pointer to be let go
+  $("#lineart-detail").addEventListener("input", (e) => { S.lineartDetail = Number(e.target.value); renderDetail(); });
+  $("#lineart-detail").addEventListener("change", () => { saveOptions(); startLineart(); });
+  $("#lineart-again").addEventListener("click", () => startLineart());
+  for (const radio of document.querySelectorAll("input[name=preview-layer]")) {
+    radio.addEventListener("change", () => { if (radio.checked) showLayer(radio.value); });
+  }
   $("#convert").addEventListener("click", startTrace);
   $("#clear").addEventListener("click", clearImage);
   $("#cancel").addEventListener("click", () => cancelTrace(false));
@@ -287,6 +314,7 @@ function setupApp() {
 
 function saveOptions() {
   const options = { form: S.form, denoise: S.denoise, denoise_on: S.denoiseOn, faint_sensitivity: S.faint,
+                    method: S.method, lineart_detail: S.lineartDetail,
                     line_color: S.lineColor, color_seed: S.colorSeed, line_width: S.lineWidth };
   if (S.mode === "app") api("POST", "api/settings", { options }).catch(() => {});
   else try { localStorage.setItem("line2func.options", JSON.stringify(options)); } catch { /* storage may be blocked */ }
@@ -410,7 +438,7 @@ async function openFile(file) {
   if (file.size > S.info.limits.max_bytes) { toast(errorText({ code: "too_large" }), "error"); return; }
   // the current image and result stay until the new file has been read: a wrong file loses nothing (online,
   // a conversion still running stops first: the engine does one thing at a time)
-  if (S.mode === "web") cancelTrace(true);
+  if (S.mode === "web") { cancelTrace(true); stopLineart(); }
   const mine = ++uploads;
   const name = file.name || "image.png";
   const busy = t("import.uploading", { name });
@@ -422,6 +450,7 @@ async function openFile(file) {
     if (mine !== uploads) return;
     if ($("#toast").textContent === busy) $("#toast").hidden = true;
     cancelTrace(true);
+    clearLineart();
     S.image = info;
     showPreview();
   } catch (err) {
@@ -455,6 +484,7 @@ function setView(view) {
 
 function showEmpty() {
   S.image = null; S.result = null; S.copyArmed = false;
+  clearLineart();
   viewer.unload();
   setView("empty");
 }
@@ -466,6 +496,7 @@ function showPreview() {
   renderConvert();
   viewer.preview(previewURL(S.image.image_id), S.image.width, S.image.height);
   $("#convert").focus();
+  startLineart(); // a photo has its line art found and shown before anything is traced
 }
 
 function previewURL(imageId) {
@@ -499,13 +530,128 @@ function renderFaint() {
   $("#faint-value").textContent = S.faint > 0 ? t("convert.faintLevel", { n: String(S.faint) }) : t("convert.off");
 }
 
+function renderDetail() {
+  $("#lineart-detail").value = String(S.lineartDetail);
+  $("#lineart-detail-value").textContent = t("convert.detailLevel", { n: String(S.lineartDetail) });
+}
+
+// The method to use for the image that is open. "auto" takes the one the engine suggested for it
+// (lineart.suggest_method's rule, decided in Python so the two pages cannot disagree), and
+// falls back only when this engine cannot run that one - a browser has no PyTorch.
+function resolvedMethod() {
+  if (S.method !== "auto") return S.method;
+  const wanted = S.image?.suggested_method || "none";
+  if (wanted === "none" || S.info?.methods?.[wanted]?.available !== false) return wanted;
+  return METHODS.find((m) => m !== "auto" && m !== "none" && S.info?.methods?.[m]?.available) || "none";
+}
+
+function renderLineart() {
+  const select = $("#lineart-method");
+  select.value = S.method;
+  for (const option of select.options) {
+    const status = S.info?.methods?.[option.value]; // "auto" has no entry of its own: never disabled
+    option.disabled = !!status && !status.available;
+  }
+  const on = resolvedMethod() !== "none";
+  const now = lineartState(on, S.preview);
+  document.documentElement.dataset.lineart = now.state;
+  $("#detail-line").hidden = !on;
+  $("#lineart-compare").hidden = !now.shown;
+  $("#lineart-again").hidden = !on;
+  $("#convert").disabled = now.convertDisabled;
+  $("#lineart-status").textContent = previewStatusText(now.status);
+}
+
+function previewStatusText(status) {
+  if (status === "error") return errorText(S.preview.error);
+  if (status === "stage") {
+    const stage = S.preview.snap?.stage;
+    return stage ? t("stage." + stage, {}, stage) : t("stage.lineart");
+  }
+  return status === "note" ? t("convert.previewNote") : "";
+}
+
 function renderConvert() {
   for (const radio of document.querySelectorAll("input[name=form]")) radio.checked = radio.value === S.form;
+  renderLineart();
+  renderDetail();
   renderDenoise();
   renderFaint();
   let note = t(S.mode === "web" ? "convert.noteWeb" : "convert.note", { n: new Intl.NumberFormat().format(S.info.desmos_limit) });
-  if (S.image?.suggested === "photo") note += " " + t("convert.photo");
+  if (S.image?.suggested === "photo" && resolvedMethod() !== "none") note += " " + t("convert.photo");
   $("#convert-note").textContent = note;
+}
+
+// ---------- the line-art preview ----------
+// A photo is not traced until the line art found in it has been seen. The job is the server's
+// kind: "lineart" locally and the engine's own online; both answer with a snapshot whose files hold
+// lineart.png, so there is one code path here and two transports, as images and traces already are.
+function startLineart() {
+  if (!S.image || S.gone || !converts()) return;
+  const method = resolvedMethod();
+  if (method === "none") { clearLineart(); return; }
+  const mine = ++S.previewTicket;
+  const img = S.image;
+  const params = { image_id: img.image_id, kind: "lineart", method, lineart_detail: S.lineartDetail,
+                   scale: "auto" };
+  // The picture that is up stays there until the new one arrives, so nothing blanks between settings;
+  // it is no longer `fresh`, so it cannot be traced in the meantime (preview.js).
+  // A preview this one replaces is NOT cancelled, only ignored (the ticket above): online, cancelling a
+  // request that has already started terminates the Pyodide worker and starts another, so dragging the
+  // slider would restart the engine over and over. Letting it finish and dropping its answer is cheaper.
+  S.preview = { ...S.preview, jobId: null, snap: null, error: null, pending: true, fresh: false };
+  renderLineart();
+  const submitted = S.mode === "web" ? S.engine.lineart(params) : api("POST", "api/jobs", params);
+  submitted.then((snap) => {
+    if (mine !== S.previewTicket) { cancelJob(snap.job_id); return; }
+    S.preview.jobId = snap.job_id;
+    onPreviewUpdate(S.jobs.get(snap.job_id) || snap, mine);
+  }, (err) => { if (mine === S.previewTicket) failLineart(err); });
+}
+
+function onPreviewUpdate(snap, mine) {
+  if (mine !== S.previewTicket || !S.preview) return;
+  S.preview.snap = snap;
+  if (snap.state === "error") { failLineart(apiError(snap.error?.code, snap.error)); return; }
+  if (snap.state === "cancelled") { S.preview.jobId = null; S.preview.pending = false; renderLineart(); return; }
+  if (snap.state !== "done") { renderLineart(); return; }
+  S.preview.jobId = null;
+  S.preview.pending = false;
+  S.preview.fresh = true;
+  S.preview.url = jobFileURL(snap, "lineart.png");
+  viewer.previewLayer(S.preview.url);
+  showLayer("lineart");
+  renderLineart();
+}
+
+function failLineart(err) {
+  S.preview = { ...S.preview, jobId: null, pending: false, error: err };
+  toast(errorText(err), "error");
+  renderLineart();
+}
+
+// Stop a preview that is being made and keep the picture that is up: for the moment before another file
+// has been read, when the online engine has to be free for it and a wrong file must lose nothing.
+function stopLineart() {
+  if (!S.preview?.pending) return;
+  S.previewTicket++;
+  if (S.preview.jobId) cancelJob(S.preview.jobId);
+  S.preview = { ...S.preview, jobId: null, pending: false };
+  if (S.view === "preview") renderLineart();
+}
+
+function clearLineart() {
+  S.previewTicket++;
+  if (S.preview?.jobId) cancelJob(S.preview.jobId);
+  S.preview = null;
+  viewer.previewLayer(null);
+  showLayer("original");
+  if (S.view === "preview") renderLineart();
+}
+
+function showLayer(which) {
+  viewer.showPreviewLayer(which);
+  for (const radio of document.querySelectorAll("input[name=preview-layer]")) radio.checked = radio.value === which;
 }
 
 // ---------- converting ----------
@@ -515,7 +661,8 @@ function startTrace() {
   const img = S.image;
   // as the command line makes it: up to desmos_limit curves, with the quality check (the server skips that,
   // with a warning, for images that are too large)
-  const params = { image_id: img.image_id, kind: "trace", method: "none", scale: "auto", form: S.form,
+  const params = { image_id: img.image_id, kind: "trace", method: resolvedMethod(),
+                   lineart_detail: S.lineartDetail, scale: "auto", form: S.form,
                    curves: S.info.desmos_limit, quality: true, denoise: S.denoiseOn ? S.denoise : 0,
                    faint_sensitivity: S.faint };
   const checked = img.width * img.height * img.auto_scale ** 2 <= S.info.limits.quality_max_pixels;
@@ -560,6 +707,7 @@ function onJob(snap) {
   if (!snap?.job_id) return;
   S.jobs.set(snap.job_id, snap);
   if (S.trace && S.trace.jobId === snap.job_id) onTraceUpdate(snap);
+  if (S.preview && S.preview.jobId === snap.job_id) onPreviewUpdate(snap, S.previewTicket);
 }
 
 function onTraceUpdate(snap) {
@@ -590,7 +738,8 @@ function renderRunning() {
   const waiting = !snap || snap.state === "queued"; // online, nothing waits behind another job
   $("#run-stage").textContent = waiting ? (S.mode === "web" ? "" : t("run.queued")) : stage ? t("stage." + stage, {}, stage) : "";
   // progress: the share of the typical work before the current stage
-  const order = Object.keys(WEIGHTS).filter((s) => !NEVER.includes(s) && (s !== "quality" || trace.checked)
+  const skipped = [...NEVER, ...(MODEL_METHODS.includes(trace.params.method) ? [] : ["load_model"])];
+  const order = Object.keys(WEIGHTS).filter((s) => !skipped.includes(s) && (s !== "quality" || trace.checked)
                                                 && (s !== "load_engine" || trace.engine));
   const total = order.reduce((sum, s) => sum + WEIGHTS[s], 0);
   const index = stage ? order.indexOf(stage) : -1;
@@ -628,11 +777,15 @@ function colored(url, file) {
        + `&width=${encodeURIComponent(S.lineWidth)}`;
 }
 
-// A result's files by name ("zip": all of them): from the local server, or blob: URLs of the online engine.
+// A job's file by name ("zip": all of them): from the local server, or a blob: URL of the online engine.
+function jobFileURL(snap, file) {
+  if (S.mode === "web") return S.engine.fileURL(snap.job_id, file);
+  return `api/jobs/${snap.job_id}/` + (file === "zip" ? "zip" : "data/" + file);
+}
+
+// A result's files by name, as loadResult and the download buttons want them.
 function resultURL(snap) {
-  if (S.mode === "web") return (file) => S.engine.fileURL(snap.job_id, file);
-  const base = `api/jobs/${snap.job_id}/`;
-  return (file) => base + (file === "zip" ? "zip" : "data/" + file);
+  return (file) => jobFileURL(snap, file);
 }
 
 async function loadResult(snap) {

@@ -163,6 +163,24 @@ def check_choice(p: dict, key: str, choices: tuple, default=None):
     return v
 
 
+KINDS = ("lineart", "trace")  # a job either extracts line art for the user to look at, or traces
+
+
+def lineart_options(p: dict, allowed: tuple[str, ...] = lineart.METHODS) -> dict:
+    """A job's line-art settings, checked, with their defaults; for both kinds of job.
+
+    ``allowed`` narrows the methods: the online engine passes
+    :data:`line2func.lineart.PURE_METHODS`, because a browser has no PyTorch to
+    run the pretrained ones with. Kept apart from :func:`trace_options` because a
+    "lineart" job has none of the tracer's settings, and because this is the one
+    place either server decides what a method may be.
+    """
+    return {
+        "method": check_choice(p, "method", allowed, "none"),
+        "lineart_detail": check_number(p, "lineart_detail", lineart.DETAIL, 0.0, 100.0),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Images
 # ---------------------------------------------------------------------------
@@ -175,6 +193,7 @@ class StoredImage:
     rgb: np.ndarray  # at most limits.store_side, EXIF orientation applied
     source_size: tuple[int, int]
     suggested: str  # "lineart" or "photo"
+    suggested_method: str  # the line-art method that suggestion asks for (lineart.suggest_method)
     preview: bytes
     preview_type: str
     limits: Limits
@@ -196,7 +215,8 @@ class StoredImage:
         return {
             "image_id": self.id, "name": self.name, "width": w, "height": h,
             "source_width": self.source_size[0], "source_height": self.source_size[1],
-            "suggested": self.suggested, "auto_scale": self.auto_scale(), "max_scale": round(self.max_scale(), 4),
+            "suggested": self.suggested, "suggested_method": self.suggested_method,
+            "auto_scale": self.auto_scale(), "max_scale": round(self.max_scale(), 4),
         }
 
 
@@ -216,6 +236,7 @@ def read_image(data: bytes, name: str, limits: Limits, image_id: str = "") -> St
     except Exception:  # noqa: BLE001
         sw, sh = rgb.shape[1], rgb.shape[0]
     suggested = lineart.suggest_mode(rgb)
+    method = "flow" if suggested == "photo" else "none"  # lineart.suggest_method, off the mode already read
     if suggested == "photo":
         im = Image.fromarray(rgb)
         if max(im.size) > limits.preview_side:
@@ -226,7 +247,7 @@ def read_image(data: bytes, name: str, limits: Limits, image_id: str = "") -> St
         preview, ptype = buf.getvalue(), "image/jpeg"
     else:
         preview, ptype = png(rgb, limits.preview_side), "image/png"
-    return StoredImage(image_id, name, rgb, (sw, sh), suggested, preview, ptype, limits)
+    return StoredImage(image_id, name, rgb, (sw, sh), suggested, method, preview, ptype, limits)
 
 
 # ---------------------------------------------------------------------------
@@ -301,14 +322,16 @@ def run_trace(rgb: np.ndarray, image_name: str, p: dict, step: Callable[[str], N
     ``quality.png`` when made) and the summary the page shows.
     """
     method = p["method"]
+    detail = p.get("lineart_detail", lineart.DETAIL)
     curves, full_ink = pipeline.trace(
         rgb, lineart_method=method, fit_tolerance=p["tolerance"], threshold=p["threshold"],
         refine=p["refine"], upscale=p["upscale"], shape_tolerance=p["shape_tolerance"],
         faint_lines=p["faint"], ink=ink, progress=step, curve_count=p["curves"], denoise=p["denoise"],
-        faint_sensitivity=p["faint_sensitivity"],
+        faint_sensitivity=p["faint_sensitivity"], lineart_detail=detail,
     )
     n_shapes = sum(c.shape is not None for c in curves)
-    curves.meta.update(source=image_name, lineart=method, vectorizer="baseline", refined=p["refine"],
+    curves.meta.update(source=image_name, lineart=method, lineart_detail=detail,
+                       vectorizer="baseline", refined=p["refine"],
                        named=p["form"] == "named", form=p["form"], scale=p["scale"],
                        seconds=round(time.monotonic() - started, 3))
     if p["threshold"] is not None:

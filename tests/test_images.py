@@ -86,3 +86,13 @@ def test_suggest_mode():
     painting[50:250, 50:200] = (200, 60, 60)
     painting[100:280, 220:380] = (40, 90, 200)
     assert lineart.suggest_mode(painting) == "photo"
+
+
+def test_suggest_method_offers_flow_for_a_photo_and_nothing_for_line_art():
+    """One rule for the automatic choice, so the command line and the two pages cannot disagree."""
+    assert lineart.suggest_method(_drawing()) == "none"
+    yy, xx = np.mgrid[0:300, 0:400]
+    noise = np.random.default_rng(1).normal(0, 12, (300, 400, 3))
+    photo = np.stack([xx / 400 * 255, yy / 300 * 255, np.full(xx.shape, 120.0)], axis=2) + noise
+    assert lineart.suggest_method(np.clip(photo, 0, 255).astype(np.uint8)) == "flow"
+    assert lineart.suggest_method(_drawing()) in lineart.METHODS
